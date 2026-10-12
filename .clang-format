@@ -1,0 +1,52 @@
+---
+BasedOnStyle: LLVM
+
+# Tabs for indentation, spaces for alignment. This is the one combination that renders identically
+# regardless of the reader's tab width, which a mixed or alignment-by-tabs scheme does not.
+# Continuation lines count as indentation, not alignment: with plain ForIndentation clang-format
+# indents wrapped parameters with spaces, which reads as ragged next to tab-indented bodies.
+UseTab: ForContinuationAndIndentation
+TabWidth: 2
+IndentWidth: 2
+ContinuationIndentWidth: 2
+AlignAfterOpenBracket: false
+
+ColumnLimit: 100
+ReflowComments: Always
+
+# When a declaration does not fit on one line, put every parameter on its own line rather than
+# packing as many per line as will fit. Adding or removing one shows up as a one-line diff instead
+# of a reflowed block, and a long run of same-typed parameters (the classic
+# `const char *file, int line, const char *function`) stays readable and reviewable.
+#
+# Call sites are left packed: a printf with six arguments is clearer as two dense lines than as
+# seven sparse ones, and unlike a signature its shape is not part of the API.
+BinPackParameters: OnePerLine
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+BreakAfterOpenBracketFunction: true
+# Requires clang-format 22 or newer; scripts/format.sh enforces this before use.
+BreakBeforeCloseBracketFunction: true
+
+BreakBeforeBraces: Attach
+PointerAlignment: Right
+DerivePointerAlignment: false
+SpaceBeforeParens: ControlStatements
+
+IndentCaseLabels: true
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+
+# Grouped and sorted: the target's own header first, then the C library, then project headers. A
+# stable order makes a missing include in a header obvious, because it fails to compile on its own.
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+
+# Always brace the body. A one-line `if` without braces is how the goto fail bug happened.
+InsertBraces: true
+
+AllowAllArgumentsOnNextLine: true

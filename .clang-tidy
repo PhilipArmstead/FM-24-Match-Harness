@@ -1,0 +1,156 @@
+# Curated for a C17 codebase. Checks that can only ever match C++ constructs (constructors, move
+# semantics, exceptions, templates, namespaces, the STL, smart pointers, virtual dispatch) are
+# excluded, because they cannot fire here and only obscure the set that can.
+#
+# Do not prune these on the strength of their C++-flavoured names; each was verified to fire on C:
+#   cert-msc50-cpp, cert-msc51-cpp            rand()/srand() misuse
+#   cppcoreguidelines-narrowing-conversions   implicit lossy integer conversions
+#   performance-type-promotion-in-math-fn     sin() on a float instead of sinf()
+#
+# clang-analyzer-* is the full static analyser: interprocedural, path-sensitive, and the single
+# highest-value entry in this file for C. It finds leaks, use-after-free, null dereferences and
+# uninitialised reads that no per-AST check can. One of its checks is switched back off:
+# security.insecureAPI.DeprecatedOrUnsafeBufferHandling demands the C11 Annex K functions
+# (fprintf_s, strcpy_s, ...), which are optional and effectively MSVC-only, so it fires on every
+# portable printf in the codebase and proposes a fix that will not compile.
+#
+# NOTE: the Checks value below is a single YAML scalar. A '#' inside it is literal text, not a
+# comment, and clang-tidy will report it as an unknown check. Keep commentary out here, and run
+# `clang-tidy --verify-config` after editing.
+---
+Checks: '-*,
+bugprone-argument-comment,
+bugprone-assert-side-effect,
+bugprone-bad-signal-to-kill-thread,
+bugprone-branch-clone,
+bugprone-implicit-widening-of-multiplication-result,
+bugprone-incorrect-roundings,
+bugprone-integer-division,
+bugprone-macro-parentheses,
+bugprone-macro-repeated-side-effects,
+bugprone-misplaced-operator-in-strlen-in-alloc,
+bugprone-misplaced-pointer-arithmetic-in-alloc,
+bugprone-misplaced-widening-cast,
+bugprone-multiple-statement-macro,
+bugprone-not-null-terminated-result,
+bugprone-posix-return,
+bugprone-reserved-identifier,
+bugprone-signed-char-misuse,
+bugprone-sizeof-expression,
+bugprone-spuriously-wake-up-functions,
+bugprone-string-literal-with-embedded-nul,
+bugprone-suspicious-enum-usage,
+bugprone-suspicious-include,
+bugprone-suspicious-memory-comparison,
+bugprone-suspicious-memset-usage,
+bugprone-suspicious-missing-comma,
+bugprone-suspicious-realloc-usage,
+bugprone-suspicious-semicolon,
+bugprone-suspicious-string-compare,
+bugprone-swapped-arguments,
+bugprone-terminating-continue,
+bugprone-too-small-loop-variable,
+bugprone-unused-return-value,
+cert-env33-c,
+cert-err33-c,
+cert-err34-c,
+cert-flp30-c,
+cert-msc50-cpp,
+cert-msc51-cpp,
+clang-analyzer-*,
+-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+concurrency-mt-unsafe,
+cppcoreguidelines-narrowing-conversions,
+misc-misplaced-const,
+misc-static-assert,
+performance-no-int-to-ptr,
+performance-type-promotion-in-math-fn,
+readability-avoid-const-params-in-decls,
+readability-const-return-type,
+readability-function-cognitive-complexity,
+readability-isolate-declaration,
+readability-misleading-indentation,
+readability-misplaced-array-index,
+readability-non-const-parameter,
+readability-redundant-control-flow,
+readability-redundant-declaration,
+readability-redundant-function-ptr-dereference,
+readability-simplify-boolean-expr'
+
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*[\\/](src|tools|tests)[\\/].*'
+ExcludeHeaderFilterRegex: '.*[\\/](lib|src[\\/]shaders)[\\/].*'
+
+CheckOptions:
+  # The project naming standard: camelCase for functions, variables and parameters; UPPER_CASE for
+  # macros and enum constants; CamelCase for types.
+  #
+  # FunctionIgnoredRegexp is what makes the module_function convention (resources_get,
+  # vector_push) legal alongside camelCase. The previous project's config claimed this was handled
+  # "via the *Prefix options" but defined none, so every such name was a false positive and the
+  # check was effectively unusable.
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
+  - key: readability-identifier-naming.FunctionIgnoredRegexp
+    value: '[a-z][a-zA-Z0-9]*(_[a-zA-Z0-9]+)+'
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.ParameterCase
+    value: camelBack
+  - key: readability-identifier-naming.LocalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.StaticVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.MemberCase
+    value: camelBack
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.UnionCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.TypedefCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
+  - key: readability-identifier-naming.ConstantCase
+    value: camelBack
+  # Trailing-underscore names are how a macro keeps its temporaries out of the caller's namespace.
+  - key: readability-identifier-naming.LocalVariableIgnoredRegexp
+    value: '[a-z][a-zA-Z0-9]*_'
+  - key: readability-identifier-naming.MacroDefinitionIgnoredRegexp
+    value: '_[A-Z_]+|[A-Z_]+_'
+
+  # APP_VERIFY exists precisely so the expression is still evaluated when assertions are compiled
+  # out, so it must not be listed here. Everything else must stay side-effect free.
+  - key: bugprone-assert-side-effect.AssertMacros
+    value: 'assert,APP_ASSERT,APP_ASSERT_MSG,APP_ASSERT_ALWAYS,APP_ASSERT_ALWAYS_MSG,APP_CHECK_INDEX'
+  - key: bugprone-assert-side-effect.CheckFunctionCalls
+    value: 'true'
+
+  # A function past this is not being read in one sitting. The number is a prompt to split it, not
+  # a law; raise it deliberately if it starts firing on code that is genuinely simple.
+  - key: readability-function-cognitive-complexity.Threshold
+    value: '25'
+  - key: readability-function-cognitive-complexity.IgnoreMacros
+    value: 'true'
+
+  # sizeof(int) == sizeof(int) style tautologies, without the false positives on sizeof(array).
+  - key: bugprone-sizeof-expression.WarnOnSizeOfIntegerExpression
+    value: 'true'
+
+  # cert-err33-c's default list includes every output function in <stdio.h>, which means a logger
+  # or a CLI cannot print a line without a (void) cast. That trains people to disable the check
+  # rather than read it. This list keeps the calls where ignoring the result is an actual bug and
+  # drops the write side, whose failures are caught once per stream with ferror() instead.
+  #
+  # Add to it rather than removing the check when a new must-check API appears.
+  - key: cert-err33-c.CheckedFunctions
+    value: '^::aligned_alloc$;^::at_quick_exit$;^::atexit$;^::calloc$;^::clock$;^::cnd_broadcast$;^::cnd_init$;^::cnd_signal$;^::cnd_timedwait$;^::cnd_wait$;^::fclose$;^::fflush$;^::fgetpos$;^::fgets$;^::fopen$;^::fread$;^::freopen$;^::fscanf$;^::fseek$;^::fsetpos$;^::ftell$;^::getenv$;^::gmtime$;^::localtime$;^::malloc$;^::mktime$;^::mtx_init$;^::mtx_lock$;^::mtx_timedlock$;^::mtx_trylock$;^::mtx_unlock$;^::raise$;^::realloc$;^::remove$;^::rename$;^::scanf$;^::setlocale$;^::setvbuf$;^::signal$;^::snprintf$;^::sscanf$;^::strftime$;^::strtod$;^::strtof$;^::strtoimax$;^::strtok$;^::strtol$;^::strtold$;^::strtoll$;^::strtoul$;^::strtoull$;^::strtoumax$;^::thrd_create$;^::thrd_detach$;^::thrd_join$;^::time$;^::timespec_get$;^::tmpfile$;^::tss_create$;^::tss_get$;^::tss_set$;^::vsnprintf$'
+  # A (void) cast is the documented way to say "the failure genuinely does not matter here".
+  - key: cert-err33-c.AllowCastToVoid
+    value: 'true'
