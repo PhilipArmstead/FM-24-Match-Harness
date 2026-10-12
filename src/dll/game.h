@@ -55,7 +55,7 @@ enum MatchLayout {
 	MATCH_TEAM_GOALS = 0x248, // u8 in MATCH_TEAM
 };
 
-// Database layouts (harness/constants.h).
+// Database layouts.
 enum DatabaseLayout {
 	PERSON_UNIQUE_ID = 0x0C,
 	PERSON_FORENAME = 0x58, // doubly indirect string

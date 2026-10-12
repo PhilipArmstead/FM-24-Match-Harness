@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Read access to the game's database objects (people, contracts, teams, clubs); offsets from
-// harness/constants.h. All reads are fault-tolerant (see memory.h).
+// Read access to the game's database objects (people, contracts, teams, clubs); offsets are in
+// game.h. All reads are fault-tolerant (see memory.h).
 #pragma once
 
 #include <stdbool.h>

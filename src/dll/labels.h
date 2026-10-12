@@ -35,5 +35,5 @@ typedef struct PlayerRatings {
 PlayerRatings *
 labels_players(const Serialised *serialised, const PeopleIndex *people, size_t *count);
 
-// The names of a ratings field's 69 values: 15 positions, then 54 attributes (constants.h order).
+// The names of a ratings field's 69 values: 15 positions, then 54 attributes (database order).
 const char *labels_ratingName(size_t index);
