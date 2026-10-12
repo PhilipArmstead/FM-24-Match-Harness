@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// fm24ctl: injects the harness DLL into the running fm.exe and drives it.
+// fm24ctl: drives the harness DLL inside the running fm.exe, injecting it when needed.
 //
-//   fm24ctl inject
 //   fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]
 //       [--threads N] [--profile <samples.txt>]
 //       seeds: "keep" (the input's own seed), "42", "1-1000", or "1,5,10-20"
@@ -22,7 +21,6 @@
 
 
 static const char usage[] = "usage:\n"
-														"  fm24ctl inject\n"
 														"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]\n"
 														"      [--threads N] [--profile <samples.txt>]\n"
 														"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
@@ -34,9 +32,6 @@ int wmain(int argc, wchar_t **argv);
 
 int wmain(int argc, wchar_t **argv) {
 	const wchar_t *command = argc >= 2 ? argv[1] : L"";
-	if (wcscmp(command, L"inject") == 0) {
-		return commands_inject();
-	}
 	static const struct {
 		const wchar_t *name;
 		int (*run)(int argc, wchar_t **argv);

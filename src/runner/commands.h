@@ -7,7 +7,6 @@
 #include <wchar.h>
 
 
-int commands_inject(void);
 int commands_run(int argc, wchar_t **argv);
 int commands_getNextFixture(int argc, wchar_t **argv);
 int commands_export(int argc, wchar_t **argv);

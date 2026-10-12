@@ -5,7 +5,6 @@
 
 #include "client.h"
 #include "files.h"
-#include "inject.h"
 #include "match_config.h"
 #include "paths.h"
 #include "protocol.h"
@@ -128,10 +127,6 @@ static bool rebuildConfig(const Path *json, const Path *output, char *result, si
 		output->utf8
 	);
 	return client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize);
-}
-
-int commands_inject(void) {
-	return inject_harness() ? EXIT_OK : EXIT_FAILED;
 }
 
 typedef struct Totals {
