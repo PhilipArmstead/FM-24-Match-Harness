@@ -9,7 +9,10 @@
 #include <windows.h>
 
 
-enum { IMAGE_SPAN = 0x1E000000 }; // generous upper bound on fm.exe's mapped size
+enum {
+	IMAGE_SPAN = 0x1E000000, // generous upper bound on fm.exe's mapped size
+	TEB_TLS_POINTER = 0x58,  // TEB.ThreadLocalStoragePointer
+};
 
 typedef struct Signature {
 	const char *name;
@@ -126,4 +129,16 @@ uint32_t game_rva(const void *address) {
 	uintptr_t value = (uintptr_t)address;
 	uintptr_t start = (uintptr_t)base;
 	return value > start && value < start + IMAGE_SPAN ? (uint32_t)(value - start) : 0;
+}
+
+uint8_t *game_initThread(void) {
+	uint8_t **slots = NULL;
+	memcpy(&slots, (const uint8_t *)NtCurrentTeb() + TEB_TLS_POINTER, sizeof slots);
+	uint32_t index = *(const uint32_t *)game_address(RVA_TLS_INDEX);
+	uint8_t *tls = slots[index];
+	if (tls[TLS_INIT_FLAG] == 0) {
+		// What the game does on first use: run this thread's thread_local constructors.
+		((VoidFn)game_function(RVA_TLS_ON_DEMAND_INIT))();
+	}
+	return tls;
 }

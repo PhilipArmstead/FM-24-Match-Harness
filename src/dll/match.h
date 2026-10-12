@@ -6,6 +6,7 @@
 #pragma once
 
 #include "buffer.h"
+#include "stream.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -28,6 +29,9 @@ void match_freeBuilt(uint8_t *match);
 
 // Loads serialised match bytes into a new match. Free with match_delete().
 uint8_t *match_deserialize(ByteBuffer *bytes);
+
+// The same through the caller's stream, for threads that load matches concurrently.
+uint8_t *match_deserializeWith(DataBuffer *stream, ByteBuffer *bytes);
 void match_delete(uint8_t *match);
 
 // Prepares the match and plays it to the end with GAME_MATCH__Run.

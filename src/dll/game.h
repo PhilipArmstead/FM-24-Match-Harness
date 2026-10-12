@@ -121,3 +121,7 @@ VoidFn game_functionAt(const void *address);
 
 // The RVA of an address inside fm.exe, or 0 if it is outside the image.
 uint32_t game_rva(const void *address);
+
+// Runs the calling thread's thread_local constructors in fm.exe if the game has not done so yet
+// (every thread that calls into the engine needs them); returns the thread's TLS block.
+uint8_t *game_initThread(void);

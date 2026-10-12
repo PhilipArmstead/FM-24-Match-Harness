@@ -47,12 +47,15 @@ uint8_t *match_deserialize(ByteBuffer *bytes) {
 	if (!inputBuffer && !(inputBuffer = stream_create())) {
 		return NULL;
 	}
-	stream_attachInput(inputBuffer, bytes->data, bytes->length);
+	return match_deserializeWith(inputBuffer, bytes);
+}
+
+uint8_t *match_deserializeWith(DataBuffer *stream, ByteBuffer *bytes) {
+	stream_attachInput(stream, bytes->data, bytes->length);
 	uint8_t *match = ((MatchCreateFn)game_function(RVA_GAME_MATCH_CREATE))();
 	bool ok =
-		match &&
-		((MatchStreamFn)game_function(RVA_GAME_MATCH_DESERIALIZE))(match, &inputBuffer->input, 0);
-	stream_detachInput(inputBuffer);
+		match && ((MatchStreamFn)game_function(RVA_GAME_MATCH_DESERIALIZE))(match, &stream->input, 0);
+	stream_detachInput(stream);
 	if (!ok && match) {
 		match_delete(match);
 	}

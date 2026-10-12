@@ -5,6 +5,7 @@
 //
 //   fm24ctl inject
 //   fm24ctl run <input.bin|.json> <seeds> <output.csv> [--keep-match] [--recompute]
+//       [--threads N] [--profile <samples.txt>]
 //       seeds: "keep" (the input's own seed), "42", "1-1000", or "1,5,10-20"
 //   fm24ctl get-next-fixture <output.json|.bin> [--seed N]
 //   fm24ctl export <input.bin> <output.json>
@@ -23,6 +24,7 @@ static const char usage[] =
 	"usage:\n"
 	"  fm24ctl inject\n"
 	"  fm24ctl run <input.bin|.json> <seeds> <output.csv> [--keep-match] [--recompute]\n"
+	"      [--threads N] [--profile <samples.txt>]\n"
 	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
 	"  fm24ctl export <input.bin> <output.json>\n"
 	"  fm24ctl encode <input.json> <output.bin>\n"

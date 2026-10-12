@@ -40,6 +40,7 @@ add_library(harness SHARED
 	src/dll/match.c
 	src/dll/memory.c
 	src/dll/output.c
+	src/dll/profiler.c
 	src/dll/rng.c
 	src/dll/stream.c
 	src/dll/trace.c

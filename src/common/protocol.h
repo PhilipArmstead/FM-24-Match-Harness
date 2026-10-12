@@ -11,7 +11,7 @@
 // keeps waiting on its own, differently named events and never sees the new jobs.
 #pragma once
 
-#define HARNESS_PROTOCOL L"1"
+#define HARNESS_PROTOCOL L"5"
 #define HARNESS_DLL_NAME (L"fm24_harness_p" HARNESS_PROTOCOL L".dll")
 #define HARNESS_EVENT_GO (L"Local\\FM24Harness_Go_" HARNESS_PROTOCOL)
 #define HARNESS_EVENT_DONE (L"Local\\FM24Harness_Done_" HARNESS_PROTOCOL)
@@ -22,3 +22,6 @@
 
 // Longest path (in UTF-16 units) either side handles; job files carry full paths.
 enum { HARNESS_PATH_LENGTH = 1024 };
+
+// Most worker threads a run job may use.
+enum { HARNESS_MAX_THREADS = 16 };

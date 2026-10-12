@@ -105,6 +105,9 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "output") == 0) {
 		return widen(value, job->output, HARNESS_PATH_LENGTH);
 	}
+	if (strcmp(key, "profile") == 0) {
+		return widen(value, job->profile, HARNESS_PATH_LENGTH);
+	}
 	if (strcmp(key, "records") == 0) {
 		return widen(value, job->records, HARNESS_PATH_LENGTH);
 	}
@@ -115,6 +118,16 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "seed") == 0) {
 		job->hasSeed = strcmp(value, "random") != 0;
 		job->seed = job->hasSeed ? (uint32_t)strtoul(value, NULL, 10) : 0;
+		return true;
+	}
+	if (strcmp(key, "threads") == 0) {
+		char *end = NULL;
+		unsigned long long threads = 0;
+		if (!parseNumber(value, &end, &threads) || *end != 0 || threads < 1 ||
+				threads > HARNESS_MAX_THREADS) {
+			return false;
+		}
+		job->threads = (unsigned)threads;
 		return true;
 	}
 	if (strcmp(key, "delete_match") == 0) {
@@ -136,7 +149,7 @@ static bool isComplete(const Job *job) {
 }
 
 bool job_read(const wchar_t *directory, Job *job) {
-	*job = (Job){.command = JOB_RUN};
+	*job = (Job){.command = JOB_RUN, .threads = 1};
 	wchar_t path[HARNESS_PATH_LENGTH];
 	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE);
 	FILE *file = _wfopen(path, L"rb");

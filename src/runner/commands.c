@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 
 
 enum {
@@ -232,36 +233,76 @@ static bool prepareInput(Path *input, bool recompute) {
 	return true;
 }
 
+typedef struct RunOptions {
+	bool deleteMatch; // keeping matches leaks ~5 MB per run
+	bool recompute;
+	unsigned long threads;
+	const wchar_t *profile;
+} RunOptions;
+
+// One worker per logical processor, less one left for the game itself.
+static unsigned long defaultThreads(void) {
+	unsigned long processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+	unsigned long threads = processors > 1 ? processors - 1 : 1;
+	return threads < HARNESS_MAX_THREADS ? threads : HARNESS_MAX_THREADS;
+}
+
+// The options after `run <input> <seeds> <output>`; false (with a message) if one is invalid.
+static bool parseRunOptions(int argc, wchar_t **argv, RunOptions *options) {
+	*options = (RunOptions){.deleteMatch = true, .threads = defaultThreads()};
+	for (int i = 5; i < argc; ++i) {
+		bool hasValue = i + 1 < argc;
+		if (wcscmp(argv[i], L"--keep-match") == 0) {
+			options->deleteMatch = false;
+		} else if (wcscmp(argv[i], L"--recompute") == 0) {
+			options->recompute = true;
+		} else if (wcscmp(argv[i], L"--profile") == 0 && hasValue) {
+			options->profile = argv[++i];
+		} else if (wcscmp(argv[i], L"--threads") == 0 && hasValue) {
+			wchar_t *end = NULL;
+			options->threads = wcstoul(argv[++i], &end, 10);
+			if (*end != 0 || options->threads < 1 || options->threads > HARNESS_MAX_THREADS) {
+				fprintf(stderr, "--threads must be 1-%d\n", HARNESS_MAX_THREADS);
+				return false;
+			}
+		} else {
+			fprintf(stderr, "unknown option: %ls\n", argv[i]);
+			return false;
+		}
+	}
+	return true;
+}
+
 int commands_run(int argc, wchar_t **argv) {
-	if (argc < 5) {
+	RunOptions options;
+	if (argc < 5 || !parseRunOptions(argc, argv, &options)) {
 		fprintf(
 			stderr,
-			"usage: fm24ctl run <input.bin|.json> <seeds> <output.csv> [--keep-match] [--recompute]\n"
+			"usage: fm24ctl run <input.bin|.json> <seeds> <output.csv> [--keep-match] [--recompute]"
+			" [--threads N] [--profile <samples.txt>]\n"
 		);
 		return EXIT_USAGE;
 	}
-	bool deleteMatch = true; // keeping matches leaks ~5 MB per run
-	bool recompute = false;
-	for (int i = 5; i < argc; ++i) {
-		deleteMatch = deleteMatch && wcscmp(argv[i], L"--keep-match") != 0;
-		recompute = recompute || wcscmp(argv[i], L"--recompute") == 0;
-	}
 	Path input;
 	Path output;
+	Path profile = {0};
 	char seeds[256];
 	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
-			!paths_toUtf8(argv[3], seeds, sizeof seeds) || !prepareInput(&input, recompute)) {
+			(options.profile && !absolutePath(options.profile, &profile)) ||
+			!paths_toUtf8(argv[3], seeds, sizeof seeds) || !prepareInput(&input, options.recompute)) {
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
 	(void)snprintf(
 		job,
 		sizeof job,
-		"input=%s\nseeds=%s\noutput=%s\ndelete_match=%d\n",
+		"input=%s\nseeds=%s\noutput=%s\ndelete_match=%d\nthreads=%lu\nprofile=%s\n",
 		input.utf8,
 		seeds,
 		output.utf8,
-		deleteMatch ? 1 : 0
+		options.deleteMatch ? 1 : 0,
+		options.threads,
+		profile.utf8
 	);
 	printf("job submitted; waiting...\n");
 	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, NULL, 0)) {

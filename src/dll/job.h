@@ -24,8 +24,10 @@ typedef struct Job {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t output[HARNESS_PATH_LENGTH];
 	wchar_t records[HARNESS_PATH_LENGTH]; // rebuild: the config's write records ("site length" lines)
+	wchar_t profile[HARNESS_PATH_LENGTH]; // run: optional sample file (see profiler.h)
 	uint32_t *seeds;                      // run
 	size_t seedCount;
+	unsigned threads; // run: worker threads (1..HARNESS_MAX_THREADS)
 	bool keepSeed;    // run: play the input's own seed once
 	bool deleteMatch; // run: delete each match after reading its result
 	bool hasSeed;     // build_next: use `seed` instead of a clock value
