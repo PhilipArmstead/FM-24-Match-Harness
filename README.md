@@ -63,6 +63,9 @@ specify your own:
 .\fm24ctl run next-fixture.json 42,99,300-400 lots-of-results.csv
 ```
 
+If you want to see more detailed outputs, add the `--detailed` flag to the end
+of a `run` command and check the extra CSVs generated.
+
 ## Experiments
 
 There's a few things you might want to do with this feature:
@@ -84,7 +87,7 @@ script and my DLL doing most of the work, not your agent.
 
 # Feature suggestions
 
-Got an idea for how I an enhance this? Maybe more detailed outputs? Better
+Got an idea for how I an enhance this? Maybe even more detailed outputs? Better
 annotated inputs? Do you want a UI to represent what a given JSON blob looks
 like? [Open an issue](PhilipArmstead/FM-24-Match-Harness/issues) and ask kindly.
 
