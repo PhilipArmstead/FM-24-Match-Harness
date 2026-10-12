@@ -5,6 +5,7 @@
 
 #include "game.h"
 #include "memory.h"
+#include "protocol.h"
 #include "rng.h"
 #include "stream.h"
 
@@ -19,7 +20,8 @@ enum {
 	RUN_TO_END = 1,
 };
 
-static DataBuffer *inputBuffer;
+// Input streams by worker slot, created on first use and kept: the game owns their storage.
+static DataBuffer *inputStreams[HARNESS_MAX_THREADS];
 
 uint8_t *match_build(uint8_t *fixture, uint32_t seed) {
 	rng_seedThread(seed);
@@ -43,14 +45,25 @@ void match_freeBuilt(uint8_t *match) {
 	((MatchFn)game_function(RVA_GAME_MATCH_POOL_FREE))(match);
 }
 
-uint8_t *match_deserialize(ByteBuffer *bytes) {
-	if (!inputBuffer && !(inputBuffer = stream_create())) {
+DataBuffer *match_inputStream(unsigned slot) {
+	if (slot >= HARNESS_MAX_THREADS) {
 		return NULL;
 	}
-	return match_deserializeWith(inputBuffer, bytes);
+	if (!inputStreams[slot]) {
+		inputStreams[slot] = stream_create();
+	}
+	return inputStreams[slot];
 }
 
-uint8_t *match_deserializeWith(DataBuffer *stream, ByteBuffer *bytes) {
+uint8_t *match_deserialize(ByteBuffer *bytes) {
+	return match_deserializeOn(0, bytes);
+}
+
+uint8_t *match_deserializeOn(unsigned slot, ByteBuffer *bytes) {
+	DataBuffer *stream = match_inputStream(slot);
+	if (!stream) {
+		return NULL;
+	}
 	stream_attachInput(stream, bytes->data, bytes->length);
 	uint8_t *match = ((MatchCreateFn)game_function(RVA_GAME_MATCH_CREATE))();
 	bool ok =

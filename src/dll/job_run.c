@@ -48,9 +48,6 @@ typedef struct Worker {
 	unsigned index;
 } Worker;
 
-// One game stream per worker slot, created on first use and kept: the game owns its storage.
-static DataBuffer *streams[HARNESS_MAX_THREADS];
-
 static double elapsedMilliseconds(LARGE_INTEGER start, LARGE_INTEGER end, LARGE_INTEGER frequency) {
 	return 1000.0 * (double)(end.QuadPart - start.QuadPart) / (double)frequency.QuadPart;
 }
@@ -79,7 +76,7 @@ markPhase(Profiler *profiler, const char *phase, uint32_t seed, double wall, dou
 
 // Plays `input` with `seed` (patched into it); returns false if the match could not be loaded.
 static bool playSeed(
-	DataBuffer *stream,
+	unsigned slot,
 	ByteBuffer *input,
 	size_t seedOffset,
 	uint32_t seed,
@@ -94,7 +91,7 @@ static bool playSeed(
 	QueryPerformanceFrequency(&frequency);
 	double cpuStart = threadCpuMilliseconds();
 	QueryPerformanceCounter(&start);
-	uint8_t *match = match_deserializeWith(stream, input);
+	uint8_t *match = match_deserializeOn(slot, input);
 	if (!match) {
 		log_message("seed %u: deserialize failed", seed);
 		return false;
@@ -142,7 +139,7 @@ static DWORD WINAPI worker(LPVOID parameter) {
 	const Worker *self = parameter;
 	Run *run = self->run;
 	game_initThread();
-	if (!streams[self->index] && !(streams[self->index] = stream_create())) {
+	if (!match_inputStream(self->index)) {
 		log_message("worker %u: cannot create a stream", self->index);
 		InterlockedExchange(&run->failed, 1);
 		return 1;
@@ -160,7 +157,7 @@ static DWORD WINAPI worker(LPVOID parameter) {
 		}
 		uint32_t seed = run->job->keepSeed ? run->fileSeed : run->job->seeds[index];
 		SeedResult result = {0};
-		result.ok = playSeed(streams[self->index], &input, run->seedOffset, seed, profiler, &result);
+		result.ok = playSeed(self->index, &input, run->seedOffset, seed, profiler, &result);
 		result.done = true;
 		EnterCriticalSection(&run->lock);
 		run->results[index] = result;

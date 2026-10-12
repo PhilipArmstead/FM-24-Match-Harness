@@ -27,11 +27,15 @@ typedef struct MatchResult {
 uint8_t *match_build(uint8_t *fixture, uint32_t seed);
 void match_freeBuilt(uint8_t *match);
 
-// Loads serialised match bytes into a new match. Free with match_delete().
+// The game stream worker `slot` (0 = the job thread, < HARNESS_MAX_THREADS) loads matches through;
+// created on first use and kept. NULL if it cannot be created.
+DataBuffer *match_inputStream(unsigned slot);
+
+// Loads serialised match bytes into a new match on the job thread. Free with match_delete().
 uint8_t *match_deserialize(ByteBuffer *bytes);
 
-// The same through the caller's stream, for threads that load matches concurrently.
-uint8_t *match_deserializeWith(DataBuffer *stream, ByteBuffer *bytes);
+// The same through worker `slot`'s stream, for workers that load matches concurrently.
+uint8_t *match_deserializeOn(unsigned slot, ByteBuffer *bytes);
 void match_delete(uint8_t *match);
 
 // Prepares the match and plays it to the end with GAME_MATCH__Run.
