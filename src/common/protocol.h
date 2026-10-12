@@ -11,7 +11,7 @@
 // keeps waiting on its own, differently named events and never sees the new jobs.
 #pragma once
 
-#define HARNESS_PROTOCOL L"8"
+#define HARNESS_PROTOCOL L"9"
 #define HARNESS_DLL_NAME (L"fm24_harness_p" HARNESS_PROTOCOL L".dll")
 #define HARNESS_EVENT_GO (L"Local\\FM24Harness_Go_" HARNESS_PROTOCOL)
 #define HARNESS_EVENT_DONE (L"Local\\FM24Harness_Done_" HARNESS_PROTOCOL)

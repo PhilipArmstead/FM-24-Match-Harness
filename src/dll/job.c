@@ -137,6 +137,7 @@ static bool isComplete(const Job *job) {
 	bool hasOutput = job->output[0] != 0;
 	bool hasInput = job->input[0] != 0;
 	switch (job->command) {
+		case JOB_NONE: return false;
 		case JOB_RUN: return hasInput && hasOutput && (job->keepSeed || job->seedCount > 0);
 		case JOB_BUILD_NEXT: return hasOutput;
 		case JOB_EXPORT: return hasInput && hasOutput;
@@ -146,7 +147,7 @@ static bool isComplete(const Job *job) {
 }
 
 bool job_read(const wchar_t *directory, Job *job) {
-	*job = (Job){.command = JOB_RUN, .threads = 1};
+	*job = (Job){.threads = 1};
 	wchar_t path[HARNESS_PATH_LENGTH];
 	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE);
 	FILE *file = _wfopen(path, L"rb");

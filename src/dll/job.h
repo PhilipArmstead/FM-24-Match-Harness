@@ -13,6 +13,7 @@
 
 
 typedef enum JobCommand {
+	JOB_NONE,       // no "command=" line: the job is rejected
 	JOB_RUN,        // play an input with a list of seeds, write a CSV
 	JOB_BUILD_NEXT, // build the human manager's next fixture to .bin or .json
 	JOB_EXPORT,     // convert a .bin input into a .json config

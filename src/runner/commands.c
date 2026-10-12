@@ -347,7 +347,7 @@ int commands_run(int argc, wchar_t **argv) {
 	(void)snprintf(
 		job,
 		sizeof job,
-		"input=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\n",
+		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\n",
 		input.utf8,
 		seeds,
 		output.utf8,
