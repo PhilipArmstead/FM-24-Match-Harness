@@ -256,7 +256,6 @@ static unsigned lowestBit(uint64_t mask);
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record);
 static void labelRecord(Walk *walk, size_t i);
-static size_t countPlayers(const Serialised *serialised);
 
 const char *labels_ratingName(size_t index) {
 	return index < sizeof ratingNames / sizeof ratingNames[0] ? ratingNames[index] : "?";
@@ -285,34 +284,6 @@ FieldLabel *labels_compute(const Serialised *serialised, const PeopleIndex *peop
 		labelRecord(&walk, i);
 	}
 	return labels;
-}
-
-PlayerRatings *
-labels_players(const Serialised *serialised, const PeopleIndex *people, size_t *count) {
-	*count = 0;
-	PlayerRatings *players = calloc(countPlayers(serialised) + 1, sizeof *players);
-	bool haveId = false;
-	for (size_t i = 0; players && i < serialised->recordCount; ++i) {
-		const TraceRecord *record = &serialised->records[i];
-		const uint8_t *value = serialised->bytes.data + record->offset;
-		if (record->site == SITE_PLAYER_FIRST) {
-			players[(*count)++] = (PlayerRatings){0};
-			haveId = false;
-		}
-		if (*count == 0) {
-			continue;
-		}
-		PlayerRatings *player = &players[*count - 1];
-		if (record->site == SITE_PLAYER_UID && record->length == 4 && !haveId &&
-				database_findPerson(people, memory_loadU32(value))) {
-			player->uniqueId = memory_loadU32(value);
-			haveId = true;
-		}
-		if (record->site == SITE_PLAYER_RATINGS && record->length == PLAYER_RATING_COUNT) {
-			memcpy(player->ratings, value, PLAYER_RATING_COUNT);
-		}
-	}
-	return players;
 }
 
 static const char *positionFlag(unsigned bit) {
@@ -654,12 +625,4 @@ static void labelRecord(Walk *walk, size_t i) {
 		(void)snprintf(label->name, sizeof label->name, "%s", walk->block);
 	}
 	memcpy(walk->previousBlock, walk->block, sizeof walk->block);
-}
-
-static size_t countPlayers(const Serialised *serialised) {
-	size_t count = 0;
-	for (size_t i = 0; i < serialised->recordCount; ++i) {
-		count += serialised->records[i].site == SITE_PLAYER_FIRST;
-	}
-	return count;
 }

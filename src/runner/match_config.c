@@ -13,28 +13,22 @@
 typedef struct Encoder {
 	JsonReader reader;
 	ByteBuffer *out;
-	ConfigRecords *records;
 	ByteBuffer scratch; // strings read from the JSON
 	size_t field;       // index of the field being read, for messages
 } Encoder;
 
 typedef struct FieldState {
-	char site[32];
-	size_t start;  // offset in the output where the field's bytes begin
-	int values;    // how many value keys the field had (must be 1)
-	bool isString; // written by the game as two records
+	int values; // how many value keys the field had (must be 1)
 } FieldState;
 
 static bool failField(Encoder *encoder, const char *message);
-static bool appendRecord(ConfigRecords *records, const char *site, size_t length);
 static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t width);
 static bool emitHex(Encoder *encoder, const char *hex, size_t length);
 static bool readUnsignedValue(Encoder *encoder, size_t width);
 static bool readU8Map(Encoder *encoder);
-static bool readStringValue(Encoder *encoder, bool isHex, FieldState *field);
+static bool readStringValue(Encoder *encoder, bool isHex);
 static size_t widthOf(const char *key);
 static bool readMember(Encoder *encoder, const char *key, FieldState *field);
-static bool recordField(Encoder *encoder, const FieldState *field);
 static bool readField(Encoder *encoder);
 static bool readFields(Encoder *encoder);
 static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields);
@@ -43,16 +37,12 @@ bool matchConfig_encode(
 	const char *json,
 	size_t length,
 	ByteBuffer *out,
-	ConfigRecords *records,
 	char *error,
 	size_t errorSize
 ) {
-	Encoder encoder = {.out = out, .records = records};
+	Encoder encoder = {.out = out};
 	jsonReader_init(&encoder.reader, json, length);
 	buffer_clear(out);
-	if (records) {
-		records->count = 0;
-	}
 	bool formatOk = false;
 	bool haveFields = false;
 	bool ok = readTopLevel(&encoder, &formatOk, &haveFields);
@@ -69,31 +59,10 @@ bool matchConfig_encode(
 	return ok && formatOk && haveFields;
 }
 
-void matchConfig_freeRecords(ConfigRecords *records) {
-	free(records->items);
-	*records = (ConfigRecords){0};
-}
-
 static bool failField(Encoder *encoder, const char *message) {
 	char text[160];
 	(void)snprintf(text, sizeof text, "field %zu: %s", encoder->field, message);
 	return jsonReader_fail(&encoder->reader, text);
-}
-
-static bool appendRecord(ConfigRecords *records, const char *site, size_t length) {
-	if (records->count == records->capacity) {
-		size_t capacity = records->capacity ? records->capacity * 2 : 65536;
-		ConfigRecord *items = realloc(records->items, capacity * sizeof *items);
-		if (!items) {
-			return false;
-		}
-		records->items = items;
-		records->capacity = capacity;
-	}
-	ConfigRecord *record = &records->items[records->count++];
-	(void)snprintf(record->site, sizeof record->site, "%s", site);
-	record->length = length;
-	return true;
 }
 
 static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t width) {
@@ -152,7 +121,7 @@ static bool readU8Map(Encoder *encoder) {
 	return jsonReader_consume(reader, '}') || failField(encoder, "expected , or } in u8map");
 }
 
-static bool readStringValue(Encoder *encoder, bool isHex, FieldState *field) {
+static bool readStringValue(Encoder *encoder, bool isHex) {
 	if (!jsonReader_readString(&encoder->reader, &encoder->scratch)) {
 		return false;
 	}
@@ -161,7 +130,6 @@ static bool readStringValue(Encoder *encoder, bool isHex, FieldState *field) {
 	if (isHex) {
 		return emitHex(encoder, text, length);
 	}
-	field->isString = true;
 	return emitUnsigned(encoder, length, 4) && buffer_append(encoder->out, text, length);
 }
 
@@ -181,13 +149,6 @@ static size_t widthOf(const char *key) {
 // Reads the value of one member of a field object.
 static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	size_t width = widthOf(key);
-	if (strcmp(key, "site") == 0) {
-		if (!jsonReader_readString(&encoder->reader, &encoder->scratch)) {
-			return false;
-		}
-		(void)snprintf(field->site, sizeof field->site, "%s", buffer_string(&encoder->scratch));
-		return true;
-	}
 	bool isValue =
 		width || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 || strcmp(key, "hex") == 0;
 	if (!isValue) {
@@ -200,26 +161,12 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	if (strcmp(key, "u8map") == 0) {
 		return readU8Map(encoder);
 	}
-	return readStringValue(encoder, strcmp(key, "hex") == 0, field);
-}
-
-static bool recordField(Encoder *encoder, const FieldState *field) {
-	if (!encoder->records) {
-		return true;
-	}
-	size_t length = encoder->out->length - field->start;
-	const char *site = field->site[0] ? field->site : "?";
-	if (!field->isString) {
-		return appendRecord(encoder->records, site, length);
-	}
-	// the game writes a string as two records: u32 length, then the bytes (site not recorded here)
-	return appendRecord(encoder->records, site, 4) &&
-				 (length == 4 || appendRecord(encoder->records, "*", length - 4));
+	return readStringValue(encoder, strcmp(key, "hex") == 0);
 }
 
 static bool readField(Encoder *encoder) {
 	JsonReader *reader = &encoder->reader;
-	FieldState field = {.start = encoder->out->length};
+	FieldState field = {0};
 	ByteBuffer key = {0};
 	bool ok = jsonReader_consume(reader, '{') || failField(encoder, "expected a field object");
 	if (ok && !jsonReader_consume(reader, '}')) {
@@ -234,7 +181,7 @@ static bool readField(Encoder *encoder) {
 	if (ok && field.values != 1) {
 		return failField(encoder, "needs exactly one of u8/u16/u32/u64/str/hex/u8map");
 	}
-	return ok && recordField(encoder, &field);
+	return ok;
 }
 
 static bool readFields(Encoder *encoder) {

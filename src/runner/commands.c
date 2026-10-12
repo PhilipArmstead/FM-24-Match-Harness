@@ -44,7 +44,6 @@ typedef struct RunOptions {
 	const wchar_t *input;
 	const wchar_t *seeds;  // default "keep"
 	const wchar_t *output; // default: the input with a .csv extension
-	bool recompute;
 	unsigned long threads;
 	const wchar_t *profile;
 	bool detailed;
@@ -59,15 +58,12 @@ typedef struct SensitivityOptions {
 static bool absolutePath(const wchar_t *argument, Path *out);
 static bool workingPath(const wchar_t *name, Path *out);
 static int submitAndReport(const char *job);
-static bool encodeConfig(const Path *json, ByteBuffer *bytes, ConfigRecords *records);
+static bool encodeConfig(const Path *json, ByteBuffer *bytes);
 static bool encodeToFile(const Path *json, const Path *output, size_t *size);
-static bool writeRecords(const Path *path, const ConfigRecords *records);
-static bool
-rebuildConfig(const Path *json, const Path *output, bool asBuilt, char *result, size_t resultSize);
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away);
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
 static int printSummary(const Path *csvPath);
-static bool prepareInput(Path *input, bool recompute);
+static bool prepareInput(Path *input);
 static unsigned long defaultThreads(void);
 static bool isSeedList(const wchar_t *text);
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options);
@@ -85,8 +81,8 @@ int commands_run(int argc, wchar_t **argv) {
 	if (!parseRunArguments(argc, argv, &options)) {
 		fprintf(
 			stderr,
-			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]"
-			" [--threads N] [--profile <samples.txt>] [--detailed]\n"
+			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]"
+			" [--profile <samples.txt>] [--detailed]\n"
 		);
 		return EXIT_USAGE;
 	}
@@ -97,8 +93,7 @@ int commands_run(int argc, wchar_t **argv) {
 	if (!absolutePath(options.input, &input) ||
 			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
 			(options.profile && !absolutePath(options.profile, &profile)) ||
-			!paths_toUtf8(options.seeds, seeds, sizeof seeds) ||
-			!prepareInput(&input, options.recompute)) {
+			!paths_toUtf8(options.seeds, seeds, sizeof seeds) || !prepareInput(&input)) {
 		return EXIT_FAILED;
 	}
 	printf("results: %s\n", output.utf8);
@@ -205,23 +200,6 @@ int commands_encode(int argc, wchar_t **argv) {
 	return EXIT_OK;
 }
 
-int commands_rebuild(int argc, wchar_t **argv) {
-	bool asBuilt = argc == 5 && wcscmp(argv[4], L"--as-built") == 0;
-	if (argc < 4 || (argc > 4 && !asBuilt)) {
-		fprintf(stderr, "usage: fm24ctl rebuild <input.json> <output.json|.bin> [--as-built]\n");
-		return EXIT_USAGE;
-	}
-	Path input;
-	Path output;
-	char result[CLIENT_RESULT_LENGTH];
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
-			!rebuildConfig(&input, &output, asBuilt, result, sizeof result)) {
-		return EXIT_FAILED;
-	}
-	printf("%s\n", result);
-	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
-}
-
 // A command-line path made absolute (the DLL runs with fm.exe's working directory).
 static bool absolutePath(const wchar_t *argument, Path *out) {
 	bool ok = paths_absolute(argument, out->wide, HARNESS_PATH_LENGTH) &&
@@ -250,15 +228,15 @@ static int submitAndReport(const char *job) {
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
-// Encodes a JSON config into match bytes; with `records`, also returns its write records.
-static bool encodeConfig(const Path *json, ByteBuffer *bytes, ConfigRecords *records) {
+// Encodes a JSON config into match bytes.
+static bool encodeConfig(const Path *json, ByteBuffer *bytes) {
 	ByteBuffer text = {0};
 	char error[256] = "";
 	bool ok = files_read(json->wide, &text);
 	if (!ok) {
 		fprintf(stderr, "cannot read %s\n", json->utf8);
 	} else if (!(ok = matchConfig_encode(
-								 buffer_string(&text), text.length, bytes, records, error, sizeof error
+								 buffer_string(&text), text.length, bytes, error, sizeof error
 							 ))) {
 		fprintf(stderr, "%s: %s\n", json->utf8, error);
 	}
@@ -268,59 +246,13 @@ static bool encodeConfig(const Path *json, ByteBuffer *bytes, ConfigRecords *rec
 
 static bool encodeToFile(const Path *json, const Path *output, size_t *size) {
 	ByteBuffer bytes = {0};
-	bool ok = encodeConfig(json, &bytes, NULL);
+	bool ok = encodeConfig(json, &bytes);
 	if (ok && !(ok = files_write(output->wide, bytes.data, bytes.length))) {
 		fprintf(stderr, "cannot write %s\n", output->utf8);
 	}
 	*size = bytes.length;
 	buffer_free(&bytes);
 	return ok;
-}
-
-static bool writeRecords(const Path *path, const ConfigRecords *records) {
-	ByteBuffer text = {0};
-	bool ok = true;
-	for (size_t i = 0; ok && i < records->count; ++i) {
-		ok = buffer_appendFormat(&text, "%s %zu\n", records->items[i].site, records->items[i].length);
-	}
-	ok = ok && files_write(path->wide, text.data, text.length);
-	buffer_free(&text);
-	return ok;
-}
-
-// Recomputes what the game derives from a config's edited ratings: the config's bytes and its write
-// records (one "site length" line each) go next to fm24ctl.exe, so the DLL can compare field by
-// field. With `asBuilt`, the DLL writes the game's build with the config's ratings instead,
-// ignoring the config's other edits (no merge, so a changed structure is accepted).
-static bool
-rebuildConfig(const Path *json, const Path *output, bool asBuilt, char *result, size_t resultSize) {
-	Path bin;
-	Path recordsPath;
-	ByteBuffer bytes = {0};
-	ConfigRecords records = {0};
-	bool ok = workingPath(L"_rebuild_input.bin", &bin) &&
-						workingPath(L"_rebuild_input.records", &recordsPath) &&
-						encodeConfig(json, &bytes, &records);
-	if (ok && !(ok = files_write(bin.wide, bytes.data, bytes.length) &&
-									 writeRecords(&recordsPath, &records))) {
-		fprintf(stderr, "cannot write the rebuild inputs\n");
-	}
-	buffer_free(&bytes);
-	matchConfig_freeRecords(&records);
-	if (!ok) {
-		return false;
-	}
-	char job[JOB_LENGTH];
-	(void)snprintf(
-		job,
-		sizeof job,
-		"command=rebuild\ninput=%s\nrecords=%s\noutput=%s\nas_built=%d\n",
-		bin.utf8,
-		recordsPath.utf8,
-		output->utf8,
-		asBuilt ? 1 : 0
-	);
-	return client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize);
 }
 
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away) {
@@ -383,30 +315,14 @@ static int printSummary(const Path *csvPath) {
 	return EXIT_OK;
 }
 
-// Turns a .json config into the .bin the DLL plays (rebuilding first with --recompute).
-static bool prepareInput(Path *input, bool recompute) {
-	bool isJson = files_hasExtension(input->wide, L".json");
-	if (!isJson) {
-		if (recompute) {
-			fprintf(stderr, "--recompute needs a .json config\n");
-		}
-		return !recompute;
+// Turns a .json config into the .bin the DLL plays; a .bin is played as it is.
+static bool prepareInput(Path *input) {
+	if (!files_hasExtension(input->wide, L".json")) {
+		return true;
 	}
 	Path bin;
-	char result[CLIENT_RESULT_LENGTH];
 	size_t size = 0;
-	if (!workingPath(L"_job_input.bin", &bin)) {
-		return false;
-	}
-	if (recompute) {
-		if (!rebuildConfig(input, &bin, false, result, sizeof result)) {
-			return false;
-		}
-		printf("%s\n", result);
-		if (!client_succeeded(result)) {
-			return false;
-		}
-	} else if (!encodeToFile(input, &bin, &size)) {
+	if (!workingPath(L"_job_input.bin", &bin) || !encodeToFile(input, &bin, &size)) {
 		return false;
 	}
 	*input = bin;
@@ -432,9 +348,7 @@ static bool isSeedList(const wchar_t *text) {
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options) {
 	const wchar_t *name = argv[*i];
 	bool hasValue = *i + 1 < argc;
-	if (wcscmp(name, L"--recompute") == 0) {
-		options->recompute = true;
-	} else if (wcscmp(name, L"--profile") == 0 && hasValue) {
+	if (wcscmp(name, L"--profile") == 0 && hasValue) {
 		options->profile = argv[++*i];
 	} else if (wcscmp(name, L"--detailed") == 0) {
 		options->detailed = true;

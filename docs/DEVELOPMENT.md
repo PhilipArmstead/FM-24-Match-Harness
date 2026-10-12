@@ -8,7 +8,7 @@ src/common/  protocol (job file, events, DLL name), byte buffer, files
 src/dll/     game.h (addresses, layouts, signatures), memory, stream,
              match, rng, database, fixture, trace, sites, labels
              (rating names), config_writer, output, profiler, job,
-             job_run/build/rebuild, main
+             job_run/build/sensitivity, match_stats, tactic_flags, main
 src/runner/  main, commands, inject, client, paths, json_reader,
              match_config (encoder)
 cmake/       MinGW-w64 toolchain file
@@ -55,7 +55,7 @@ next to the DLL there.
    `fm24_harness.dll` if that is missing (e.g. a renamed release copy). The
    fallback must be a build of the same protocol `<N>`, or the runner never
    sees it start
-3. `fm24ctl run <input> [seeds] [out.csv] [--recompute]`,
+3. `fm24ctl run <input> [seeds] [out.csv]`,
    where `<input>` is a `.bin` input or a `.json` config; e.g.
    `fm24ctl run next.json` plays the config's own seed into `next.csv`
    - seeds: `keep` (the input's own seed; the default), `42`, `1-1000`, or
@@ -69,7 +69,6 @@ next to the DLL there.
      thread count, and rows stay in seed order. Under load each match's `ms`
      rises to ~4-5 s
    - `--threads N` (1-16): set the worker count (1 = one match at a time)
-   - `--recompute`: rebuild a JSON config first (see `rebuild`)
    - `--profile <samples.txt>`: sample the engine's stack about every 1 ms
      (worker 0 only; see `src/dll/profiler.h` for the format)
    - `--detailed`: also write `<output>-players.csv` and `<output>-teams.csv`,
@@ -90,17 +89,7 @@ next to the DLL there.
 5. `fm24ctl export <input.bin> <out.json>` converts an input to a config
    (uses the game's serialiser). `fm24ctl encode <in.json> <out.bin>`
    converts back (no game needed).
-6. `fm24ctl rebuild <in.json> <out.json|out.bin>` recomputes everything the
-   game derives from player ratings (abilities, evaluations) after you edit
-   them. The game rebuilds the fixture with the edited ratings temporarily
-   written into its database (then restored). Fields the game recomputed are
-   merged into your config, and your other edits are kept. Only for configs
-   of the human manager's **next** fixture in the current game state.
-   - `--as-built`: write the game's own build with the config's ratings
-     instead, ignoring the config's other edits. It doesn't merge, so it also
-     works when the edit changes the match's structure (a plain `rebuild`
-     refuses then)
-7. `fm24ctl sensitivity <out.csv> [--player NAME|UID] [--values 1-20]
+6. `fm24ctl sensitivity <out.csv> [--player NAME|UID] [--values 1-20]
 [--seed N]` measures which values the game derives from each rating. It
    builds the next fixture once as a baseline. Then, for each selected player
    (default: everyone in the fixture) and each of their 69 ratings, it changes
@@ -153,8 +142,10 @@ is lossless.
   `src/dll/labels.c`.
 
 Values and strings (including their length) can be edited freely. Adding or
-removing entries changes the structure and is not safe yet. Use `rebuild` /
-`--recompute` after editing ratings so the derived values follow.
+removing entries changes the structure and is not safe yet. Edited ratings
+can be played as they are: the engine plays from the raw attributes, and the
+values the game derives from them (ability, role ratings) don't affect results
+(`docs/PLAN.md`, Phase 12).
 
 # Known limits
 
@@ -163,7 +154,7 @@ removing entries changes the structure and is not safe yet. Use `rebuild` /
 - One input = one fixture with fixed line-ups and tactics.
 - A game-produced .bin and its JSON export differ in one header byte (offset
   21, a flag the deserialiser sets). Match results are identical.
-- `get-next-fixture` (and `rebuild`) set one byte (`+0x46`) of the real
+- `get-next-fixture` and `sensitivity` set one byte (`+0x46`) of the real
   fixture in the save and leave it set, as the game's own match setup
   probably does. The first build after loading a save therefore differs in
   that byte from later builds with the same seed.

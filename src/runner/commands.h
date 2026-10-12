@@ -11,5 +11,4 @@ int commands_run(int argc, wchar_t **argv);
 int commands_getNextFixture(int argc, wchar_t **argv);
 int commands_export(int argc, wchar_t **argv);
 int commands_encode(int argc, wchar_t **argv);
-int commands_rebuild(int argc, wchar_t **argv);
 int commands_sensitivity(int argc, wchar_t **argv);

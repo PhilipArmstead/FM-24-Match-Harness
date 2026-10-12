@@ -39,15 +39,6 @@ typedef struct FieldLabel {
 // One label per record of `serialised` (free() the result); player names come from `people`.
 FieldLabel *labels_compute(const Serialised *serialised, const PeopleIndex *people);
 
-typedef struct PlayerRatings {
-	uint32_t uniqueId; // 0 if no database person was found for the block
-	uint8_t ratings[PLAYER_RATING_COUNT];
-} PlayerRatings;
-
-// The players of a serialised match in order, with their ratings (free() the result).
-PlayerRatings *
-labels_players(const Serialised *serialised, const PeopleIndex *people, size_t *count);
-
 // The name of bit `bit` of a field whose label has flags, or NULL if unknown.
 const char *labels_flagName(const FieldLabel *label, unsigned bit);
 

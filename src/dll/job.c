@@ -167,7 +167,6 @@ static bool parseCommand(Job *job, const char *value) {
 	} commands[] = {{"run", JOB_RUN},
 		{"build_next", JOB_BUILD_NEXT},
 		{"export", JOB_EXPORT},
-		{"rebuild", JOB_REBUILD},
 		{"sensitivity", JOB_SENSITIVITY}};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -191,9 +190,6 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "profile") == 0) {
 		return widen(value, job->profile, HARNESS_PATH_LENGTH);
 	}
-	if (strcmp(key, "records") == 0) {
-		return widen(value, job->records, HARNESS_PATH_LENGTH);
-	}
 	if (strcmp(key, "seeds") == 0) {
 		job->keepSeed = strcmp(value, "keep") == 0;
 		return job->keepSeed || parseSeeds(job, value);
@@ -205,10 +201,6 @@ static bool parseLine(Job *job, char *key, char *value) {
 	}
 	if (strcmp(key, "values") == 0) {
 		return parseValues(job, value);
-	}
-	if (strcmp(key, "as_built") == 0) {
-		job->asBuilt = strcmp(value, "1") == 0;
-		return true;
 	}
 	if (strcmp(key, "detailed") == 0) {
 		job->detailed = strcmp(value, "1") == 0;
@@ -243,7 +235,6 @@ static bool isComplete(const Job *job) {
 		case JOB_RUN: return hasInput && hasOutput && (job->keepSeed || job->seedCount > 0);
 		case JOB_BUILD_NEXT: return hasOutput;
 		case JOB_EXPORT: return hasInput && hasOutput;
-		case JOB_REBUILD: return hasInput && hasOutput && job->records[0] != 0;
 		case JOB_SENSITIVITY: return hasOutput;
 	}
 	return false;

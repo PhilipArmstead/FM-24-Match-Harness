@@ -9,8 +9,8 @@
 //   str                   u32 byte length, then the UTF-8 bytes
 //   hex                   raw bytes
 //   u8map                 object of u8 values, emitted in key order (a player's ratings)
-// Other keys ("site", "p", "role", "name", "player", ...) are annotations; "site" is kept in the
-// write records.
+// Other keys ("site", "p", "role", "name", "player", "member", "flags", ...) are annotations and
+// are skipped.
 #pragma once
 
 #include "buffer.h"
@@ -19,28 +19,11 @@
 #include <stddef.h>
 
 
-// One serialiser write as the config records it: its site ("<rva>/<caller rva>", or "*" for the
-// byte part of a string, whose site the config does not record) and byte length.
-typedef struct ConfigRecord {
-	char site[32];
-	size_t length;
-} ConfigRecord;
-
-typedef struct ConfigRecords {
-	ConfigRecord *items;
-	size_t count;
-	size_t capacity;
-} ConfigRecords;
-
-// Fills `out` with the encoded bytes and, if `records` is non-NULL, the write records (they tile
-// `out`). On failure returns false with a message in `error`.
+// Fills `out` with the encoded bytes. On failure returns false with a message in `error`.
 bool matchConfig_encode(
 	const char *json,
 	size_t length,
 	ByteBuffer *out,
-	ConfigRecords *records,
 	char *error,
 	size_t errorSize
 );
-
-void matchConfig_freeRecords(ConfigRecords *records);

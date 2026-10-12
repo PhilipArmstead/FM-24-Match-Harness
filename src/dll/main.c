@@ -51,7 +51,6 @@ static void runJob(void) {
 		case JOB_RUN: jobs_run(&job); break;
 		case JOB_BUILD_NEXT: jobs_buildNext(&job, directory); break;
 		case JOB_EXPORT: jobs_export(&job, directory); break;
-		case JOB_REBUILD: jobs_rebuild(&job, directory); break;
 		case JOB_SENSITIVITY: jobs_sensitivity(&job, directory); break;
 	}
 	job_free(&job);

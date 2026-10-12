@@ -32,7 +32,6 @@ add_library(harness SHARED
 	src/dll/game.c
 	src/dll/job.c
 	src/dll/job_build.c
-	src/dll/job_rebuild.c
 	src/dll/job_run.c
 	src/dll/job_sensitivity.c
 	src/dll/labels.c

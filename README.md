@@ -17,7 +17,7 @@ There are two artifacts produced by this build:
 
 - **`fm24_harness_p<N>.dll`** (`src/dll/`): injected into `fm.exe`. It checks
   the game build, then runs jobs: play matches, build the next fixture,
-  export or rebuild configs.
+  export configs.
 - **`fm24ctl.exe`** (`src/runner/`): injects the DLL, exports fixtures in to
   editable JSON files and passes them to seeded jobs.
 

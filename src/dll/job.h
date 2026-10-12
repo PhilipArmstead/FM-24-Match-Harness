@@ -19,7 +19,6 @@ typedef enum JobCommand {
 	JOB_RUN,         // play an input with a list of seeds, write a CSV
 	JOB_BUILD_NEXT,  // build the human manager's next fixture to .bin or .json
 	JOB_EXPORT,      // convert a .bin input into a .json config
-	JOB_REBUILD,     // recompute what the game derives from edited player ratings
 	JOB_SENSITIVITY, // which derived values change when each player rating changes
 } JobCommand;
 
@@ -27,13 +26,11 @@ typedef struct Job {
 	JobCommand command;
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t output[HARNESS_PATH_LENGTH];
-	wchar_t records[HARNESS_PATH_LENGTH]; // rebuild: the config's write records ("site length" lines)
 	wchar_t profile[HARNESS_PATH_LENGTH]; // run: optional sample file (see profiler.h)
 	uint32_t *seeds;                      // run
 	size_t seedCount;
 	unsigned threads; // run: worker threads (1..HARNESS_MAX_THREADS)
 	bool keepSeed;    // run: play the input's own seed once
-	bool asBuilt;     // rebuild: write the game's build with the config's ratings, no merge
 	bool detailed;    // run: also write per-player and per-team statistics (match_stats.h)
 	bool hasSeed;     // build_next, sensitivity: use `seed` instead of a clock value / 1
 	uint32_t seed;
@@ -54,5 +51,4 @@ void job_writeResult(const wchar_t *directory, const char *format, ...)
 void jobs_run(const Job *job);
 void jobs_buildNext(const Job *job, const wchar_t *directory);
 void jobs_export(const Job *job, const wchar_t *directory);
-void jobs_rebuild(const Job *job, const wchar_t *directory);
 void jobs_sensitivity(const Job *job, const wchar_t *directory);
