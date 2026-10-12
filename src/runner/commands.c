@@ -361,15 +361,34 @@ int commands_run(int argc, wchar_t **argv) {
 	return printSummary(&output);
 }
 
+// get-next-fixture's options after the output path: only `--seed N` (a decimal u32).
+static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size) {
+	for (int i = 3; i < argc; ++i) {
+		if (wcscmp(argv[i], L"--seed") != 0 || i + 1 >= argc) {
+			fprintf(stderr, "unknown option or missing value: %ls\n", argv[i]);
+			return false;
+		}
+		const wchar_t *value = argv[++i];
+		wchar_t *end = NULL;
+		errno = 0;
+		unsigned long long number = wcstoull(value, &end, 10);
+		if (errno != 0 || end == value || *end != 0 || value[0] == L'-' || number > UINT32_MAX) {
+			fprintf(stderr, "--seed must be a number from 0 to %u\n", UINT32_MAX);
+			return false;
+		}
+		(void)snprintf(seed, size, "%llu", number);
+	}
+	return true;
+}
+
 int commands_getNextFixture(int argc, wchar_t **argv) {
-	if (argc < 3) {
+	char seed[32] = "random";
+	if (argc < 3 || !parseFixtureOptions(argc, argv, seed, sizeof seed)) {
 		fprintf(stderr, "usage: fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n");
 		return EXIT_USAGE;
 	}
-	char seed[32] = "random";
 	Path output;
-	if (!absolutePath(argv[2], &output) ||
-			(argc >= 5 && wcscmp(argv[3], L"--seed") == 0 && !paths_toUtf8(argv[4], seed, sizeof seed))) {
+	if (!absolutePath(argv[2], &output)) {
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
