@@ -168,6 +168,9 @@ static size_t writeField(
 		writeEscapedString(file, label->name);
 		fprintf(file, ", ");
 	}
+	if (label->member) {
+		fprintf(file, "\"member\": \"%s\", ", label->member);
+	}
 	if (label->player[0]) {
 		fprintf(file, "\"player\": ");
 		writeEscapedString(file, label->player);

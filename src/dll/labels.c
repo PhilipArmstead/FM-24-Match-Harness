@@ -4,6 +4,7 @@
 #include "labels.h"
 
 #include "memory.h"
+#include "site_members.h"
 #include "sites.h"
 
 #include <stdio.h>
@@ -125,6 +126,82 @@ static const char *const ratingNames[69] = {
 	"concentration",
 };
 
+// Role IDs are bit indices of the game's role mask (sub_140ABC790); "" = not seen.
+static const char *const roleNames[] = {
+	"goalkeeper",
+	"central_defender",
+	"full_back",
+	"wing_back",
+	"defensive_midfielder",
+	"central_midfielder",
+	"wide_midfielder",
+	"winger",
+	"",
+	"attacking_midfielder",
+	"deep_lying_forward",
+	"advanced_forward",
+	"sweeper_keeper",
+	"",
+	"libero",
+	"deep_lying_playmaker",
+	"box_to_box_midfielder",
+	"advanced_playmaker",
+	"target_man",
+	"poacher",
+	"complete_forward",
+	"",
+	"",
+	"",
+	"ball_playing_defender",
+	"",
+	"",
+	"inside_forward",
+	"ball_winning_midfielder",
+	"no_nonsense_centre_back",
+	"defensive_winger",
+	"pressing_forward",
+	"trequartista",
+	"anchor_man",
+	"",
+	"half_back",
+	"no_nonsense_full_back",
+	"enganche",
+	"complete_wing_back",
+	"regista",
+	"false_nine",
+	"shadow_striker",
+	"wide_target_man",
+	"wide_playmaker",
+	"inverted_wing_back",
+	"raumdeuter",
+	"roaming_playmaker",
+	"mezzala",
+	"carrilero",
+	"inverted_winger",
+	"segundo_volante",
+	"wide_centre_back",
+	"inverted_full_back",
+};
+
+// Position codes in role rating entries (code 1 has not been seen).
+static const char *const positionNames[] = {
+	"GK",
+	"",
+	"DR",
+	"DL",
+	"DC",
+	"WBR",
+	"WBL",
+	"DM",
+	"MR",
+	"ML",
+	"MC",
+	"AMR",
+	"AML",
+	"AMC",
+	"ST",
+};
+
 const char *labels_ratingName(size_t index) {
 	return index < sizeof ratingNames / sizeof ratingNames[0] ? ratingNames[index] : "?";
 }
@@ -177,6 +254,62 @@ static void appendIndexedBlock(Walk *walk, const char *text, int index) {
 	(void)snprintf(walk->block + length, sizeof walk->block - length, ".%s[%d]", text, index);
 }
 
+// "winger@AMR" for the role rating entry whose rating is record `first`.
+static void roleEntryName(const Walk *walk, size_t first, char *out, size_t size) {
+	const Serialised *serialised = walk->serialised;
+	if (first + 2 >= serialised->recordCount) {
+		(void)snprintf(out, size, "?");
+		return;
+	}
+	unsigned role = serialised->bytes.data[serialised->records[first + 1].offset];
+	unsigned position = serialised->bytes.data[serialised->records[first + 2].offset];
+	const char *roleName = role < sizeof roleNames / sizeof roleNames[0] ? roleNames[role] : "";
+	const char *positionName =
+		position < sizeof positionNames / sizeof positionNames[0] ? positionNames[position] : "";
+	char roleText[16];
+	char positionText[16];
+	(void)snprintf(roleText, sizeof roleText, "role%u", role);
+	(void)snprintf(positionText, sizeof positionText, "pos%u", position);
+	(void)snprintf(
+		out,
+		size,
+		"%s@%s",
+		roleName[0] ? roleName : roleText,
+		positionName[0] ? positionName : positionText
+	);
+}
+
+// Names the derived values in a player's data whose meaning is known (docs/PLAN.md Phase 11).
+static void labelDerivedField(Walk *walk, size_t i, const TraceRecord *record) {
+	FieldLabel *label = &walk->labels[i];
+	char entry[64];
+	switch (record->site) {
+		case SITE_PLAYER_ABILITY:
+			(void)snprintf(label->name, sizeof label->name, "%s.ability", walk->block);
+			break;
+		case SITE_PLAYER_LEADERSHIP:
+			(void)snprintf(label->name, sizeof label->name, "%s.leadership_value", walk->block);
+			break;
+		case SITE_ROLE_RATING:
+			roleEntryName(walk, i, entry, sizeof entry);
+			(void)snprintf(label->name, sizeof label->name, "%s.role_rating[%s]", walk->block, entry);
+			break;
+		case SITE_ROLE_ID:
+			roleEntryName(walk, i - 1, entry, sizeof entry);
+			(void)snprintf(
+				label->name, sizeof label->name, "%s.role_rating[%s].role", walk->block, entry
+			);
+			break;
+		case SITE_ROLE_POSITION:
+			roleEntryName(walk, i - 2, entry, sizeof entry);
+			(void)snprintf(
+				label->name, sizeof label->name, "%s.role_rating[%s].position", walk->block, entry
+			);
+			break;
+		default: break;
+	}
+}
+
 static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record) {
 	if (record->site == SITE_PLAYER_FIRST) {
 		++walk->player;
@@ -199,6 +332,7 @@ static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record) {
 		(void)snprintf(label->name, sizeof label->name, "%s.ratings", walk->block);
 		label->ratings = true;
 	}
+	labelDerivedField(walk, i, record);
 }
 
 static void labelTeamField(
@@ -246,6 +380,7 @@ static void labelRecord(Walk *walk, size_t i) {
 	}
 	FieldLabel *label = &walk->labels[i];
 	memcpy(label->block, walk->block, sizeof label->block);
+	label->member = siteMembers_find(record->site);
 	if (strcmp(walk->block, walk->previousBlock) != 0 && label->name[0] == 0) {
 		(void)snprintf(label->name, sizeof label->name, "%s", walk->block);
 	}

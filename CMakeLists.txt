@@ -43,6 +43,8 @@ add_library(harness SHARED
 	src/dll/output.c
 	src/dll/profiler.c
 	src/dll/rng.c
+	src/dll/site_lookup.c
+	src/dll/site_members.c
 	src/dll/stream.c
 	src/dll/trace.c
 )
