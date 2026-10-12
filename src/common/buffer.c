@@ -23,10 +23,6 @@ bool buffer_append(ByteBuffer *buffer, const void *bytes, size_t size) {
 	return true;
 }
 
-bool buffer_appendString(ByteBuffer *buffer, const char *text) {
-	return buffer_append(buffer, text, strlen(text));
-}
-
 bool buffer_appendFormat(ByteBuffer *buffer, const char *format, ...) {
 	va_list args;
 	va_start(args, format);

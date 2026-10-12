@@ -18,9 +18,6 @@ typedef struct ByteBuffer {
 // Appends `size` bytes; returns false if memory runs out (the buffer is unchanged).
 bool buffer_append(ByteBuffer *buffer, const void *bytes, size_t size);
 
-// Appends a NUL-terminated string (without its terminator).
-bool buffer_appendString(ByteBuffer *buffer, const char *text);
-
 // Appends printf-style formatted text.
 bool buffer_appendFormat(ByteBuffer *buffer, const char *format, ...)
 	__attribute__((format(gnu_printf, 2, 3)));
