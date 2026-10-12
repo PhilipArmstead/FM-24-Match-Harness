@@ -27,7 +27,7 @@ enum {
 	STATS_RATING = 118,     // i16 rating x 100
 	STATS_OFF_MINUTE = 158, // u8 minute substituted off
 	STATS_ON_MINUTE = 163,  // u8 minute substituted on
-	STATS_OUT_MINUTE = 164, // u8 minute off otherwise (e.g. injured)
+	STATS_OUT_MINUTE = 164, // u8 minute off injured
 	STATS_SENT_OFF_MINUTE = 166,
 	FLAG_SUBSTITUTE = 0x20,
 	NO_PERSON = -1,
@@ -169,6 +169,7 @@ static const char *const sideNames[] = {"home", "away"};
 
 static double exactValue(double value);
 static double playerValue(const uint8_t *stats, const PlayerValue *value);
+static bool appeared(const uint8_t *stats, int minutes);
 static int minutesPlayed(const uint8_t *stats, int matchLength);
 static const uint8_t *playerStats(const uint8_t *team, int index);
 static int squadSize(const uint8_t *team);
@@ -311,12 +312,13 @@ static void addTeam(
 		const uint8_t *matchPlayer = *(const uint8_t *const *)(team + TEAM_PLAYERS + 8 * (size_t)i);
 		player->uniqueId = memory_loadU32(matchPlayer + PLAYER_UNIQUE_ID);
 		int minutes = minutesPlayed(stats, matchLength);
-		if (minutes > 0) {
-			++player->appearances;
-			player->starts += !(memory_loadU32(stats + STATS_FLAGS) & FLAG_SUBSTITUTE);
-			player->minutes += minutes;
-			player->ratingSum += (int16_t)memory_loadU16(stats + STATS_RATING);
+		if (!appeared(stats, minutes)) {
+			continue;
 		}
+		++player->appearances;
+		player->starts += !(memory_loadU32(stats + STATS_FLAGS) & FLAG_SUBSTITUTE);
+		player->minutes += minutes;
+		player->ratingSum += (int16_t)memory_loadU16(stats + STATS_RATING);
 		for (size_t v = 0; v < MATCH_STATS_PLAYER_VALUES; ++v) {
 			double value = playerValue(stats, &playerValues[v]);
 			player->values[v] += value;
@@ -421,4 +423,13 @@ static void writeTeams(FILE *file, const MatchStatsTotals *totals) {
 // in.
 static double exactValue(double value) {
 	return ldexp(nearbyint(ldexp(value, EXACT_FRACTION_BITS)), -EXACT_FRACTION_BITS);
+}
+
+// Whether the player took part: minutes played, or brought on (a substitute brought on in stoppage
+// time at 90 has no whole minutes in the game's count, but did play).
+static bool appeared(const uint8_t *stats, int minutes) {
+	if ((int32_t)memory_loadU32(stats + STATS_PERSON) == NO_PERSON) {
+		return false;
+	}
+	return minutes > 0 || stats[STATS_ON_MINUTE] != 0;
 }

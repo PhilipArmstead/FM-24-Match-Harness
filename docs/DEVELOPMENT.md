@@ -79,9 +79,11 @@ next to the DLL there.
      interceptions, clearances, blocks, headers, fouls, offsides, cards, set
      pieces taken, goalkeeper saves, goals conceded and distance (km). Teams:
      goals, possession and the team totals. The data is the engine's own
-     per-player stats objects; names and how sure each is are in
-     `docs/PLAN.md`, Phase 18. The human side makes no substitutions in a
-     harness run
+     per-player stats objects
+   - the human side makes **no substitutions** in a harness run, not even for
+     injuries: an injured or sent-off player is not replaced, so the team
+     plays on a man short (this is why its starters can average under 90
+     minutes)
 4. `fm24ctl get-next-fixture <out.json|out.bin> [--seed N]` builds the human
    manager's next fixture (~0.2 s). The seed defaults to a clock value, like
    the game. The same seed gives a byte-identical file, because the seed also

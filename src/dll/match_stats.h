@@ -20,7 +20,7 @@ enum {
 
 typedef struct PlayerTotals {
 	uint32_t uniqueId;
-	unsigned appearances; // matches with minutes played
+	unsigned appearances; // matches played in (from the start, or brought on)
 	unsigned starts;      // appearances from the start
 	double minutes;
 	int64_t ratingSum; // rating x 100, over appearances (an integer, so the sum is exact)

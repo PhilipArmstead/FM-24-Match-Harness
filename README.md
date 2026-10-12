@@ -75,10 +75,8 @@ There's a few things you might want to do with this feature:
 2. Repeatedly tweak the attributes of players to find what impacts the result
    the most significantly
 
-I suggest knocking together a Python script
-(see [/experiments for examples](./experiments)) to repeatedly run the fixture
-against a few hundred seeds, tweaking it and running again, then tabulating the
-results.
+I suggest knocking together a Python script repeatedly run the fixture against a
+few hundred seeds, tweaking it and running again, then tabulating the results.
 
 It should be trivial for an LLM to read the fixture JSON file--which I've taken
 great pains to annotate--and modify it on a loop until it's iterated over all
