@@ -11,8 +11,11 @@
 // keeps waiting on its own, differently named events and never sees the new jobs.
 #pragma once
 
-#define HARNESS_PROTOCOL L"13"
+#define HARNESS_PROTOCOL L"29"
 #define HARNESS_DLL_NAME (L"fm24_harness_p" HARNESS_PROTOCOL L".dll")
+// Injected when HARNESS_DLL_NAME is missing (e.g. a renamed release copy). It must have been built
+// with the same HARNESS_PROTOCOL, or the runner never sees its events.
+#define HARNESS_DLL_FALLBACK_NAME L"fm24_harness.dll"
 #define HARNESS_EVENT_GO (L"Local\\FM24Harness_Go_" HARNESS_PROTOCOL)
 #define HARNESS_EVENT_DONE (L"Local\\FM24Harness_Done_" HARNESS_PROTOCOL)
 

@@ -21,6 +21,7 @@ static bool isText(const uint8_t *text, size_t length);
 static bool isStringPair(const Serialised *serialised, size_t i);
 static void writeRatings(FILE *file, const uint8_t *value);
 static void writeScalar(FILE *file, const uint8_t *value, uint32_t length);
+static void writeFlags(FILE *file, const FieldLabel *label, const uint8_t *value, uint32_t length);
 static size_t writeField(
 	FILE *file,
 	const Serialised *serialised,
@@ -148,6 +149,30 @@ static void writeScalar(FILE *file, const uint8_t *value, uint32_t length) {
 	}
 }
 
+// Writes "flags": the names of the set bits of a tactic bit set ("bit N" if unknown), if any.
+static void writeFlags(FILE *file, const FieldLabel *label, const uint8_t *value, uint32_t length) {
+	if (label->flags == FLAGS_NONE || (length != 4 && length != 8)) {
+		return;
+	}
+	uint64_t bits = length == 4 ? memory_loadU32(value) : memory_loadU64(value);
+	fprintf(file, "\"flags\": [");
+	const char *separator = "";
+	for (unsigned bit = 0; bit < length * 8; ++bit) {
+		if (!(bits >> bit & 1)) {
+			continue;
+		}
+		const char *name = labels_flagName(label, bit);
+		fprintf(file, "%s", separator);
+		if (name) {
+			writeEscapedString(file, name);
+		} else {
+			fprintf(file, "\"bit %u\"", bit);
+		}
+		separator = ", ";
+	}
+	fprintf(file, "], ");
+}
+
 // Writes record i (and i + 1 when they form a string); returns how many records it consumed.
 static size_t writeField(
 	FILE *file,
@@ -176,6 +201,7 @@ static size_t writeField(
 		writeEscapedString(file, label->player);
 		fprintf(file, ", ");
 	}
+	writeFlags(file, label, value, record->length);
 	if (label->ratings) {
 		writeRatings(file, value);
 	} else if (isStringPair(serialised, i)) {

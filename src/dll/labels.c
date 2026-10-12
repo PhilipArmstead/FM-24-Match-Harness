@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "site_members.h"
 #include "sites.h"
+#include "tactic_flags.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,8 +203,141 @@ static const char *const positionNames[] = {
 	"ST",
 };
 
+// Extra bits of tactic position and role masks (docs/PLAN.md Phase 15, 17).
+enum {
+	POSITION_LEFT_BIT = 20,
+	POSITION_RIGHT_BIT = 21,
+	DUTY_DEFEND_BIT = 21,
+	DUTY_SUPPORT_BIT = 22,
+	DUTY_ATTACK_BIT = 23,
+	DUTY_AUTOMATIC_BIT = 34,
+};
+
+// Walk state: where in the match the current record is.
+typedef struct Walk {
+	const Serialised *serialised;
+	const PeopleIndex *people;
+	FieldLabel *labels;
+	const char *side; // "home" / "away" while inside a team
+	int player;
+	int backroom;
+	size_t playerStart;
+	bool playerNamed;
+	int tacticSlot;    // formation slot of the current tactic plan
+	unsigned planRole; // role keying the current set of player instructions
+	char block[LABEL_LENGTH];
+	char previousBlock[LABEL_LENGTH];
+} Walk;
+
+enum { TACTIC_SLOT_CALL_STRIDE = 0x17 }; // bytes between the slot serialiser calls
+
+static const char *positionFlag(unsigned bit);
+static const char *roleFlag(unsigned bit);
+static const char *lookup(const SiteName *table, size_t count, uint32_t site);
+static int pathHead(const char *path, uint32_t *outer, uint32_t *next);
+static void appendBlock(Walk *walk, const char *text);
+static void appendIndexedBlock(Walk *walk, const char *text, int index);
+static void roleText(unsigned role, char *out, size_t size);
+static void roleEntryName(const Walk *walk, size_t first, char *out, size_t size);
+static void labelDerivedField(Walk *walk, size_t i, const TraceRecord *record);
+static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record);
+static void labelTeamField(
+	Walk *walk,
+	size_t i,
+	const TraceRecord *record,
+	const char *side,
+	int depth,
+	uint32_t teamSite
+);
+static const char *tacticPart(uint32_t address, int *slot);
+static bool insideTactic(uint32_t address);
+static int runIndex(const Walk *walk, size_t i);
+static unsigned lowestBit(uint64_t mask);
+static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
+static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record);
+static void labelRecord(Walk *walk, size_t i);
+static size_t countPlayers(const Serialised *serialised);
+
 const char *labels_ratingName(size_t index) {
 	return index < sizeof ratingNames / sizeof ratingNames[0] ? ratingNames[index] : "?";
+}
+
+const char *labels_flagName(const FieldLabel *label, unsigned bit) {
+	switch (label->flags) {
+		case FLAGS_TEAM_INSTRUCTIONS: return tacticFlags_teamInstruction(label->flagWord, bit);
+		case FLAGS_PLAYER_INSTRUCTIONS: return tacticFlags_playerInstruction(label->flagWord, bit);
+		case FLAGS_POSITION: return positionFlag(bit);
+		case FLAGS_ROLE: return roleFlag(bit);
+		case FLAGS_NONE:
+		default: return NULL;
+	}
+}
+
+FieldLabel *labels_compute(const Serialised *serialised, const PeopleIndex *people) {
+	FieldLabel *labels =
+		calloc(serialised->recordCount ? serialised->recordCount : 1, sizeof *labels);
+	if (!labels) {
+		return NULL;
+	}
+	Walk walk = {
+		.serialised = serialised, .people = people, .labels = labels, .player = -1, .backroom = -1};
+	for (size_t i = 0; i < serialised->recordCount; ++i) {
+		labelRecord(&walk, i);
+	}
+	return labels;
+}
+
+PlayerRatings *
+labels_players(const Serialised *serialised, const PeopleIndex *people, size_t *count) {
+	*count = 0;
+	PlayerRatings *players = calloc(countPlayers(serialised) + 1, sizeof *players);
+	bool haveId = false;
+	for (size_t i = 0; players && i < serialised->recordCount; ++i) {
+		const TraceRecord *record = &serialised->records[i];
+		const uint8_t *value = serialised->bytes.data + record->offset;
+		if (record->site == SITE_PLAYER_FIRST) {
+			players[(*count)++] = (PlayerRatings){0};
+			haveId = false;
+		}
+		if (*count == 0) {
+			continue;
+		}
+		PlayerRatings *player = &players[*count - 1];
+		if (record->site == SITE_PLAYER_UID && record->length == 4 && !haveId &&
+				database_findPerson(people, memory_loadU32(value))) {
+			player->uniqueId = memory_loadU32(value);
+			haveId = true;
+		}
+		if (record->site == SITE_PLAYER_RATINGS && record->length == PLAYER_RATING_COUNT) {
+			memcpy(player->ratings, value, PLAYER_RATING_COUNT);
+		}
+	}
+	return players;
+}
+
+static const char *positionFlag(unsigned bit) {
+	if (bit < sizeof positionNames / sizeof positionNames[0] && positionNames[bit][0]) {
+		return positionNames[bit];
+	}
+	switch (bit) {
+		case POSITION_LEFT_BIT: return "left";
+		case POSITION_RIGHT_BIT: return "right";
+		default: return NULL;
+	}
+}
+
+static const char *roleFlag(unsigned bit) {
+	switch (bit) {
+		case DUTY_DEFEND_BIT: return "duty: defend";
+		case DUTY_SUPPORT_BIT: return "duty: support";
+		case DUTY_ATTACK_BIT: return "duty: attack";
+		case DUTY_AUTOMATIC_BIT: return "duty: automatic";
+		default: break;
+	}
+	if (bit < sizeof roleNames / sizeof roleNames[0] && roleNames[bit][0]) {
+		return roleNames[bit];
+	}
+	return NULL;
 }
 
 static const char *lookup(const SiteName *table, size_t count, uint32_t site) {
@@ -229,20 +363,6 @@ static int pathHead(const char *path, uint32_t *outer, uint32_t *next) {
 	return 2;
 }
 
-// Walk state: where in the match the current record is.
-typedef struct Walk {
-	const Serialised *serialised;
-	const PeopleIndex *people;
-	FieldLabel *labels;
-	const char *side; // "home" / "away" while inside a team
-	int player;
-	int backroom;
-	size_t playerStart;
-	bool playerNamed;
-	char block[LABEL_LENGTH];
-	char previousBlock[LABEL_LENGTH];
-} Walk;
-
 // Extends the current block label: ".text" or ".text[index]".
 static void appendBlock(Walk *walk, const char *text) {
 	size_t length = strlen(walk->block);
@@ -252,6 +372,16 @@ static void appendBlock(Walk *walk, const char *text) {
 static void appendIndexedBlock(Walk *walk, const char *text, int index) {
 	size_t length = strlen(walk->block);
 	(void)snprintf(walk->block + length, sizeof walk->block - length, ".%s[%d]", text, index);
+}
+
+// The role's name, or "role<id>" if it has none.
+static void roleText(unsigned role, char *out, size_t size) {
+	const char *name = role < sizeof roleNames / sizeof roleNames[0] ? roleNames[role] : "";
+	if (name[0]) {
+		(void)snprintf(out, size, "%s", name);
+	} else {
+		(void)snprintf(out, size, "role%u", role);
+	}
 }
 
 // "winger@AMR" for the role rating entry whose rating is record `first`.
@@ -367,6 +497,144 @@ static void labelTeamField(
 	}
 }
 
+// The tactic part a return address inside the tactic serialiser stands for, or NULL. `slot` gets
+// the slot index for the slot parts (else -1).
+static const char *tacticPart(uint32_t address, int *slot) {
+	*slot = -1;
+	if (address >= SITE_TACTIC_SLOTS_6920_FIRST && address <= SITE_TACTIC_SLOTS_6920_LAST) {
+		*slot = (int)((address - SITE_TACTIC_SLOTS_6920_FIRST) / TACTIC_SLOT_CALL_STRIDE);
+		return "slot_6920";
+	}
+	if (address >= SITE_TACTIC_FORMATION_FIRST && address <= SITE_TACTIC_FORMATION_LAST) {
+		*slot = (int)((address - SITE_TACTIC_FORMATION_FIRST) / TACTIC_SLOT_CALL_STRIDE);
+		return "formation";
+	}
+	switch (address) {
+		case SITE_TACTIC_TAKERS: return "takers";
+		case SITE_TACTIC_PART_4240: return "part_4240";
+		case SITE_TACTIC_PLAN_0: return "plan[0]";
+		case SITE_TACTIC_PLAN_1: return "plan[1]";
+		case SITE_TACTIC_SET_PIECES: return "set_pieces";
+		default: return NULL;
+	}
+}
+
+static bool insideTactic(uint32_t address) {
+	return address > SITE_TACTIC_START && address <= SITE_TACTIC_END;
+}
+
+// Index of record `i` among the consecutive records written at its site.
+static int runIndex(const Walk *walk, size_t i) {
+	const TraceRecord *records = walk->serialised->records;
+	int index = 0;
+	for (size_t j = i; j > 0 && records[j - 1].site == records[i].site; --j) {
+		++index;
+	}
+	return index;
+}
+
+// The lowest set bit of a role mask: the role ID (64 if none).
+static unsigned lowestBit(uint64_t mask) {
+	unsigned bit = 0;
+	while (bit < 64 && !(mask >> bit & 1)) {
+		++bit;
+	}
+	return bit;
+}
+
+// Names the fields of a tactic plan whose meaning is known (docs/PLAN.md Phase 15).
+static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record) {
+	FieldLabel *label = &walk->labels[i];
+	const char *block = walk->block;
+	char role[32];
+	switch (record->site) {
+		case SITE_TACTIC_MENTALITY:
+			walk->tacticSlot = -1;
+			(void)snprintf(label->name, sizeof label->name, "%s.mentality", block);
+			break;
+		case SITE_TACTIC_TEAM_INSTRUCTIONS:
+			label->flags = FLAGS_TEAM_INSTRUCTIONS;
+			label->flagWord = (unsigned)runIndex(walk, i);
+			(void)snprintf(
+				label->name, sizeof label->name, "%s.team_instructions[%d]", block, runIndex(walk, i)
+			);
+			break;
+		case SITE_TACTIC_SLOT_POSITION:
+			++walk->tacticSlot;
+			label->flags = FLAGS_POSITION;
+			(void)snprintf(
+				label->name, sizeof label->name, "%s.slot[%d].position", block, walk->tacticSlot
+			);
+			break;
+		case SITE_TACTIC_SLOT_ROLE:
+			label->flags = FLAGS_ROLE;
+			(void)snprintf(label->name, sizeof label->name, "%s.slot[%d].role", block, walk->tacticSlot);
+			break;
+		case SITE_TACTIC_INSTRUCTIONS_ROLE:
+			walk->planRole = record->length == 8
+												 ? lowestBit(memory_loadU64(walk->serialised->bytes.data + record->offset))
+												 : 64;
+			roleText(walk->planRole, role, sizeof role);
+			(void)snprintf(
+				label->name,
+				sizeof label->name,
+				"%s.slot[%d].player_instructions[%s]",
+				block,
+				walk->tacticSlot,
+				role
+			);
+			break;
+		case SITE_TACTIC_INSTRUCTIONS_BITS:
+			label->flags = FLAGS_PLAYER_INSTRUCTIONS;
+			label->flagWord = (unsigned)runIndex(walk, i);
+			roleText(walk->planRole, role, sizeof role);
+			(void)snprintf(
+				label->name,
+				sizeof label->name,
+				"%s.slot[%d].player_instructions[%s].bits[%d]",
+				block,
+				walk->tacticSlot,
+				role,
+				runIndex(walk, i)
+			);
+			break;
+		default: break;
+	}
+}
+
+// Extends the block label with ".tactic[.part]" if the record was written by the tactic
+// serialiser: one of its return addresses is on the record's call path, or it wrote it directly.
+static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record) {
+	const char *path = walk->serialised->paths[record->path];
+	bool inTactic = insideTactic(record->site);
+	const char *part = NULL;
+	int slot = -1;
+	for (const char *token = path; *token;) {
+		char *end = NULL;
+		uint32_t address = (uint32_t)strtoul(token, &end, 16);
+		if (end == token) {
+			break;
+		}
+		if (insideTactic(address)) {
+			inTactic = true;
+			part = tacticPart(address, &slot);
+		}
+		token = *end == '>' ? end + 1 : end;
+	}
+	if (!inTactic) {
+		return;
+	}
+	appendBlock(walk, "tactic");
+	if (part && slot >= 0) {
+		appendIndexedBlock(walk, part, slot);
+	} else if (part) {
+		appendBlock(walk, part);
+	}
+	if (part && strncmp(part, "plan", 4) == 0) {
+		labelPlanField(walk, index, record);
+	}
+}
+
 static void labelRecord(Walk *walk, size_t i) {
 	const TraceRecord *record = &walk->serialised->records[i];
 	uint32_t outer = 0;
@@ -377,6 +645,7 @@ static void labelRecord(Walk *walk, size_t i) {
 	(void)snprintf(walk->block, sizeof walk->block, "%s", part ? part : "unknown");
 	if (part && (strcmp(part, "home") == 0 || strcmp(part, "away") == 0)) {
 		labelTeamField(walk, i, record, part, depth, next);
+		appendTacticPart(walk, i, record);
 	}
 	FieldLabel *label = &walk->labels[i];
 	memcpy(label->block, walk->block, sizeof label->block);
@@ -387,52 +656,10 @@ static void labelRecord(Walk *walk, size_t i) {
 	memcpy(walk->previousBlock, walk->block, sizeof walk->block);
 }
 
-FieldLabel *labels_compute(const Serialised *serialised, const PeopleIndex *people) {
-	FieldLabel *labels =
-		calloc(serialised->recordCount ? serialised->recordCount : 1, sizeof *labels);
-	if (!labels) {
-		return NULL;
-	}
-	Walk walk = {
-		.serialised = serialised, .people = people, .labels = labels, .player = -1, .backroom = -1};
-	for (size_t i = 0; i < serialised->recordCount; ++i) {
-		labelRecord(&walk, i);
-	}
-	return labels;
-}
-
 static size_t countPlayers(const Serialised *serialised) {
 	size_t count = 0;
 	for (size_t i = 0; i < serialised->recordCount; ++i) {
 		count += serialised->records[i].site == SITE_PLAYER_FIRST;
 	}
 	return count;
-}
-
-PlayerRatings *
-labels_players(const Serialised *serialised, const PeopleIndex *people, size_t *count) {
-	*count = 0;
-	PlayerRatings *players = calloc(countPlayers(serialised) + 1, sizeof *players);
-	bool haveId = false;
-	for (size_t i = 0; players && i < serialised->recordCount; ++i) {
-		const TraceRecord *record = &serialised->records[i];
-		const uint8_t *value = serialised->bytes.data + record->offset;
-		if (record->site == SITE_PLAYER_FIRST) {
-			players[(*count)++] = (PlayerRatings){0};
-			haveId = false;
-		}
-		if (*count == 0) {
-			continue;
-		}
-		PlayerRatings *player = &players[*count - 1];
-		if (record->site == SITE_PLAYER_UID && record->length == 4 && !haveId &&
-				database_findPerson(people, memory_loadU32(value))) {
-			player->uniqueId = memory_loadU32(value);
-			haveId = true;
-		}
-		if (record->site == SITE_PLAYER_RATINGS && record->length == PLAYER_RATING_COUNT) {
-			memcpy(player->ratings, value, PLAYER_RATING_COUNT);
-		}
-	}
-	return players;
 }

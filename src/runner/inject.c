@@ -17,6 +17,43 @@
 
 enum { LOAD_TIMEOUT_MS = 30000 };
 
+static DWORD findGame(void);
+static bool findDll(wchar_t *dllPath, size_t size);
+static bool loadRemotely(HANDLE process, const wchar_t *dllPath);
+
+bool inject_harness(void) {
+	DWORD pid = findGame();
+	if (!pid) {
+		fprintf(stderr, "fm.exe is not running\n");
+		return false;
+	}
+	wchar_t dllPath[HARNESS_PATH_LENGTH];
+	if (!findDll(dllPath, HARNESS_PATH_LENGTH)) {
+		fprintf(
+			stderr,
+			"neither %ls nor %ls found next to fm24ctl.exe (build it first)\n",
+			HARNESS_DLL_NAME,
+			HARNESS_DLL_FALLBACK_NAME
+		);
+		return false;
+	}
+	HANDLE process = OpenProcess(
+		PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+		FALSE,
+		pid
+	);
+	if (!process) {
+		fprintf(stderr, "OpenProcess failed (%lu)\n", GetLastError());
+		return false;
+	}
+	bool ok = loadRemotely(process, dllPath);
+	CloseHandle(process);
+	if (ok) {
+		printf("injected into fm.exe (pid %lu); see harness.log for the build check\n", pid);
+	}
+	return ok;
+}
+
 static DWORD findGame(void) {
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE) {
@@ -32,6 +69,30 @@ static DWORD findGame(void) {
 	}
 	CloseHandle(snapshot);
 	return pid;
+}
+
+// The harness DLL next to fm24ctl.exe: this protocol's build, else HARNESS_DLL_FALLBACK_NAME
+// (with a note, since only a build of the same protocol will answer). False if neither exists.
+static bool findDll(wchar_t *dllPath, size_t size) {
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	if (!paths_executableDirectory(directory, HARNESS_PATH_LENGTH)) {
+		return false;
+	}
+	if (paths_join(dllPath, size, directory, HARNESS_DLL_NAME) &&
+			GetFileAttributesW(dllPath) != INVALID_FILE_ATTRIBUTES) {
+		return true;
+	}
+	if (paths_join(dllPath, size, directory, HARNESS_DLL_FALLBACK_NAME) &&
+			GetFileAttributesW(dllPath) != INVALID_FILE_ATTRIBUTES) {
+		printf(
+			"%ls not found; injecting %ls (it must be a protocol %ls build)\n",
+			HARNESS_DLL_NAME,
+			HARNESS_DLL_FALLBACK_NAME,
+			HARNESS_PROTOCOL
+		);
+		return true;
+	}
+	return false;
 }
 
 // Runs LoadLibraryW(dllPath) in the game; returns false (and prints why) on failure.
@@ -69,35 +130,4 @@ static bool loadRemotely(HANDLE process, const wchar_t *dllPath) {
 		fprintf(stderr, "LoadLibrary failed inside fm.exe\n");
 	}
 	return loaded != 0;
-}
-
-bool inject_harness(void) {
-	DWORD pid = findGame();
-	if (!pid) {
-		fprintf(stderr, "fm.exe is not running\n");
-		return false;
-	}
-	wchar_t directory[HARNESS_PATH_LENGTH];
-	wchar_t dllPath[HARNESS_PATH_LENGTH];
-	if (!paths_executableDirectory(directory, HARNESS_PATH_LENGTH) ||
-			!paths_join(dllPath, HARNESS_PATH_LENGTH, directory, HARNESS_DLL_NAME) ||
-			GetFileAttributesW(dllPath) == INVALID_FILE_ATTRIBUTES) {
-		fprintf(stderr, "%ls not found next to fm24ctl.exe (build it first)\n", HARNESS_DLL_NAME);
-		return false;
-	}
-	HANDLE process = OpenProcess(
-		PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
-		FALSE,
-		pid
-	);
-	if (!process) {
-		fprintf(stderr, "OpenProcess failed (%lu)\n", GetLastError());
-		return false;
-	}
-	bool ok = loadRemotely(process, dllPath);
-	CloseHandle(process);
-	if (ok) {
-		printf("injected into fm.exe (pid %lu); see harness.log for the build check\n", pid);
-	}
-	return ok;
 }

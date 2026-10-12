@@ -7,6 +7,7 @@
 #include <stdbool.h>
 
 
-// Injects HARNESS_DLL_NAME (next to fm24ctl.exe) with CreateRemoteThread + LoadLibraryW.
+// Injects HARNESS_DLL_NAME, or HARNESS_DLL_FALLBACK_NAME if that is missing (both next to
+// fm24ctl.exe), with CreateRemoteThread + LoadLibraryW.
 // Prints what happened; returns false on failure.
 bool inject_harness(void);

@@ -16,6 +16,65 @@
 
 enum { MAX_SEED_RANGE = 10000000, LINE_LENGTH = 4096 };
 
+static bool widen(const char *text, wchar_t *out, size_t size);
+static bool appendSeed(Job *job, size_t *capacity, uint32_t seed);
+static bool parseNumber(const char *text, char **end, unsigned long long *value);
+static bool parseRange(const char *part, unsigned long long *first, unsigned long long *last);
+static bool parseValues(Job *job, char *spec);
+static bool parseSeeds(Job *job, char *spec);
+static bool parseCommand(Job *job, const char *value);
+static bool parseLine(Job *job, char *key, char *value);
+static bool isComplete(const Job *job);
+
+bool job_read(const wchar_t *directory, Job *job) {
+	*job = (Job){.threads = 1};
+	wchar_t path[HARNESS_PATH_LENGTH];
+	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE);
+	FILE *file = _wfopen(path, L"rb");
+	if (!file) {
+		log_message("job file not found");
+		return false;
+	}
+	char line[LINE_LENGTH];
+	bool ok = true;
+	while (ok && fgets(line, sizeof line, file)) {
+		line[strcspn(line, "\r\n")] = 0;
+		char *equals = strchr(line, '=');
+		if (equals) {
+			*equals = 0;
+			ok = parseLine(job, line, equals + 1);
+			if (!ok) {
+				log_message("bad job line: %s=%s", line, equals + 1);
+			}
+		}
+	}
+	(void)fclose(file);
+	if (ok && !isComplete(job)) {
+		log_message("job is missing required keys");
+		ok = false;
+	}
+	return ok;
+}
+
+void job_free(Job *job) {
+	free(job->seeds);
+	*job = (Job){0};
+}
+
+void job_writeResult(const wchar_t *directory, const char *format, ...) {
+	wchar_t path[HARNESS_PATH_LENGTH];
+	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_RESULT_FILE);
+	FILE *file = _wfopen(path, L"wb");
+	if (!file) {
+		return;
+	}
+	va_list args;
+	va_start(args, format);
+	vfprintf(file, format, args);
+	va_end(args);
+	(void)fclose(file);
+}
+
 static bool widen(const char *text, wchar_t *out, size_t size) {
 	return MultiByteToWideChar(CP_UTF8, 0, text, -1, out, (int)size) > 0;
 }
@@ -151,6 +210,10 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->asBuilt = strcmp(value, "1") == 0;
 		return true;
 	}
+	if (strcmp(key, "detailed") == 0) {
+		job->detailed = strcmp(value, "1") == 0;
+		return true;
+	}
 	if (strcmp(key, "player") == 0) {
 		size_t length = strlen(value);
 		if (length >= sizeof job->player) {
@@ -184,53 +247,4 @@ static bool isComplete(const Job *job) {
 		case JOB_SENSITIVITY: return hasOutput;
 	}
 	return false;
-}
-
-bool job_read(const wchar_t *directory, Job *job) {
-	*job = (Job){.threads = 1};
-	wchar_t path[HARNESS_PATH_LENGTH];
-	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE);
-	FILE *file = _wfopen(path, L"rb");
-	if (!file) {
-		log_message("job file not found");
-		return false;
-	}
-	char line[LINE_LENGTH];
-	bool ok = true;
-	while (ok && fgets(line, sizeof line, file)) {
-		line[strcspn(line, "\r\n")] = 0;
-		char *equals = strchr(line, '=');
-		if (equals) {
-			*equals = 0;
-			ok = parseLine(job, line, equals + 1);
-			if (!ok) {
-				log_message("bad job line: %s=%s", line, equals + 1);
-			}
-		}
-	}
-	(void)fclose(file);
-	if (ok && !isComplete(job)) {
-		log_message("job is missing required keys");
-		ok = false;
-	}
-	return ok;
-}
-
-void job_free(Job *job) {
-	free(job->seeds);
-	*job = (Job){0};
-}
-
-void job_writeResult(const wchar_t *directory, const char *format, ...) {
-	wchar_t path[HARNESS_PATH_LENGTH];
-	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_RESULT_FILE);
-	FILE *file = _wfopen(path, L"wb");
-	if (!file) {
-		return;
-	}
-	va_list args;
-	va_start(args, format);
-	vfprintf(file, format, args);
-	va_end(args);
-	(void)fclose(file);
 }

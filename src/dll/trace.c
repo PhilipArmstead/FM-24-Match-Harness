@@ -29,6 +29,85 @@ static StreamWriteFn originalWrite;
 static DataBuffer *outputBuffer;
 static uint32_t pathBuckets[PATH_BUCKETS]; // path index + 1, 0 = empty
 
+static uint32_t hashChain(const char *chain);
+static bool appendPath(Serialised *serialised, const char *chain);
+static uint32_t internPath(const char *chain);
+static uint32_t pathOf(void *const *frames, int count);
+static int64_t tracedWrite(void *self, const void *bytes, int64_t length);
+static bool recordsTileBytes(const Serialised *serialised);
+
+bool trace_appendRecord(Serialised *serialised, TraceRecord record) {
+	if (serialised->recordCount == serialised->recordCapacity) {
+		size_t capacity = serialised->recordCapacity ? serialised->recordCapacity * 2 : 65536;
+		TraceRecord *records = realloc(serialised->records, capacity * sizeof *records);
+		if (!records) {
+			return false;
+		}
+		serialised->records = records;
+		serialised->recordCapacity = capacity;
+	}
+	serialised->records[serialised->recordCount++] = record;
+	return true;
+}
+
+bool trace_serialize(uint8_t *match, Serialised *out, bool traced) {
+	if (!outputBuffer && !(outputBuffer = stream_create())) {
+		return false;
+	}
+	stream_resetOutput(outputBuffer);
+	void ***vtableSlot = (void ***)outputBuffer->output;
+	void **vtable = *vtableSlot;
+	static void *tracingVtable[VTABLE_SLOTS + 1];
+	if (traced) {
+		tracingVtable[0] = vtable[-1]; // RTTI locator, in case anything looks
+		memcpy(&tracingVtable[1], vtable, VTABLE_SLOTS * sizeof(void *));
+		originalWrite = (StreamWriteFn)game_functionAt(vtable[WRITE_SLOT]);
+		StreamWriteFn replacement = tracedWrite;
+		memcpy(
+			&tracingVtable[1 + WRITE_SLOT], &replacement, sizeof replacement
+		); // code address as a slot
+		memset(pathBuckets, 0, sizeof pathBuckets);
+		active = out;
+		*vtableSlot = &tracingVtable[1];
+	}
+	bool ok =
+		((MatchStreamFn)game_function(RVA_GAME_MATCH_SERIALIZE))(match, &outputBuffer->output, 0);
+	if (traced) {
+		*vtableSlot = vtable;
+		active = NULL;
+	}
+	size_t size = stream_outputSize(outputBuffer);
+	if (!ok || size == 0) {
+		log_message("serialize failed (ok=%d size=%zu)", ok, size);
+		return false;
+	}
+	if (!buffer_append(&out->bytes, stream_outputData(outputBuffer), size)) {
+		return false;
+	}
+	if (traced) {
+		if (!recordsTileBytes(out)) {
+			return false;
+		}
+		log_message(
+			"serialised %zu bytes as %zu traced writes, %zu call chains",
+			size,
+			out->recordCount,
+			out->pathCount
+		);
+	}
+	return true;
+}
+
+void trace_free(Serialised *serialised) {
+	buffer_free(&serialised->bytes);
+	free(serialised->records);
+	for (size_t i = 0; i < serialised->pathCount; ++i) {
+		free(serialised->paths[i]);
+	}
+	free(serialised->paths);
+	*serialised = (Serialised){0};
+}
+
 static uint32_t hashChain(const char *chain) {
 	uint32_t hash = 2166136261U; // FNV-1a
 	for (const char *c = chain; *c; ++c) {
@@ -96,20 +175,6 @@ static uint32_t pathOf(void *const *frames, int count) {
 	return internPath(chain);
 }
 
-bool trace_appendRecord(Serialised *serialised, TraceRecord record) {
-	if (serialised->recordCount == serialised->recordCapacity) {
-		size_t capacity = serialised->recordCapacity ? serialised->recordCapacity * 2 : 65536;
-		TraceRecord *records = realloc(serialised->records, capacity * sizeof *records);
-		if (!records) {
-			return false;
-		}
-		serialised->records = records;
-		serialised->recordCapacity = capacity;
-	}
-	serialised->records[serialised->recordCount++] = record;
-	return true;
-}
-
 static int64_t tracedWrite(void *self, const void *bytes, int64_t length) {
 	void *frames[TRACE_DEPTH] = {0};
 	USHORT count =
@@ -145,62 +210,4 @@ static bool recordsTileBytes(const Serialised *serialised) {
 		return false;
 	}
 	return true;
-}
-
-bool trace_serialize(uint8_t *match, Serialised *out, bool traced) {
-	if (!outputBuffer && !(outputBuffer = stream_create())) {
-		return false;
-	}
-	stream_resetOutput(outputBuffer);
-	void ***vtableSlot = (void ***)outputBuffer->output;
-	void **vtable = *vtableSlot;
-	static void *tracingVtable[VTABLE_SLOTS + 1];
-	if (traced) {
-		tracingVtable[0] = vtable[-1]; // RTTI locator, in case anything looks
-		memcpy(&tracingVtable[1], vtable, VTABLE_SLOTS * sizeof(void *));
-		originalWrite = (StreamWriteFn)game_functionAt(vtable[WRITE_SLOT]);
-		StreamWriteFn replacement = tracedWrite;
-		memcpy(
-			&tracingVtable[1 + WRITE_SLOT], &replacement, sizeof replacement
-		); // code address as a slot
-		memset(pathBuckets, 0, sizeof pathBuckets);
-		active = out;
-		*vtableSlot = &tracingVtable[1];
-	}
-	bool ok =
-		((MatchStreamFn)game_function(RVA_GAME_MATCH_SERIALIZE))(match, &outputBuffer->output, 0);
-	if (traced) {
-		*vtableSlot = vtable;
-		active = NULL;
-	}
-	size_t size = stream_outputSize(outputBuffer);
-	if (!ok || size == 0) {
-		log_message("serialize failed (ok=%d size=%zu)", ok, size);
-		return false;
-	}
-	if (!buffer_append(&out->bytes, stream_outputData(outputBuffer), size)) {
-		return false;
-	}
-	if (traced) {
-		if (!recordsTileBytes(out)) {
-			return false;
-		}
-		log_message(
-			"serialised %zu bytes as %zu traced writes, %zu call chains",
-			size,
-			out->recordCount,
-			out->pathCount
-		);
-	}
-	return true;
-}
-
-void trace_free(Serialised *serialised) {
-	buffer_free(&serialised->bytes);
-	free(serialised->records);
-	for (size_t i = 0; i < serialised->pathCount; ++i) {
-		free(serialised->paths[i]);
-	}
-	free(serialised->paths);
-	*serialised = (Serialised){0};
 }

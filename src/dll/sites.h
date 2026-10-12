@@ -62,3 +62,34 @@ enum PlayerField {
 	SITE_ROLE_ID = 0x1A80FC1,           //   written rating, role, position (docs/PLAN.md Phase 11)
 	SITE_ROLE_POSITION = 0x1A80FD4,
 };
+
+// Return addresses inside the tactic serialiser (sub_141A896D0, a ~7 KB object). Every manager and
+// backroom entry carries one; the managers' are the teams' real tactics (docs/PLAN.md Phase 15).
+// Parts whose meaning is unknown are named by their member offset.
+enum TacticPart {
+	SITE_TACTIC_TAKERS = 0x1A896E9,           // sub_141C27F40: captains and set-piece takers
+	SITE_TACTIC_PART_4240 = 0x1A89700,        // sub_141B91E20
+	SITE_TACTIC_PLAN_0 = 0x1A8971A,           // sub_141BFFCD0: the active tactic
+	SITE_TACTIC_PLAN_1 = 0x1A89734,           // sub_141BFFCD0 again: a second tactic
+	SITE_TACTIC_SET_PIECES = 0x1A8974B,       // sub_141BA2390: SET_PIECE_ROUTINE_TEMPLATE objects
+	SITE_TACTIC_SLOTS_6920_FIRST = 0x1A897B4, // 4 x sub_1419A6D50 (+6920..+6932)
+	SITE_TACTIC_SLOTS_6920_LAST = 0x1A897F9,
+	SITE_TACTIC_FORMATION_FIRST = 0x1A89810, // 25 x sub_1419D5650 (+6816..+6916): slot positions
+	SITE_TACTIC_FORMATION_LAST = 0x1A89A4F,
+	SITE_TACTIC_START = 0x1A896D0, // the serialiser itself (function start)
+	SITE_TACTIC_END = 0x1A89B23,   // and end: direct writes lie in between
+};
+
+// Fields of a tactic plan (sub_141BFFCD0), found by changing one setting at a time in the game
+// (docs/PLAN.md Phase 15). Position masks hold one bit per position code (labels.c) plus a side
+// bit (20 left, 21 right); role masks one bit per role ID plus a duty bit (21 defend, 22 support,
+// 23 attack, 34 automatic).
+enum TacticField {
+	SITE_TACTIC_MENTALITY = 0x11EE0E68, // u8: 1 very defensive .. 7 very attacking
+	SITE_TACTIC_TEAM_INSTRUCTIONS =
+		0x11EEA6E2, // 3 x u32 bit set (word:bit 0:11 run at defence, 2:5 get stuck in)
+	SITE_TACTIC_SLOT_POSITION = 0x1191B4E4,     // u32 position mask of a formation slot
+	SITE_TACTIC_SLOT_ROLE = 0x1191B4FC,         // u64 role mask of that slot
+	SITE_TACTIC_INSTRUCTIONS_ROLE = 0x11916B75, // u64 role bit keying a set of player instructions
+	SITE_TACTIC_INSTRUCTIONS_BITS = 0x1A0FD22,  // 2 x u32 bit set: that role's player instructions
+};

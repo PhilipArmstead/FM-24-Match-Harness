@@ -13,10 +13,10 @@
 
 enum { MAX_NAME_LENGTH = 200 };
 
-static bool peopleRange(uint8_t ***start, uint8_t ***end);
-static int comparePeople(const void *a, const void *b);
 static bool readString(const uint8_t *object, char *out, size_t size);
 static bool readPersonString(const uint8_t *person, ptrdiff_t offset, char *out, size_t size);
+static bool peopleRange(uint8_t ***start, uint8_t ***end);
+static int comparePeople(const void *a, const void *b);
 
 bool database_loadPeople(PeopleIndex *index) {
 	*index = (PeopleIndex){0};

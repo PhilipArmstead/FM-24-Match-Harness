@@ -50,6 +50,57 @@ typedef struct MergeCounts {
 	size_t overridden;
 } MergeCounts;
 
+static bool fail(const Rebuild *rebuild, const char *message);
+static bool appendKnown(bool **known, size_t count, bool value);
+static bool parseRecordLine(const char *line, TraceRecord *record, bool *known);
+static bool loadConfigRecords(Rebuild *rebuild, const wchar_t *path);
+static bool buildTraced(Rebuild *rebuild, Serialised *out);
+static bool
+checkSameFixture(Rebuild *rebuild, const PlayerRatings *configPlayers, size_t configCount);
+static bool
+buildWithConfigRatings(Rebuild *rebuild, const PlayerRatings *players, size_t count, bool asBuilt);
+static bool
+sameValue(const Serialised *a, const TraceRecord *x, const Serialised *b, const TraceRecord *y);
+static bool mergeRecord(Rebuild *rebuild, Serialised *result, size_t i, MergeCounts *counts);
+static bool merge(Rebuild *rebuild, Serialised *result, MergeCounts *counts);
+static bool loadConfig(Rebuild *rebuild, const Job *job);
+static bool prepare(Rebuild *rebuild, const Job *job);
+static void finish(
+	Rebuild *rebuild,
+	const Job *job,
+	Serialised *result,
+	const MergeCounts *counts,
+	size_t players
+);
+static void finishAsBuilt(Rebuild *rebuild, const Job *job, size_t players);
+
+void jobs_rebuild(const Job *job, const wchar_t *directory) {
+	Rebuild rebuild = {.directory = directory};
+	Serialised result = {0};
+	MergeCounts counts = {0};
+	size_t playerCount = 0;
+	PlayerRatings *players = NULL;
+	bool ok = prepare(&rebuild, job);
+	if (ok) {
+		players = labels_players(&rebuild.config, &rebuild.people, &playerCount);
+		ok = players && checkSameFixture(&rebuild, players, playerCount) &&
+				 buildWithConfigRatings(&rebuild, players, playerCount, job->asBuilt) &&
+				 (job->asBuilt || merge(&rebuild, &result, &counts));
+	}
+	if (ok && job->asBuilt) {
+		finishAsBuilt(&rebuild, job, playerCount);
+	} else if (ok) {
+		finish(&rebuild, job, &result, &counts, playerCount);
+	}
+	free(players);
+	free(rebuild.siteKnown);
+	trace_free(&result);
+	trace_free(&rebuild.config);
+	trace_free(&rebuild.original);
+	trace_free(&rebuild.edited);
+	database_freePeople(&rebuild.people);
+}
+
 static bool fail(const Rebuild *rebuild, const char *message) {
 	job_writeResult(rebuild->directory, "error: %s", message);
 	return false;
@@ -314,31 +365,4 @@ static void finishAsBuilt(Rebuild *rebuild, const Job *job, size_t players) {
 		players,
 		sameStructure ? "unchanged" : "CHANGED"
 	);
-}
-
-void jobs_rebuild(const Job *job, const wchar_t *directory) {
-	Rebuild rebuild = {.directory = directory};
-	Serialised result = {0};
-	MergeCounts counts = {0};
-	size_t playerCount = 0;
-	PlayerRatings *players = NULL;
-	bool ok = prepare(&rebuild, job);
-	if (ok) {
-		players = labels_players(&rebuild.config, &rebuild.people, &playerCount);
-		ok = players && checkSameFixture(&rebuild, players, playerCount) &&
-				 buildWithConfigRatings(&rebuild, players, playerCount, job->asBuilt) &&
-				 (job->asBuilt || merge(&rebuild, &result, &counts));
-	}
-	if (ok && job->asBuilt) {
-		finishAsBuilt(&rebuild, job, playerCount);
-	} else if (ok) {
-		finish(&rebuild, job, &result, &counts, playerCount);
-	}
-	free(players);
-	free(rebuild.siteKnown);
-	trace_free(&result);
-	trace_free(&rebuild.config);
-	trace_free(&rebuild.original);
-	trace_free(&rebuild.edited);
-	database_freePeople(&rebuild.people);
 }

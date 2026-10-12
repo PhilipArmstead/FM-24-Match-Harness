@@ -39,6 +39,7 @@ add_library(harness SHARED
 	src/dll/log.c
 	src/dll/main.c
 	src/dll/match.c
+	src/dll/match_stats.c
 	src/dll/memory.c
 	src/dll/output.c
 	src/dll/profiler.c
@@ -46,6 +47,7 @@ add_library(harness SHARED
 	src/dll/site_lookup.c
 	src/dll/site_members.c
 	src/dll/stream.c
+	src/dll/tactic_flags.c
 	src/dll/trace.c
 )
 set_target_properties(harness PROPERTIES PREFIX "" OUTPUT_NAME "fm24_harness_p${HARNESS_PROTOCOL}")

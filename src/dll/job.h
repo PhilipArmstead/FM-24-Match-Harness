@@ -34,6 +34,7 @@ typedef struct Job {
 	unsigned threads; // run: worker threads (1..HARNESS_MAX_THREADS)
 	bool keepSeed;    // run: play the input's own seed once
 	bool asBuilt;     // rebuild: write the game's build with the config's ratings, no merge
+	bool detailed;    // run: also write per-player and per-team statistics (match_stats.h)
 	bool hasSeed;     // build_next, sensitivity: use `seed` instead of a clock value / 1
 	uint32_t seed;
 	char player[128]; // sensitivity: only players whose name contains this, or with this unique ID

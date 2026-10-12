@@ -17,14 +17,7 @@
 #include <windows.h>
 
 
-// The seed MatchBuilder_Create would pick: QueryPerformanceCounter in milliseconds.
-static uint32_t clockSeed(void) {
-	LARGE_INTEGER counter;
-	LARGE_INTEGER frequency;
-	QueryPerformanceCounter(&counter);
-	QueryPerformanceFrequency(&frequency);
-	return (uint32_t)((double)counter.LowPart / ((double)(int32_t)frequency.LowPart / 1000.0) + 0.5);
-}
+static uint32_t clockSeed(void);
 
 void jobs_buildNext(const Job *job, const wchar_t *directory) {
 	NextFixture next;
@@ -91,4 +84,13 @@ void jobs_export(const Job *job, const wchar_t *directory) {
 	}
 	trace_free(&serialised);
 	buffer_free(&input);
+}
+
+// The seed MatchBuilder_Create would pick: QueryPerformanceCounter in milliseconds.
+static uint32_t clockSeed(void) {
+	LARGE_INTEGER counter;
+	LARGE_INTEGER frequency;
+	QueryPerformanceCounter(&counter);
+	QueryPerformanceFrequency(&frequency);
+	return (uint32_t)((double)counter.LowPart / ((double)(int32_t)frequency.LowPart / 1000.0) + 0.5);
 }

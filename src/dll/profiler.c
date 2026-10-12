@@ -38,6 +38,75 @@ struct Profiler {
 	int codeCount;
 };
 
+static bool inCode(const Profiler *profiler, uintptr_t address);
+static bool followsCall(const Profiler *profiler, uintptr_t address);
+static int scanStack(const Profiler *profiler, uintptr_t slot, uint64_t *frames, int count);
+static int walk(const Profiler *profiler, CONTEXT *context, uint64_t *frames, int *exact);
+static void writeSample(Profiler *profiler, const uint64_t *frames, int count, int exact);
+static void sample(Profiler *profiler);
+static DWORD WINAPI sampler(LPVOID parameter);
+static void setCodeRanges(Profiler *profiler);
+
+Profiler *profiler_start(const wchar_t *path) {
+	Profiler *profiler = calloc(1, sizeof *profiler);
+	if (!profiler) {
+		return NULL;
+	}
+	const NT_TIB *tib = (const NT_TIB *)NtCurrentTeb();
+	profiler->stackLimit = (uintptr_t)tib->StackLimit;
+	profiler->stackBase = (uintptr_t)tib->StackBase;
+	setCodeRanges(profiler);
+	InitializeCriticalSection(&profiler->lock);
+	profiler->file = _wfopen(path, L"wb");
+	bool duplicated = DuplicateHandle(
+		GetCurrentProcess(),
+		GetCurrentThread(),
+		GetCurrentProcess(),
+		&profiler->target,
+		THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+		FALSE,
+		0
+	);
+	if (profiler->file && duplicated) {
+		fprintf(profiler->file, "# fm.exe %llx\n", (unsigned long long)game_base());
+		profiler->thread = CreateThread(NULL, 0, sampler, profiler, 0, NULL);
+	}
+	if (!profiler->thread) {
+		log_message("profiler: cannot start");
+		profiler_stop(profiler);
+		return NULL;
+	}
+	return profiler;
+}
+
+void profiler_mark(Profiler *profiler, const char *text) {
+	if (!profiler) {
+		return;
+	}
+	EnterCriticalSection(&profiler->lock);
+	fprintf(profiler->file, "# %s\n", text);
+	LeaveCriticalSection(&profiler->lock);
+}
+
+void profiler_stop(Profiler *profiler) {
+	if (!profiler) {
+		return;
+	}
+	if (profiler->thread) {
+		InterlockedExchange(&profiler->stop, 1);
+		WaitForSingleObject(profiler->thread, INFINITE);
+		CloseHandle(profiler->thread);
+	}
+	if (profiler->target) {
+		CloseHandle(profiler->target);
+	}
+	if (profiler->file) {
+		(void)fclose(profiler->file);
+	}
+	DeleteCriticalSection(&profiler->lock);
+	free(profiler);
+}
+
 static bool inCode(const Profiler *profiler, uintptr_t address) {
 	for (int i = 0; i < profiler->codeCount; ++i) {
 		if (address >= profiler->code[i].start && address < profiler->code[i].end) {
@@ -169,64 +238,4 @@ static void setCodeRanges(Profiler *profiler) {
 			profiler->code[profiler->codeCount++] = (Range){start, start + section->Misc.VirtualSize};
 		}
 	}
-}
-
-Profiler *profiler_start(const wchar_t *path) {
-	Profiler *profiler = calloc(1, sizeof *profiler);
-	if (!profiler) {
-		return NULL;
-	}
-	const NT_TIB *tib = (const NT_TIB *)NtCurrentTeb();
-	profiler->stackLimit = (uintptr_t)tib->StackLimit;
-	profiler->stackBase = (uintptr_t)tib->StackBase;
-	setCodeRanges(profiler);
-	InitializeCriticalSection(&profiler->lock);
-	profiler->file = _wfopen(path, L"wb");
-	bool duplicated = DuplicateHandle(
-		GetCurrentProcess(),
-		GetCurrentThread(),
-		GetCurrentProcess(),
-		&profiler->target,
-		THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
-		FALSE,
-		0
-	);
-	if (profiler->file && duplicated) {
-		fprintf(profiler->file, "# fm.exe %llx\n", (unsigned long long)game_base());
-		profiler->thread = CreateThread(NULL, 0, sampler, profiler, 0, NULL);
-	}
-	if (!profiler->thread) {
-		log_message("profiler: cannot start");
-		profiler_stop(profiler);
-		return NULL;
-	}
-	return profiler;
-}
-
-void profiler_mark(Profiler *profiler, const char *text) {
-	if (!profiler) {
-		return;
-	}
-	EnterCriticalSection(&profiler->lock);
-	fprintf(profiler->file, "# %s\n", text);
-	LeaveCriticalSection(&profiler->lock);
-}
-
-void profiler_stop(Profiler *profiler) {
-	if (!profiler) {
-		return;
-	}
-	if (profiler->thread) {
-		InterlockedExchange(&profiler->stop, 1);
-		WaitForSingleObject(profiler->thread, INFINITE);
-		CloseHandle(profiler->thread);
-	}
-	if (profiler->target) {
-		CloseHandle(profiler->target);
-	}
-	if (profiler->file) {
-		(void)fclose(profiler->file);
-	}
-	DeleteCriticalSection(&profiler->lock);
-	free(profiler);
 }

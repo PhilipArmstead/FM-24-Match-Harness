@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 typedef struct Encoder {
 	JsonReader reader;
 	ByteBuffer *out;
@@ -23,6 +24,55 @@ typedef struct FieldState {
 	int values;    // how many value keys the field had (must be 1)
 	bool isString; // written by the game as two records
 } FieldState;
+
+static bool failField(Encoder *encoder, const char *message);
+static bool appendRecord(ConfigRecords *records, const char *site, size_t length);
+static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t width);
+static bool emitHex(Encoder *encoder, const char *hex, size_t length);
+static bool readUnsignedValue(Encoder *encoder, size_t width);
+static bool readU8Map(Encoder *encoder);
+static bool readStringValue(Encoder *encoder, bool isHex, FieldState *field);
+static size_t widthOf(const char *key);
+static bool readMember(Encoder *encoder, const char *key, FieldState *field);
+static bool recordField(Encoder *encoder, const FieldState *field);
+static bool readField(Encoder *encoder);
+static bool readFields(Encoder *encoder);
+static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields);
+
+bool matchConfig_encode(
+	const char *json,
+	size_t length,
+	ByteBuffer *out,
+	ConfigRecords *records,
+	char *error,
+	size_t errorSize
+) {
+	Encoder encoder = {.out = out, .records = records};
+	jsonReader_init(&encoder.reader, json, length);
+	buffer_clear(out);
+	if (records) {
+		records->count = 0;
+	}
+	bool formatOk = false;
+	bool haveFields = false;
+	bool ok = readTopLevel(&encoder, &formatOk, &haveFields);
+	buffer_free(&encoder.scratch);
+	if (!ok) {
+		(void)snprintf(error, errorSize, "%s", encoder.reader.error);
+	} else if (!formatOk) {
+		(void)snprintf(
+			error, errorSize, "missing or unsupported \"format\" (want fm24-match-config/1)"
+		);
+	} else if (!haveFields) {
+		(void)snprintf(error, errorSize, "missing \"fields\"");
+	}
+	return ok && formatOk && haveFields;
+}
+
+void matchConfig_freeRecords(ConfigRecords *records) {
+	free(records->items);
+	*records = (ConfigRecords){0};
+}
 
 static bool failField(Encoder *encoder, const char *message) {
 	char text[160];
@@ -229,39 +279,4 @@ static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 	}
 	buffer_free(&key);
 	return ok;
-}
-
-bool matchConfig_encode(
-	const char *json,
-	size_t length,
-	ByteBuffer *out,
-	ConfigRecords *records,
-	char *error,
-	size_t errorSize
-) {
-	Encoder encoder = {.out = out, .records = records};
-	jsonReader_init(&encoder.reader, json, length);
-	buffer_clear(out);
-	if (records) {
-		records->count = 0;
-	}
-	bool formatOk = false;
-	bool haveFields = false;
-	bool ok = readTopLevel(&encoder, &formatOk, &haveFields);
-	buffer_free(&encoder.scratch);
-	if (!ok) {
-		(void)snprintf(error, errorSize, "%s", encoder.reader.error);
-	} else if (!formatOk) {
-		(void)snprintf(
-			error, errorSize, "missing or unsupported \"format\" (want fm24-match-config/1)"
-		);
-	} else if (!haveFields) {
-		(void)snprintf(error, errorSize, "missing \"fields\"");
-	}
-	return ok && formatOk && haveFields;
-}
-
-void matchConfig_freeRecords(ConfigRecords *records) {
-	free(records->items);
-	*records = (ConfigRecords){0};
 }

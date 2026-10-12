@@ -11,6 +11,15 @@
 
 enum { MAX_NUMBER_LENGTH = 64, MAX_DEPTH = 64 };
 
+static void skipWhitespace(JsonReader *reader);
+static bool appendUtf8(ByteBuffer *out, unsigned long codePoint);
+static bool readHex4(JsonReader *reader, unsigned long *value);
+static bool readUnicodeEscape(JsonReader *reader, ByteBuffer *out);
+static bool readEscape(JsonReader *reader, ByteBuffer *out);
+static bool skipLiteral(JsonReader *reader);
+static bool skipContainer(JsonReader *reader, bool isObject, int depth);
+static bool skipNested(JsonReader *reader, int depth);
+
 void jsonReader_init(JsonReader *reader, const char *text, size_t length) {
 	*reader = (JsonReader){.begin = text, .position = text, .end = text + length};
 }
@@ -28,13 +37,6 @@ bool jsonReader_fail(JsonReader *reader, const char *message) {
 	return false;
 }
 
-static void skipWhitespace(JsonReader *reader) {
-	while (
-		reader->position < reader->end && strchr(" \t\r\n", *reader->position) && *reader->position) {
-		++reader->position;
-	}
-}
-
 bool jsonReader_consume(JsonReader *reader, char c) {
 	skipWhitespace(reader);
 	if (reader->position < reader->end && *reader->position == c) {
@@ -42,6 +44,63 @@ bool jsonReader_consume(JsonReader *reader, char c) {
 		return true;
 	}
 	return false;
+}
+
+bool jsonReader_readString(JsonReader *reader, ByteBuffer *out) {
+	buffer_clear(out);
+	if (!jsonReader_consume(reader, '"')) {
+		return jsonReader_fail(reader, "expected string");
+	}
+	while (reader->position < reader->end && *reader->position != '"') {
+		char c = *reader->position++;
+		bool ok = c == '\\' ? readEscape(reader, out) : buffer_append(out, &c, 1);
+		if (!ok) {
+			return false;
+		}
+	}
+	if (reader->position >= reader->end) {
+		return jsonReader_fail(reader, "unterminated string");
+	}
+	++reader->position;
+	return true;
+}
+
+bool jsonReader_readNumber(JsonReader *reader, unsigned long long *value, bool *isUnsigned) {
+	skipWhitespace(reader);
+	const char *start = reader->position;
+	while (reader->position < reader->end && *reader->position &&
+				 strchr("+-0123456789.eE", *reader->position)) {
+		++reader->position;
+	}
+	size_t length = (size_t)(reader->position - start);
+	if (length == 0 || length >= MAX_NUMBER_LENGTH) {
+		return jsonReader_fail(reader, "expected a number");
+	}
+	char token[MAX_NUMBER_LENGTH];
+	memcpy(token, start, length);
+	token[length] = 0;
+	*isUnsigned = strpbrk(token, "-.eE") == NULL;
+	*value = 0;
+	if (*isUnsigned) {
+		errno = 0;
+		char *stop = NULL;
+		*value = strtoull(token, &stop, 10);
+		if (errno || *stop) {
+			return jsonReader_fail(reader, "integer out of range");
+		}
+	}
+	return true;
+}
+
+bool jsonReader_skipValue(JsonReader *reader) {
+	return skipNested(reader, 0);
+}
+
+static void skipWhitespace(JsonReader *reader) {
+	while (
+		reader->position < reader->end && strchr(" \t\r\n", *reader->position) && *reader->position) {
+		++reader->position;
+	}
 }
 
 static bool appendUtf8(ByteBuffer *out, unsigned long codePoint) {
@@ -117,52 +176,6 @@ static bool readEscape(JsonReader *reader, ByteBuffer *out) {
 	return buffer_append(out, &to[found - from], 1);
 }
 
-bool jsonReader_readString(JsonReader *reader, ByteBuffer *out) {
-	buffer_clear(out);
-	if (!jsonReader_consume(reader, '"')) {
-		return jsonReader_fail(reader, "expected string");
-	}
-	while (reader->position < reader->end && *reader->position != '"') {
-		char c = *reader->position++;
-		bool ok = c == '\\' ? readEscape(reader, out) : buffer_append(out, &c, 1);
-		if (!ok) {
-			return false;
-		}
-	}
-	if (reader->position >= reader->end) {
-		return jsonReader_fail(reader, "unterminated string");
-	}
-	++reader->position;
-	return true;
-}
-
-bool jsonReader_readNumber(JsonReader *reader, unsigned long long *value, bool *isUnsigned) {
-	skipWhitespace(reader);
-	const char *start = reader->position;
-	while (reader->position < reader->end && *reader->position &&
-				 strchr("+-0123456789.eE", *reader->position)) {
-		++reader->position;
-	}
-	size_t length = (size_t)(reader->position - start);
-	if (length == 0 || length >= MAX_NUMBER_LENGTH) {
-		return jsonReader_fail(reader, "expected a number");
-	}
-	char token[MAX_NUMBER_LENGTH];
-	memcpy(token, start, length);
-	token[length] = 0;
-	*isUnsigned = strpbrk(token, "-.eE") == NULL;
-	*value = 0;
-	if (*isUnsigned) {
-		errno = 0;
-		char *stop = NULL;
-		*value = strtoull(token, &stop, 10);
-		if (errno || *stop) {
-			return jsonReader_fail(reader, "integer out of range");
-		}
-	}
-	return true;
-}
-
 static bool skipLiteral(JsonReader *reader) {
 	static const char *const literals[] = {"true", "false", "null"};
 	for (size_t i = 0; i < sizeof literals / sizeof literals[0]; ++i) {
@@ -177,8 +190,6 @@ static bool skipLiteral(JsonReader *reader) {
 	bool isUnsigned = false;
 	return jsonReader_readNumber(reader, &value, &isUnsigned);
 }
-
-static bool skipNested(JsonReader *reader, int depth);
 
 // Skips the members of an object or array whose opening bracket was consumed.
 static bool skipContainer(JsonReader *reader, bool isObject, int depth) {
@@ -221,8 +232,4 @@ static bool skipNested(JsonReader *reader, int depth) {
 		return skipContainer(reader, false, depth);
 	}
 	return skipLiteral(reader);
-}
-
-bool jsonReader_skipValue(JsonReader *reader) {
-	return skipNested(reader, 0);
 }

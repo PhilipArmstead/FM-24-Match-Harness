@@ -31,6 +31,197 @@ typedef struct Path {
 	char utf8[UTF8_PATH_LENGTH];
 } Path;
 
+typedef struct Totals {
+	unsigned runs;
+	unsigned homeWins;
+	unsigned draws;
+	unsigned awayWins;
+	unsigned homeGoals;
+	unsigned awayGoals;
+} Totals;
+
+typedef struct RunOptions {
+	const wchar_t *input;
+	const wchar_t *seeds;  // default "keep"
+	const wchar_t *output; // default: the input with a .csv extension
+	bool recompute;
+	unsigned long threads;
+	const wchar_t *profile;
+	bool detailed;
+} RunOptions;
+
+typedef struct SensitivityOptions {
+	char player[128]; // name substring or unique ID; "" = every player
+	char seed[32];
+	char values[64]; // in-game values to try ("1-20", "1,10,20"); "" = one step
+} SensitivityOptions;
+
+static bool absolutePath(const wchar_t *argument, Path *out);
+static bool workingPath(const wchar_t *name, Path *out);
+static int submitAndReport(const char *job);
+static bool encodeConfig(const Path *json, ByteBuffer *bytes, ConfigRecords *records);
+static bool encodeToFile(const Path *json, const Path *output, size_t *size);
+static bool writeRecords(const Path *path, const ConfigRecords *records);
+static bool
+rebuildConfig(const Path *json, const Path *output, bool asBuilt, char *result, size_t resultSize);
+static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away);
+static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
+static int printSummary(const Path *csvPath);
+static bool prepareInput(Path *input, bool recompute);
+static unsigned long defaultThreads(void);
+static bool isSeedList(const wchar_t *text);
+static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options);
+static bool placeRunArgument(const wchar_t *argument, RunOptions *options);
+static bool parseRunArguments(int argc, wchar_t **argv, RunOptions *options);
+static bool defaultOutput(const Path *input, Path *output);
+static void printDetailedPaths(const Path *output);
+static bool parseSeedValue(const wchar_t *value, char *seed, size_t size);
+static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size);
+static bool copyOptionValue(const wchar_t *value, char *out, size_t size, const char *name);
+static bool parseSensitivityOptions(int argc, wchar_t **argv, SensitivityOptions *options);
+
+int commands_run(int argc, wchar_t **argv) {
+	RunOptions options;
+	if (!parseRunArguments(argc, argv, &options)) {
+		fprintf(
+			stderr,
+			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]"
+			" [--threads N] [--profile <samples.txt>] [--detailed]\n"
+		);
+		return EXIT_USAGE;
+	}
+	Path input;
+	Path output;
+	Path profile = {0};
+	char seeds[256];
+	if (!absolutePath(options.input, &input) ||
+			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
+			(options.profile && !absolutePath(options.profile, &profile)) ||
+			!paths_toUtf8(options.seeds, seeds, sizeof seeds) ||
+			!prepareInput(&input, options.recompute)) {
+		return EXIT_FAILED;
+	}
+	printf("results: %s\n", output.utf8);
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job,
+		sizeof job,
+		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\ndetailed=%d\n",
+		input.utf8,
+		seeds,
+		output.utf8,
+		options.threads,
+		profile.utf8,
+		options.detailed
+	);
+	printf("job submitted; waiting...\n");
+	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, NULL, 0)) {
+		return EXIT_FAILED;
+	}
+	if (options.detailed) {
+		printDetailedPaths(&output);
+	}
+	return printSummary(&output);
+}
+
+int commands_getNextFixture(int argc, wchar_t **argv) {
+	char seed[32] = "random";
+	if (argc < 3 || !parseFixtureOptions(argc, argv, seed, sizeof seed)) {
+		fprintf(stderr, "usage: fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n");
+		return EXIT_USAGE;
+	}
+	Path output;
+	if (!absolutePath(argv[2], &output)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(job, sizeof job, "command=build_next\noutput=%s\nseed=%s\n", output.utf8, seed);
+	return submitAndReport(job);
+}
+
+int commands_sensitivity(int argc, wchar_t **argv) {
+	SensitivityOptions options = {.seed = "1"};
+	if (argc < 3 || !parseSensitivityOptions(argc, argv, &options)) {
+		fprintf(
+			stderr,
+			"usage: fm24ctl sensitivity <output.csv> [--player NAME|UID] [--values 1-20] [--seed N]\n"
+		);
+		return EXIT_USAGE;
+	}
+	Path output;
+	if (!absolutePath(argv[2], &output)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job,
+		sizeof job,
+		"command=sensitivity\noutput=%s\nseed=%s\nplayer=%s\nvalues=%s\n",
+		output.utf8,
+		options.seed,
+		options.player,
+		options.values
+	);
+	printf(
+		"probing every rating of %s; this takes a while...\n",
+		options.player[0] ? options.player : "all players"
+	);
+	char result[CLIENT_RESULT_LENGTH];
+	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
+int commands_export(int argc, wchar_t **argv) {
+	if (argc < 4) {
+		fprintf(stderr, "usage: fm24ctl export <input.bin> <output.json>\n");
+		return EXIT_USAGE;
+	}
+	Path input;
+	Path output;
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(job, sizeof job, "command=export\ninput=%s\noutput=%s\n", input.utf8, output.utf8);
+	return submitAndReport(job);
+}
+
+int commands_encode(int argc, wchar_t **argv) {
+	if (argc < 4) {
+		fprintf(stderr, "usage: fm24ctl encode <input.json> <output.bin>\n");
+		return EXIT_USAGE;
+	}
+	Path input;
+	Path output;
+	size_t size = 0;
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
+			!encodeToFile(&input, &output, &size)) {
+		return EXIT_FAILED;
+	}
+	printf("wrote %zu bytes\n", size);
+	return EXIT_OK;
+}
+
+int commands_rebuild(int argc, wchar_t **argv) {
+	bool asBuilt = argc == 5 && wcscmp(argv[4], L"--as-built") == 0;
+	if (argc < 4 || (argc > 4 && !asBuilt)) {
+		fprintf(stderr, "usage: fm24ctl rebuild <input.json> <output.json|.bin> [--as-built]\n");
+		return EXIT_USAGE;
+	}
+	Path input;
+	Path output;
+	char result[CLIENT_RESULT_LENGTH];
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
+			!rebuildConfig(&input, &output, asBuilt, result, sizeof result)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
 // A command-line path made absolute (the DLL runs with fm.exe's working directory).
 static bool absolutePath(const wchar_t *argument, Path *out) {
 	bool ok = paths_absolute(argument, out->wide, HARNESS_PATH_LENGTH) &&
@@ -132,15 +323,6 @@ rebuildConfig(const Path *json, const Path *output, bool asBuilt, char *result, 
 	return client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize);
 }
 
-typedef struct Totals {
-	unsigned runs;
-	unsigned homeWins;
-	unsigned draws;
-	unsigned awayWins;
-	unsigned homeGoals;
-	unsigned awayGoals;
-} Totals;
-
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away) {
 	++totals->runs;
 	totals->homeGoals += home;
@@ -231,15 +413,6 @@ static bool prepareInput(Path *input, bool recompute) {
 	return true;
 }
 
-typedef struct RunOptions {
-	const wchar_t *input;
-	const wchar_t *seeds;  // default "keep"
-	const wchar_t *output; // default: the input with a .csv extension
-	bool recompute;
-	unsigned long threads;
-	const wchar_t *profile;
-} RunOptions;
-
 // One worker per logical processor, less one left for the game itself.
 static unsigned long defaultThreads(void) {
 	unsigned long processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
@@ -263,6 +436,8 @@ static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options
 		options->recompute = true;
 	} else if (wcscmp(name, L"--profile") == 0 && hasValue) {
 		options->profile = argv[++*i];
+	} else if (wcscmp(name, L"--detailed") == 0) {
+		options->detailed = true;
 	} else if (wcscmp(name, L"--threads") == 0 && hasValue) {
 		wchar_t *end = NULL;
 		options->threads = wcstoul(argv[++*i], &end, 10);
@@ -324,44 +499,14 @@ static bool defaultOutput(const Path *input, Path *output) {
 	return absolutePath(path, output);
 }
 
-int commands_run(int argc, wchar_t **argv) {
-	RunOptions options;
-	if (!parseRunArguments(argc, argv, &options)) {
-		fprintf(
-			stderr,
-			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]"
-			" [--threads N] [--profile <samples.txt>]\n"
-		);
-		return EXIT_USAGE;
-	}
-	Path input;
-	Path output;
-	Path profile = {0};
-	char seeds[256];
-	if (!absolutePath(options.input, &input) ||
-			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
-			(options.profile && !absolutePath(options.profile, &profile)) ||
-			!paths_toUtf8(options.seeds, seeds, sizeof seeds) ||
-			!prepareInput(&input, options.recompute)) {
-		return EXIT_FAILED;
-	}
-	printf("results: %s\n", output.utf8);
-	char job[JOB_LENGTH];
-	(void)snprintf(
-		job,
-		sizeof job,
-		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\n",
-		input.utf8,
-		seeds,
-		output.utf8,
-		options.threads,
-		profile.utf8
-	);
-	printf("job submitted; waiting...\n");
-	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, NULL, 0)) {
-		return EXIT_FAILED;
-	}
-	return printSummary(&output);
+// The files the DLL writes for --detailed: the output path without ".csv", plus "-players.csv"
+// and "-teams.csv" (see match_stats.h).
+static void printDetailedPaths(const Path *output) {
+	size_t length = strlen(output->utf8);
+	size_t stem =
+		length > 4 && _stricmp(output->utf8 + length - 4, ".csv") == 0 ? length - 4 : length;
+	printf("player statistics: %.*s-players.csv\n", (int)stem, output->utf8);
+	printf("team statistics: %.*s-teams.csv\n", (int)stem, output->utf8);
 }
 
 // get-next-fixture's options after the output path: only `--seed N` (a decimal u32).
@@ -391,27 +536,6 @@ static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t siz
 	return true;
 }
 
-int commands_getNextFixture(int argc, wchar_t **argv) {
-	char seed[32] = "random";
-	if (argc < 3 || !parseFixtureOptions(argc, argv, seed, sizeof seed)) {
-		fprintf(stderr, "usage: fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n");
-		return EXIT_USAGE;
-	}
-	Path output;
-	if (!absolutePath(argv[2], &output)) {
-		return EXIT_FAILED;
-	}
-	char job[JOB_LENGTH];
-	(void)snprintf(job, sizeof job, "command=build_next\noutput=%s\nseed=%s\n", output.utf8, seed);
-	return submitAndReport(job);
-}
-
-typedef struct SensitivityOptions {
-	char player[128]; // name substring or unique ID; "" = every player
-	char seed[32];
-	char values[64]; // in-game values to try ("1-20", "1,10,20"); "" = one step
-} SensitivityOptions;
-
 // A UTF-8 option value that must fit and stay on one job-file line.
 static bool copyOptionValue(const wchar_t *value, char *out, size_t size, const char *name) {
 	if (!paths_toUtf8(value, out, size) || strchr(out, '\n')) {
@@ -440,87 +564,4 @@ static bool parseSensitivityOptions(int argc, wchar_t **argv, SensitivityOptions
 		}
 	}
 	return true;
-}
-
-int commands_sensitivity(int argc, wchar_t **argv) {
-	SensitivityOptions options = {.seed = "1"};
-	if (argc < 3 || !parseSensitivityOptions(argc, argv, &options)) {
-		fprintf(
-			stderr,
-			"usage: fm24ctl sensitivity <output.csv> [--player NAME|UID] [--values 1-20] [--seed N]\n"
-		);
-		return EXIT_USAGE;
-	}
-	Path output;
-	if (!absolutePath(argv[2], &output)) {
-		return EXIT_FAILED;
-	}
-	char job[JOB_LENGTH];
-	(void)snprintf(
-		job,
-		sizeof job,
-		"command=sensitivity\noutput=%s\nseed=%s\nplayer=%s\nvalues=%s\n",
-		output.utf8,
-		options.seed,
-		options.player,
-		options.values
-	);
-	printf(
-		"probing every rating of %s; this takes a while...\n",
-		options.player[0] ? options.player : "all players"
-	);
-	char result[CLIENT_RESULT_LENGTH];
-	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
-		return EXIT_FAILED;
-	}
-	printf("%s\n", result);
-	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
-}
-
-int commands_export(int argc, wchar_t **argv) {
-	if (argc < 4) {
-		fprintf(stderr, "usage: fm24ctl export <input.bin> <output.json>\n");
-		return EXIT_USAGE;
-	}
-	Path input;
-	Path output;
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output)) {
-		return EXIT_FAILED;
-	}
-	char job[JOB_LENGTH];
-	(void)snprintf(job, sizeof job, "command=export\ninput=%s\noutput=%s\n", input.utf8, output.utf8);
-	return submitAndReport(job);
-}
-
-int commands_encode(int argc, wchar_t **argv) {
-	if (argc < 4) {
-		fprintf(stderr, "usage: fm24ctl encode <input.json> <output.bin>\n");
-		return EXIT_USAGE;
-	}
-	Path input;
-	Path output;
-	size_t size = 0;
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
-			!encodeToFile(&input, &output, &size)) {
-		return EXIT_FAILED;
-	}
-	printf("wrote %zu bytes\n", size);
-	return EXIT_OK;
-}
-
-int commands_rebuild(int argc, wchar_t **argv) {
-	bool asBuilt = argc == 5 && wcscmp(argv[4], L"--as-built") == 0;
-	if (argc < 4 || (argc > 4 && !asBuilt)) {
-		fprintf(stderr, "usage: fm24ctl rebuild <input.json> <output.json|.bin> [--as-built]\n");
-		return EXIT_USAGE;
-	}
-	Path input;
-	Path output;
-	char result[CLIENT_RESULT_LENGTH];
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
-			!rebuildConfig(&input, &output, asBuilt, result, sizeof result)) {
-		return EXIT_FAILED;
-	}
-	printf("%s\n", result);
-	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }

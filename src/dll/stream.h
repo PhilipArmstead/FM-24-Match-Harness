@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
 // {refcount, begin, end, cap, pos}, allocated and owned by the game.
 typedef struct SharedBuffer {
 	uint32_t refcount;

@@ -12,6 +12,7 @@
 #include <string.h>
 #include <windows.h>
 
+
 enum {
 	SCAN_CHUNK = 1 << 20,
 	DAY_MASK = 0x1FF,

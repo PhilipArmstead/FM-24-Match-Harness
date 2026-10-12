@@ -66,34 +66,8 @@ static const Signature signatures[] = {
 
 static uint8_t *base;
 
-static bool checkTimestamp(void) {
-	const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
-	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(base + dos->e_lfanew);
-	if (nt->FileHeader.TimeDateStamp != GAME_PE_TIMESTAMP) {
-		log_message(
-			"refusing: fm.exe timestamp %lu, expected %d (different game build)",
-			nt->FileHeader.TimeDateStamp,
-			GAME_PE_TIMESTAMP
-		);
-		return false;
-	}
-	return true;
-}
-
-static bool checkSignatures(void) {
-	for (size_t i = 0; i < sizeof signatures / sizeof signatures[0]; ++i) {
-		const Signature *signature = &signatures[i];
-		if (memcmp(game_address(signature->rva), signature->bytes, signature->length) != 0) {
-			log_message(
-				"refusing: prologue of %s at fm.exe+0x%x does not match (software breakpoint?)",
-				signature->name,
-				signature->rva
-			);
-			return false;
-		}
-	}
-	return true;
-}
+static bool checkTimestamp(void);
+static bool checkSignatures(void);
 
 bool game_init(void) {
 	base = (uint8_t *)GetModuleHandleW(L"fm.exe");
@@ -141,4 +115,33 @@ uint8_t *game_initThread(void) {
 		((VoidFn)game_function(RVA_TLS_ON_DEMAND_INIT))();
 	}
 	return tls;
+}
+
+static bool checkTimestamp(void) {
+	const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
+	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(base + dos->e_lfanew);
+	if (nt->FileHeader.TimeDateStamp != GAME_PE_TIMESTAMP) {
+		log_message(
+			"refusing: fm.exe timestamp %lu, expected %d (different game build)",
+			nt->FileHeader.TimeDateStamp,
+			GAME_PE_TIMESTAMP
+		);
+		return false;
+	}
+	return true;
+}
+
+static bool checkSignatures(void) {
+	for (size_t i = 0; i < sizeof signatures / sizeof signatures[0]; ++i) {
+		const Signature *signature = &signatures[i];
+		if (memcmp(game_address(signature->rva), signature->bytes, signature->length) != 0) {
+			log_message(
+				"refusing: prologue of %s at fm.exe+0x%x does not match (software breakpoint?)",
+				signature->name,
+				signature->rva
+			);
+			return false;
+		}
+	}
+	return true;
 }

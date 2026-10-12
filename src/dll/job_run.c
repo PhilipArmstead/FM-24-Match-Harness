@@ -11,6 +11,7 @@
 #include "job.h"
 #include "log.h"
 #include "match.h"
+#include "match_stats.h"
 #include "memory.h"
 #include "profiler.h"
 
@@ -37,16 +38,77 @@ typedef struct Run {
 	volatile LONG next;   // index of the next seed to hand out
 	volatile LONG failed; // set when a match cannot be loaded; workers stop taking seeds
 	SeedResult *results;
-	CRITICAL_SECTION lock; // guards results[].done/ok, written and the CSV
+	CRITICAL_SECTION lock; // guards results[].done/ok, written, the CSV and details
 	size_t written;        // rows written so far (always a prefix of the seed list)
 	FILE *csv;
-	Profiler *profiler; // samples worker 0 (the job thread)
+	Profiler *profiler;        // samples worker 0 (the job thread)
+	MatchStatsTotals *details; // --detailed: player and team statistics summed over the seeds
 } Run;
 
 typedef struct Worker {
 	Run *run;
 	unsigned index;
 } Worker;
+
+static double elapsedMilliseconds(LARGE_INTEGER start, LARGE_INTEGER end, LARGE_INTEGER frequency);
+static double threadCpuMilliseconds(void);
+static void
+markPhase(Profiler *profiler, const char *phase, uint32_t seed, double wall, double cpu);
+static bool playSeed(
+	Run *run,
+	unsigned slot,
+	ByteBuffer *input,
+	size_t seedOffset,
+	uint32_t seed,
+	Profiler *profiler,
+	SeedResult *out
+);
+static void writeReadyRows(Run *run);
+static DWORD WINAPI worker(LPVOID parameter);
+static void runWorkers(Run *run, unsigned count);
+static bool openRun(const Job *job, const ByteBuffer *input, Run *run);
+
+void jobs_run(const Job *job) {
+	ByteBuffer input = {0};
+	Run run;
+	if (!files_read(job->input, &input) || !openRun(job, &input, &run)) {
+		log_message("cannot start the run");
+		buffer_free(&input);
+		return;
+	}
+	unsigned threads = job->threads < run.total ? job->threads : (unsigned)run.total;
+	log_message(
+		"input %zu bytes, seed at +%zu = %u; %zu runs on %u threads",
+		input.length,
+		run.seedOffset,
+		run.fileSeed,
+		run.total,
+		threads
+	);
+	LARGE_INTEGER frequency;
+	LARGE_INTEGER start;
+	LARGE_INTEGER end;
+	QueryPerformanceFrequency(&frequency);
+	QueryPerformanceCounter(&start);
+	run.profiler = job->profile[0] ? profiler_start(job->profile) : NULL;
+	runWorkers(&run, threads);
+	profiler_stop(run.profiler);
+	QueryPerformanceCounter(&end);
+	(void)fclose(run.csv);
+	if (run.details && !matchStats_write(run.details, job->output)) {
+		log_message("cannot write the detailed statistics");
+	}
+	DeleteCriticalSection(&run.lock);
+	free(run.details);
+	free(run.results);
+	buffer_free(&input);
+	log_message(
+		"job finished: %zu/%zu runs in %.1f s",
+		run.written,
+		run.total,
+		elapsedMilliseconds(start, end, frequency) / 1000.0
+	);
+}
 
 static double elapsedMilliseconds(LARGE_INTEGER start, LARGE_INTEGER end, LARGE_INTEGER frequency) {
 	return 1000.0 * (double)(end.QuadPart - start.QuadPart) / (double)frequency.QuadPart;
@@ -76,6 +138,7 @@ markPhase(Profiler *profiler, const char *phase, uint32_t seed, double wall, dou
 
 // Plays `input` with `seed` (patched into it); returns false if the match could not be loaded.
 static bool playSeed(
+	Run *run,
 	unsigned slot,
 	ByteBuffer *input,
 	size_t seedOffset,
@@ -109,6 +172,11 @@ static bool playSeed(
 		);
 	}
 	out->match = match_result(match);
+	if (run->details) {
+		EnterCriticalSection(&run->lock);
+		matchStats_add(run->details, match);
+		LeaveCriticalSection(&run->lock);
+	}
 	out->milliseconds = elapsedMilliseconds(start, end, frequency);
 	match_delete(match);
 	return true;
@@ -157,7 +225,7 @@ static DWORD WINAPI worker(LPVOID parameter) {
 		}
 		uint32_t seed = run->job->keepSeed ? run->fileSeed : run->job->seeds[index];
 		SeedResult result = {0};
-		result.ok = playSeed(self->index, &input, run->seedOffset, seed, profiler, &result);
+		result.ok = playSeed(run, self->index, &input, run->seedOffset, seed, profiler, &result);
 		result.done = true;
 		EnterCriticalSection(&run->lock);
 		run->results[index] = result;
@@ -204,10 +272,12 @@ static bool openRun(const Job *job, const ByteBuffer *input, Run *run) {
 	}
 	run->fileSeed = memory_loadU32(input->data + run->seedOffset);
 	run->results = calloc(run->total, sizeof *run->results);
+	run->details = job->detailed ? calloc(1, sizeof *run->details) : NULL;
 	run->csv = _wfopen(job->output, L"wb");
-	if (!run->results || !run->csv) {
+	if (!run->results || !run->csv || (job->detailed && !run->details)) {
 		log_message("out of memory, or cannot open the output file");
 		free(run->results);
+		free(run->details);
 		if (run->csv) {
 			(void)fclose(run->csv);
 		}
@@ -216,42 +286,4 @@ static bool openRun(const Job *job, const ByteBuffer *input, Run *run) {
 	fprintf(run->csv, "seed,home_goals,away_goals,clock_ticks,finished,rng_final,ms\n");
 	InitializeCriticalSection(&run->lock);
 	return true;
-}
-
-void jobs_run(const Job *job) {
-	ByteBuffer input = {0};
-	Run run;
-	if (!files_read(job->input, &input) || !openRun(job, &input, &run)) {
-		log_message("cannot start the run");
-		buffer_free(&input);
-		return;
-	}
-	unsigned threads = job->threads < run.total ? job->threads : (unsigned)run.total;
-	log_message(
-		"input %zu bytes, seed at +%zu = %u; %zu runs on %u threads",
-		input.length,
-		run.seedOffset,
-		run.fileSeed,
-		run.total,
-		threads
-	);
-	LARGE_INTEGER frequency;
-	LARGE_INTEGER start;
-	LARGE_INTEGER end;
-	QueryPerformanceFrequency(&frequency);
-	QueryPerformanceCounter(&start);
-	run.profiler = job->profile[0] ? profiler_start(job->profile) : NULL;
-	runWorkers(&run, threads);
-	profiler_stop(run.profiler);
-	QueryPerformanceCounter(&end);
-	(void)fclose(run.csv);
-	DeleteCriticalSection(&run.lock);
-	free(run.results);
-	buffer_free(&input);
-	log_message(
-		"job finished: %zu/%zu runs in %.1f s",
-		run.written,
-		run.total,
-		elapsedMilliseconds(start, end, frequency) / 1000.0
-	);
 }

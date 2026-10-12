@@ -10,9 +10,7 @@
 
 enum { STREAM_ERROR = 16 }; // u32 error code inside each stream object
 
-static void clearError(void *stream) {
-	*(uint32_t *)((uint8_t *)stream + STREAM_ERROR) = 0;
-}
+static void clearError(void *stream);
 
 DataBuffer *stream_create(void) {
 	DataBuffer *buffer =
@@ -51,4 +49,8 @@ const uint8_t *stream_outputData(const DataBuffer *buffer) {
 
 size_t stream_outputSize(const DataBuffer *buffer) {
 	return buffer->shared->position;
+}
+
+static void clearError(void *stream) {
+	*(uint32_t *)((uint8_t *)stream + STREAM_ERROR) = 0;
 }

@@ -50,6 +50,52 @@ typedef struct Probe {
 	size_t structureChanges;
 } Probe;
 
+typedef struct Edit {
+	uint32_t uniqueId;
+	const char *name;
+	const char *playerBlock;
+	size_t rating;
+	uint8_t from;
+	uint8_t to;
+} Edit;
+
+static bool fail(const Probe *probe, const char *message);
+static bool buildTraced(Probe *probe, Serialised *out);
+static bool containsIgnoringCase(const char *text, const char *part);
+static bool isSelected(const Probe *probe, uint32_t uniqueId, const char *name);
+static void valueText(const uint8_t *bytes, uint32_t length, char *out, size_t size);
+static size_t blockStart(const Probe *probe, size_t i);
+static void writeDifferences(Probe *probe, const Edit *edit, const Serialised *edited);
+static bool probeValue(Probe *probe, const Edit *edit, uint8_t *ratings);
+static bool probeRating(Probe *probe, Edit *edit, uint8_t *ratings);
+static bool probePlayer(Probe *probe, uint32_t uniqueId, const char *playerBlock);
+static bool probePlayers(Probe *probe);
+static bool prepare(Probe *probe);
+
+void jobs_sensitivity(const Job *job, const wchar_t *directory) {
+	Probe probe = {
+		.job = job, .directory = directory, .seed = job->hasSeed ? job->seed : DEFAULT_SEED};
+	bool ok = prepare(&probe) && probePlayers(&probe);
+	if (probe.csv) {
+		(void)fclose(probe.csv);
+	}
+	if (ok) {
+		log_message("sensitivity: %zu builds, %zu rows", probe.builds, probe.rows);
+		job_writeResult(
+			directory,
+			"ok: %s, seed %u: %zu builds, %zu changed fields, %zu edits changed the structure",
+			probe.fixture.description,
+			probe.seed,
+			probe.builds,
+			probe.rows,
+			probe.structureChanges
+		);
+	}
+	free(probe.labels);
+	trace_free(&probe.baseline);
+	database_freePeople(&probe.people);
+}
+
 static bool fail(const Probe *probe, const char *message) {
 	log_message("sensitivity: %s", message);
 	job_writeResult(probe->directory, "error: %s", message);
@@ -114,15 +160,6 @@ static size_t blockStart(const Probe *probe, size_t i) {
 	}
 	return i;
 }
-
-typedef struct Edit {
-	uint32_t uniqueId;
-	const char *name;
-	const char *playerBlock;
-	size_t rating;
-	uint8_t from;
-	uint8_t to;
-} Edit;
 
 static void writeDifferences(Probe *probe, const Edit *edit, const Serialised *edited) {
 	for (size_t i = 0; i < probe->baseline.recordCount; ++i) {
@@ -263,28 +300,4 @@ static bool prepare(Probe *probe) {
 		"old,new\n"
 	);
 	return true;
-}
-
-void jobs_sensitivity(const Job *job, const wchar_t *directory) {
-	Probe probe = {
-		.job = job, .directory = directory, .seed = job->hasSeed ? job->seed : DEFAULT_SEED};
-	bool ok = prepare(&probe) && probePlayers(&probe);
-	if (probe.csv) {
-		(void)fclose(probe.csv);
-	}
-	if (ok) {
-		log_message("sensitivity: %zu builds, %zu rows", probe.builds, probe.rows);
-		job_writeResult(
-			directory,
-			"ok: %s, seed %u: %zu builds, %zu changed fields, %zu edits changed the structure",
-			probe.fixture.description,
-			probe.seed,
-			probe.builds,
-			probe.rows,
-			probe.structureChanges
-		);
-	}
-	free(probe.labels);
-	trace_free(&probe.baseline);
-	database_freePeople(&probe.people);
 }

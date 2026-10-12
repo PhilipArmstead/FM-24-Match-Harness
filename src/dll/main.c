@@ -18,11 +18,11 @@
 
 static wchar_t directory[HARNESS_PATH_LENGTH]; // where the DLL, job file, result and log live
 
+BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved);
+
 static void runJob(void);
 static DWORD WINAPI worker(LPVOID unused);
 static void setDirectory(HINSTANCE module);
-
-BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved);
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved) {
 	(void)reserved;
