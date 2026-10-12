@@ -99,8 +99,10 @@ static bool writeRecords(const Path *path, const ConfigRecords *records) {
 
 // Recomputes what the game derives from a config's edited ratings: the config's bytes and its write
 // records (one "site length" line each) go next to fm24ctl.exe, so the DLL can compare field by
-// field.
-static bool rebuildConfig(const Path *json, const Path *output, char *result, size_t resultSize) {
+// field. With `asBuilt`, the DLL writes the game's build with the config's ratings instead,
+// ignoring the config's other edits (no merge, so a changed structure is accepted).
+static bool
+rebuildConfig(const Path *json, const Path *output, bool asBuilt, char *result, size_t resultSize) {
 	Path bin;
 	Path recordsPath;
 	ByteBuffer bytes = {0};
@@ -121,10 +123,11 @@ static bool rebuildConfig(const Path *json, const Path *output, char *result, si
 	(void)snprintf(
 		job,
 		sizeof job,
-		"command=rebuild\ninput=%s\nrecords=%s\noutput=%s\n",
+		"command=rebuild\ninput=%s\nrecords=%s\noutput=%s\nas_built=%d\n",
 		bin.utf8,
 		recordsPath.utf8,
-		output->utf8
+		output->utf8,
+		asBuilt ? 1 : 0
 	);
 	return client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize);
 }
@@ -214,7 +217,7 @@ static bool prepareInput(Path *input, bool recompute) {
 		return false;
 	}
 	if (recompute) {
-		if (!rebuildConfig(input, &bin, result, sizeof result)) {
+		if (!rebuildConfig(input, &bin, false, result, sizeof result)) {
 			return false;
 		}
 		printf("%s\n", result);
@@ -362,21 +365,28 @@ int commands_run(int argc, wchar_t **argv) {
 }
 
 // get-next-fixture's options after the output path: only `--seed N` (a decimal u32).
+// A `--seed` value: a decimal u32, copied to `seed` as text. Prints why and returns false if not.
+static bool parseSeedValue(const wchar_t *value, char *seed, size_t size) {
+	wchar_t *end = NULL;
+	errno = 0;
+	unsigned long long number = wcstoull(value, &end, 10);
+	if (errno != 0 || end == value || *end != 0 || value[0] == L'-' || number > UINT32_MAX) {
+		fprintf(stderr, "--seed must be a number from 0 to %u\n", UINT32_MAX);
+		return false;
+	}
+	(void)snprintf(seed, size, "%llu", number);
+	return true;
+}
+
 static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size) {
 	for (int i = 3; i < argc; ++i) {
 		if (wcscmp(argv[i], L"--seed") != 0 || i + 1 >= argc) {
 			fprintf(stderr, "unknown option or missing value: %ls\n", argv[i]);
 			return false;
 		}
-		const wchar_t *value = argv[++i];
-		wchar_t *end = NULL;
-		errno = 0;
-		unsigned long long number = wcstoull(value, &end, 10);
-		if (errno != 0 || end == value || *end != 0 || value[0] == L'-' || number > UINT32_MAX) {
-			fprintf(stderr, "--seed must be a number from 0 to %u\n", UINT32_MAX);
+		if (!parseSeedValue(argv[++i], seed, size)) {
 			return false;
 		}
-		(void)snprintf(seed, size, "%llu", number);
 	}
 	return true;
 }
@@ -394,6 +404,77 @@ int commands_getNextFixture(int argc, wchar_t **argv) {
 	char job[JOB_LENGTH];
 	(void)snprintf(job, sizeof job, "command=build_next\noutput=%s\nseed=%s\n", output.utf8, seed);
 	return submitAndReport(job);
+}
+
+typedef struct SensitivityOptions {
+	char player[128]; // name substring or unique ID; "" = every player
+	char seed[32];
+	char values[64]; // in-game values to try ("1-20", "1,10,20"); "" = one step
+} SensitivityOptions;
+
+// A UTF-8 option value that must fit and stay on one job-file line.
+static bool copyOptionValue(const wchar_t *value, char *out, size_t size, const char *name) {
+	if (!paths_toUtf8(value, out, size) || strchr(out, '\n')) {
+		fprintf(stderr, "bad %s value\n", name);
+		return false;
+	}
+	return true;
+}
+
+// sensitivity's options after the output path.
+static bool parseSensitivityOptions(int argc, wchar_t **argv, SensitivityOptions *options) {
+	for (int i = 3; i < argc; ++i) {
+		bool hasValue = i + 1 < argc;
+		bool ok = false;
+		if (wcscmp(argv[i], L"--player") == 0 && hasValue) {
+			ok = copyOptionValue(argv[++i], options->player, sizeof options->player, "--player");
+		} else if (wcscmp(argv[i], L"--seed") == 0 && hasValue) {
+			ok = parseSeedValue(argv[++i], options->seed, sizeof options->seed);
+		} else if (wcscmp(argv[i], L"--values") == 0 && hasValue) {
+			ok = copyOptionValue(argv[++i], options->values, sizeof options->values, "--values");
+		} else {
+			fprintf(stderr, "unknown option or missing value: %ls\n", argv[i]);
+		}
+		if (!ok) {
+			return false;
+		}
+	}
+	return true;
+}
+
+int commands_sensitivity(int argc, wchar_t **argv) {
+	SensitivityOptions options = {.seed = "1"};
+	if (argc < 3 || !parseSensitivityOptions(argc, argv, &options)) {
+		fprintf(
+			stderr,
+			"usage: fm24ctl sensitivity <output.csv> [--player NAME|UID] [--values 1-20] [--seed N]\n"
+		);
+		return EXIT_USAGE;
+	}
+	Path output;
+	if (!absolutePath(argv[2], &output)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job,
+		sizeof job,
+		"command=sensitivity\noutput=%s\nseed=%s\nplayer=%s\nvalues=%s\n",
+		output.utf8,
+		options.seed,
+		options.player,
+		options.values
+	);
+	printf(
+		"probing every rating of %s; this takes a while...\n",
+		options.player[0] ? options.player : "all players"
+	);
+	char result[CLIENT_RESULT_LENGTH];
+	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
 int commands_export(int argc, wchar_t **argv) {
@@ -428,15 +509,16 @@ int commands_encode(int argc, wchar_t **argv) {
 }
 
 int commands_rebuild(int argc, wchar_t **argv) {
-	if (argc < 4) {
-		fprintf(stderr, "usage: fm24ctl rebuild <input.json> <output.json|.bin>\n");
+	bool asBuilt = argc == 5 && wcscmp(argv[4], L"--as-built") == 0;
+	if (argc < 4 || (argc > 4 && !asBuilt)) {
+		fprintf(stderr, "usage: fm24ctl rebuild <input.json> <output.json|.bin> [--as-built]\n");
 		return EXIT_USAGE;
 	}
 	Path input;
 	Path output;
 	char result[CLIENT_RESULT_LENGTH];
 	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
-			!rebuildConfig(&input, &output, result, sizeof result)) {
+			!rebuildConfig(&input, &output, asBuilt, result, sizeof result)) {
 		return EXIT_FAILED;
 	}
 	printf("%s\n", result);

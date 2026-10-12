@@ -19,6 +19,7 @@ enum { LABEL_LENGTH = 64, PLAYER_NAME_LENGTH = 128 };
 
 typedef struct FieldLabel {
 	char name[LABEL_LENGTH];         // "" except on the first field of a block and key fields
+	char block[LABEL_LENGTH];        // the block every field is in ("home.player[3]", "venue", ...)
 	char player[PLAYER_NAME_LENGTH]; // the player's name, on the first field of a player block
 	bool ratings;                    // the 69-byte positions + attributes field
 } FieldLabel;

@@ -10,7 +10,11 @@
 //   fm24ctl get-next-fixture <output.json|.bin> [--seed N]
 //   fm24ctl export <input.bin> <output.json>
 //   fm24ctl encode <input.json> <output.bin>
-//   fm24ctl rebuild <input.json> <output.json|.bin>   recompute values derived from edited ratings
+//   fm24ctl rebuild <input.json> <output.json|.bin> [--as-built]
+//       recompute values derived from edited ratings (--as-built: the game's own build with the
+//       config's ratings, other edits ignored)
+//   fm24ctl sensitivity <output.csv> [--player NAME|UID] [--values 1-20] [--seed N]
+//       which derived values change when each rating of the next fixture's players changes
 //
 // fm24ctl.exe, the DLL, the job file and the result file all live in the same directory.
 
@@ -20,13 +24,15 @@
 #include <wchar.h>
 
 
-static const char usage[] = "usage:\n"
-														"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]\n"
-														"      [--threads N] [--profile <samples.txt>]\n"
-														"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
-														"  fm24ctl export <input.bin> <output.json>\n"
-														"  fm24ctl encode <input.json> <output.bin>\n"
-														"  fm24ctl rebuild <input.json> <output.json|.bin>\n";
+static const char usage[] =
+	"usage:\n"
+	"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]\n"
+	"      [--threads N] [--profile <samples.txt>]\n"
+	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
+	"  fm24ctl export <input.bin> <output.json>\n"
+	"  fm24ctl encode <input.json> <output.bin>\n"
+	"  fm24ctl rebuild <input.json> <output.json|.bin> [--as-built]\n"
+	"  fm24ctl sensitivity <output.csv> [--player NAME|UID] [--values 1-20] [--seed N]\n";
 
 int wmain(int argc, wchar_t **argv);
 
@@ -41,6 +47,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"export", commands_export},
 		{L"encode", commands_encode},
 		{L"rebuild", commands_rebuild},
+		{L"sensitivity", commands_sensitivity},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (wcscmp(command, commands[i].name) == 0) {

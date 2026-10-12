@@ -245,6 +245,7 @@ static void labelRecord(Walk *walk, size_t i) {
 		labelTeamField(walk, i, record, part, depth, next);
 	}
 	FieldLabel *label = &walk->labels[i];
+	memcpy(label->block, walk->block, sizeof label->block);
 	if (strcmp(walk->block, walk->previousBlock) != 0 && label->name[0] == 0) {
 		(void)snprintf(label->name, sizeof label->name, "%s", walk->block);
 	}

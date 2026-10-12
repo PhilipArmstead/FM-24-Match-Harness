@@ -54,6 +54,29 @@ static bool parseRange(const char *part, unsigned long long *first, unsigned lon
 	return *end == 0;
 }
 
+// In-game rating values for sensitivity: "1-20", "1,10,20" (each 1-20, at most JOB_MAX_VALUES).
+static bool parseValues(Job *job, char *spec) {
+	for (char *part = spec; part && *part;) {
+		char *comma = strchr(part, ',');
+		if (comma) {
+			*comma = 0;
+		}
+		unsigned long long first = 0;
+		unsigned long long last = 0;
+		if (!parseRange(part, &first, &last) || first < 1 || last > JOB_MAX_VALUES || last < first) {
+			return false;
+		}
+		for (unsigned long long value = first; value <= last; ++value) {
+			if (job->valueCount == JOB_MAX_VALUES) {
+				return false;
+			}
+			job->values[job->valueCount++] = (uint8_t)value;
+		}
+		part = comma ? comma + 1 : NULL;
+	}
+	return true;
+}
+
 // "42", "1-1000" or "1,5,10-20".
 static bool parseSeeds(Job *job, char *spec) {
 	size_t capacity = 0;
@@ -85,7 +108,8 @@ static bool parseCommand(Job *job, const char *value) {
 	} commands[] = {{"run", JOB_RUN},
 		{"build_next", JOB_BUILD_NEXT},
 		{"export", JOB_EXPORT},
-		{"rebuild", JOB_REBUILD}};
+		{"rebuild", JOB_REBUILD},
+		{"sensitivity", JOB_SENSITIVITY}};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
 			job->command = commands[i].command;
@@ -120,6 +144,21 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->seed = job->hasSeed ? (uint32_t)strtoul(value, NULL, 10) : 0;
 		return true;
 	}
+	if (strcmp(key, "values") == 0) {
+		return parseValues(job, value);
+	}
+	if (strcmp(key, "as_built") == 0) {
+		job->asBuilt = strcmp(value, "1") == 0;
+		return true;
+	}
+	if (strcmp(key, "player") == 0) {
+		size_t length = strlen(value);
+		if (length >= sizeof job->player) {
+			return false;
+		}
+		memcpy(job->player, value, length + 1);
+		return true;
+	}
 	if (strcmp(key, "threads") == 0) {
 		char *end = NULL;
 		unsigned long long threads = 0;
@@ -142,6 +181,7 @@ static bool isComplete(const Job *job) {
 		case JOB_BUILD_NEXT: return hasOutput;
 		case JOB_EXPORT: return hasInput && hasOutput;
 		case JOB_REBUILD: return hasInput && hasOutput && job->records[0] != 0;
+		case JOB_SENSITIVITY: return hasOutput;
 	}
 	return false;
 }

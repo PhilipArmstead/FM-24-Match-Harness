@@ -34,6 +34,7 @@ add_library(harness SHARED
 	src/dll/job_build.c
 	src/dll/job_rebuild.c
 	src/dll/job_run.c
+	src/dll/job_sensitivity.c
 	src/dll/labels.c
 	src/dll/log.c
 	src/dll/main.c

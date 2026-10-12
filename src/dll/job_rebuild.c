@@ -142,8 +142,10 @@ checkSameFixture(Rebuild *rebuild, const PlayerRatings *configPlayers, size_t co
 								 );
 }
 
-// Builds B with the config's ratings written into the database, restoring it afterwards.
-static bool buildWithConfigRatings(Rebuild *rebuild, const PlayerRatings *players, size_t count) {
+// Builds B with the config's ratings written into the database, restoring it afterwards. Unless
+// `asBuilt`, B must keep O's structure so the two can be merged.
+static bool
+buildWithConfigRatings(Rebuild *rebuild, const PlayerRatings *players, size_t count, bool asBuilt) {
 	uint8_t (*saved)[PLAYER_RATING_COUNT] = calloc(count ? count : 1, sizeof *saved);
 	uint8_t **targets = calloc(count ? count : 1, sizeof *targets);
 	bool ok = saved && targets;
@@ -163,7 +165,7 @@ static bool buildWithConfigRatings(Rebuild *rebuild, const PlayerRatings *player
 	}
 	free(saved);
 	free(targets);
-	if (ok && rebuild->edited.recordCount != rebuild->original.recordCount) {
+	if (ok && !asBuilt && rebuild->edited.recordCount != rebuild->original.recordCount) {
 		return fail(
 			rebuild, "the edited ratings changed the match structure (e.g. squad selection); not merged"
 		);
@@ -288,6 +290,32 @@ static void finish(
 	);
 }
 
+// --as-built: B itself, the game's own build with the config's ratings.
+static void finishAsBuilt(Rebuild *rebuild, const Job *job, size_t players) {
+	char source[320];
+	(void)snprintf(
+		source,
+		sizeof source,
+		"%s, %s, seed %u, built with the config's ratings",
+		rebuild->fixture.description,
+		rebuild->fixture.when,
+		rebuild->seed
+	);
+	if (!output_write(job->output, &rebuild->edited, source)) {
+		(void)fail(rebuild, "cannot write output");
+		return;
+	}
+	bool sameStructure = rebuild->edited.recordCount == rebuild->original.recordCount;
+	log_message("rebuild: as built with %zu players' ratings", players);
+	job_writeResult(
+		rebuild->directory,
+		"ok: the game's build with the config's ratings for %zu players (other edits ignored; "
+		"structure %s)",
+		players,
+		sameStructure ? "unchanged" : "CHANGED"
+	);
+}
+
 void jobs_rebuild(const Job *job, const wchar_t *directory) {
 	Rebuild rebuild = {.directory = directory};
 	Serialised result = {0};
@@ -298,10 +326,12 @@ void jobs_rebuild(const Job *job, const wchar_t *directory) {
 	if (ok) {
 		players = labels_players(&rebuild.config, &rebuild.people, &playerCount);
 		ok = players && checkSameFixture(&rebuild, players, playerCount) &&
-				 buildWithConfigRatings(&rebuild, players, playerCount) &&
-				 merge(&rebuild, &result, &counts);
+				 buildWithConfigRatings(&rebuild, players, playerCount, job->asBuilt) &&
+				 (job->asBuilt || merge(&rebuild, &result, &counts));
 	}
-	if (ok) {
+	if (ok && job->asBuilt) {
+		finishAsBuilt(&rebuild, job, playerCount);
+	} else if (ok) {
 		finish(&rebuild, job, &result, &counts, playerCount);
 	}
 	free(players);
