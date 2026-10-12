@@ -83,7 +83,6 @@ static bool playSeed(
 	ByteBuffer *input,
 	size_t seedOffset,
 	uint32_t seed,
-	bool deleteMatch,
 	Profiler *profiler,
 	SeedResult *out
 ) {
@@ -114,9 +113,7 @@ static bool playSeed(
 	}
 	out->match = match_result(match);
 	out->milliseconds = elapsedMilliseconds(start, end, frequency);
-	if (deleteMatch) {
-		match_delete(match);
-	}
+	match_delete(match);
 	return true;
 }
 
@@ -163,9 +160,7 @@ static DWORD WINAPI worker(LPVOID parameter) {
 		}
 		uint32_t seed = run->job->keepSeed ? run->fileSeed : run->job->seeds[index];
 		SeedResult result = {0};
-		result.ok = playSeed(
-			streams[self->index], &input, run->seedOffset, seed, run->job->deleteMatch, profiler, &result
-		);
+		result.ok = playSeed(streams[self->index], &input, run->seedOffset, seed, profiler, &result);
 		result.done = true;
 		EnterCriticalSection(&run->lock);
 		run->results[index] = result;

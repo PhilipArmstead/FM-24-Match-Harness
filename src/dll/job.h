@@ -29,7 +29,6 @@ typedef struct Job {
 	size_t seedCount;
 	unsigned threads; // run: worker threads (1..HARNESS_MAX_THREADS)
 	bool keepSeed;    // run: play the input's own seed once
-	bool deleteMatch; // run: delete each match after reading its result
 	bool hasSeed;     // build_next: use `seed` instead of a clock value
 	uint32_t seed;
 } Job;

@@ -130,9 +130,6 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->threads = (unsigned)threads;
 		return true;
 	}
-	if (strcmp(key, "delete_match") == 0) {
-		job->deleteMatch = strcmp(value, "1") == 0;
-	}
 	return true; // unknown keys are ignored
 }
 

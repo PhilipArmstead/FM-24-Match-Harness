@@ -237,7 +237,6 @@ typedef struct RunOptions {
 	const wchar_t *input;
 	const wchar_t *seeds;  // default "keep"
 	const wchar_t *output; // default: the input with a .csv extension
-	bool deleteMatch;      // keeping matches leaks ~5 MB per run
 	bool recompute;
 	unsigned long threads;
 	const wchar_t *profile;
@@ -262,9 +261,7 @@ static bool isSeedList(const wchar_t *text) {
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options) {
 	const wchar_t *name = argv[*i];
 	bool hasValue = *i + 1 < argc;
-	if (wcscmp(name, L"--keep-match") == 0) {
-		options->deleteMatch = false;
-	} else if (wcscmp(name, L"--recompute") == 0) {
+	if (wcscmp(name, L"--recompute") == 0) {
 		options->recompute = true;
 	} else if (wcscmp(name, L"--profile") == 0 && hasValue) {
 		options->profile = argv[++*i];
@@ -299,7 +296,7 @@ static bool placeRunArgument(const wchar_t *argument, RunOptions *options) {
 
 // Everything after `run`; false (with a message) if something is missing or invalid.
 static bool parseRunArguments(int argc, wchar_t **argv, RunOptions *options) {
-	*options = (RunOptions){.deleteMatch = true, .threads = defaultThreads()};
+	*options = (RunOptions){.threads = defaultThreads()};
 	for (int i = 2; i < argc; ++i) {
 		bool ok = wcsncmp(argv[i], L"--", 2) == 0 ? parseRunOption(argc, argv, &i, options)
 																							: placeRunArgument(argv[i], options);
@@ -334,7 +331,7 @@ int commands_run(int argc, wchar_t **argv) {
 	if (!parseRunArguments(argc, argv, &options)) {
 		fprintf(
 			stderr,
-			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--keep-match] [--recompute]"
+			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]"
 			" [--threads N] [--profile <samples.txt>]\n"
 		);
 		return EXIT_USAGE;
@@ -355,11 +352,10 @@ int commands_run(int argc, wchar_t **argv) {
 	(void)snprintf(
 		job,
 		sizeof job,
-		"input=%s\nseeds=%s\noutput=%s\ndelete_match=%d\nthreads=%lu\nprofile=%s\n",
+		"input=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\n",
 		input.utf8,
 		seeds,
 		output.utf8,
-		options.deleteMatch ? 1 : 0,
 		options.threads,
 		profile.utf8
 	);

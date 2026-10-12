@@ -4,7 +4,7 @@
 // fm24ctl: injects the harness DLL into the running fm.exe and drives it.
 //
 //   fm24ctl inject
-//   fm24ctl run <input.bin|.json> [seeds] [output.csv] [--keep-match] [--recompute]
+//   fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]
 //       [--threads N] [--profile <samples.txt>]
 //       seeds: "keep" (the input's own seed), "42", "1-1000", or "1,5,10-20"
 //       (default "keep"); output defaults to the input with a .csv extension
@@ -21,15 +21,14 @@
 #include <wchar.h>
 
 
-static const char usage[] =
-	"usage:\n"
-	"  fm24ctl inject\n"
-	"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--keep-match] [--recompute]\n"
-	"      [--threads N] [--profile <samples.txt>]\n"
-	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
-	"  fm24ctl export <input.bin> <output.json>\n"
-	"  fm24ctl encode <input.json> <output.bin>\n"
-	"  fm24ctl rebuild <input.json> <output.json|.bin>\n";
+static const char usage[] = "usage:\n"
+														"  fm24ctl inject\n"
+														"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--recompute]\n"
+														"      [--threads N] [--profile <samples.txt>]\n"
+														"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
+														"  fm24ctl export <input.bin> <output.json>\n"
+														"  fm24ctl encode <input.json> <output.bin>\n"
+														"  fm24ctl rebuild <input.json> <output.json|.bin>\n";
 
 int wmain(int argc, wchar_t **argv);
 
