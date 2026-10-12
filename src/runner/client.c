@@ -4,6 +4,7 @@
 #include "client.h"
 
 #include "files.h"
+#include "inject.h"
 #include "paths.h"
 #include "protocol.h"
 
@@ -11,6 +12,11 @@
 #include <string.h>
 #include <windows.h>
 
+
+enum {
+	READY_TIMEOUT_MS = 10000, // from injection until the DLL has created its events
+	READY_POLL_MS = 50,
+};
 
 static void readResult(const wchar_t *path, char *result, size_t size) {
 	(void)snprintf(result, size, "no result; see harness.log");
@@ -24,16 +30,51 @@ static void readResult(const wchar_t *path, char *result, size_t size) {
 	(void)fclose(file);
 }
 
+// Opens the DLL's events; false if this protocol's harness is not running in fm.exe.
+static bool openEvents(HANDLE *go, HANDLE *done) {
+	*go = OpenEventW(EVENT_MODIFY_STATE, FALSE, HARNESS_EVENT_GO);
+	*done = OpenEventW(SYNCHRONIZE, FALSE, HARNESS_EVENT_DONE);
+	if (*go && *done) {
+		return true;
+	}
+	if (*go) {
+		CloseHandle(*go);
+	}
+	if (*done) {
+		CloseHandle(*done);
+	}
+	*go = NULL;
+	*done = NULL;
+	return false;
+}
+
+// Connects to the harness, injecting it first if this protocol's DLL is not loaded yet (a no-op
+// otherwise). Prints why and returns false if it cannot be started.
+static bool connectHarness(HANDLE *go, HANDLE *done) {
+	if (openEvents(go, done)) {
+		return true;
+	}
+	if (!inject_harness()) {
+		return false;
+	}
+	// The DLL creates its events once its build check has passed.
+	for (unsigned waited = 0; waited < READY_TIMEOUT_MS; waited += READY_POLL_MS) {
+		if (openEvents(go, done)) {
+			return true;
+		}
+		Sleep(READY_POLL_MS);
+	}
+	fprintf(stderr, "the harness did not start in fm.exe (wrong game build?); see harness.log\n");
+	return false;
+}
+
 bool client_submit(const char *job, unsigned timeoutMs, char *result, size_t resultSize) {
-	HANDLE go = OpenEventW(EVENT_MODIFY_STATE, FALSE, HARNESS_EVENT_GO);
-	HANDLE done = OpenEventW(SYNCHRONIZE, FALSE, HARNESS_EVENT_DONE);
+	HANDLE go = NULL;
+	HANDLE done = NULL;
 	wchar_t directory[HARNESS_PATH_LENGTH];
 	wchar_t jobPath[HARNESS_PATH_LENGTH];
 	wchar_t resultPath[HARNESS_PATH_LENGTH];
-	bool ok = go && done;
-	if (!ok) {
-		fprintf(stderr, "harness not running in fm.exe (inject first; check harness.log)\n");
-	}
+	bool ok = connectHarness(&go, &done);
 	ok = ok && paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
 			 paths_join(jobPath, HARNESS_PATH_LENGTH, directory, HARNESS_JOB_FILE) &&
 			 paths_join(resultPath, HARNESS_PATH_LENGTH, directory, HARNESS_RESULT_FILE);

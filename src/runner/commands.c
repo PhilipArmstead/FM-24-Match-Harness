@@ -234,7 +234,10 @@ static bool prepareInput(Path *input, bool recompute) {
 }
 
 typedef struct RunOptions {
-	bool deleteMatch; // keeping matches leaks ~5 MB per run
+	const wchar_t *input;
+	const wchar_t *seeds;  // default "keep"
+	const wchar_t *output; // default: the input with a .csv extension
+	bool deleteMatch;      // keeping matches leaks ~5 MB per run
 	bool recompute;
 	unsigned long threads;
 	const wchar_t *profile;
@@ -247,38 +250,91 @@ static unsigned long defaultThreads(void) {
 	return threads < HARNESS_MAX_THREADS ? threads : HARNESS_MAX_THREADS;
 }
 
-// The options after `run <input> <seeds> <output>`; false (with a message) if one is invalid.
-static bool parseRunOptions(int argc, wchar_t **argv, RunOptions *options) {
-	*options = (RunOptions){.deleteMatch = true, .threads = defaultThreads()};
-	for (int i = 5; i < argc; ++i) {
-		bool hasValue = i + 1 < argc;
-		if (wcscmp(argv[i], L"--keep-match") == 0) {
-			options->deleteMatch = false;
-		} else if (wcscmp(argv[i], L"--recompute") == 0) {
-			options->recompute = true;
-		} else if (wcscmp(argv[i], L"--profile") == 0 && hasValue) {
-			options->profile = argv[++i];
-		} else if (wcscmp(argv[i], L"--threads") == 0 && hasValue) {
-			wchar_t *end = NULL;
-			options->threads = wcstoul(argv[++i], &end, 10);
-			if (*end != 0 || options->threads < 1 || options->threads > HARNESS_MAX_THREADS) {
-				fprintf(stderr, "--threads must be 1-%d\n", HARNESS_MAX_THREADS);
-				return false;
-			}
-		} else {
-			fprintf(stderr, "unknown option: %ls\n", argv[i]);
+// "keep", or only digits, commas and dashes ("42", "1-1000", "1,5,10-20"). The DLL checks the rest.
+static bool isSeedList(const wchar_t *text) {
+	if (wcscmp(text, L"keep") == 0) {
+		return true;
+	}
+	return text[0] != 0 && wcsspn(text, L"0123456789,-") == wcslen(text);
+}
+
+// `--name [value]` at argv[*i]; advances *i past a value. False (with a message) if invalid.
+static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options) {
+	const wchar_t *name = argv[*i];
+	bool hasValue = *i + 1 < argc;
+	if (wcscmp(name, L"--keep-match") == 0) {
+		options->deleteMatch = false;
+	} else if (wcscmp(name, L"--recompute") == 0) {
+		options->recompute = true;
+	} else if (wcscmp(name, L"--profile") == 0 && hasValue) {
+		options->profile = argv[++*i];
+	} else if (wcscmp(name, L"--threads") == 0 && hasValue) {
+		wchar_t *end = NULL;
+		options->threads = wcstoul(argv[++*i], &end, 10);
+		if (*end != 0 || options->threads < 1 || options->threads > HARNESS_MAX_THREADS) {
+			fprintf(stderr, "--threads must be 1-%d\n", HARNESS_MAX_THREADS);
 			return false;
 		}
+	} else {
+		fprintf(stderr, "unknown option: %ls\n", name);
+		return false;
 	}
 	return true;
 }
 
+// The input, then optionally a seed list and/or an output file (told apart by isSeedList).
+static bool placeRunArgument(const wchar_t *argument, RunOptions *options) {
+	if (!options->input) {
+		options->input = argument;
+	} else if (!options->seeds && !options->output && isSeedList(argument)) {
+		options->seeds = argument;
+	} else if (!options->output) {
+		options->output = argument;
+	} else {
+		fprintf(stderr, "unexpected argument: %ls\n", argument);
+		return false;
+	}
+	return true;
+}
+
+// Everything after `run`; false (with a message) if something is missing or invalid.
+static bool parseRunArguments(int argc, wchar_t **argv, RunOptions *options) {
+	*options = (RunOptions){.deleteMatch = true, .threads = defaultThreads()};
+	for (int i = 2; i < argc; ++i) {
+		bool ok = wcsncmp(argv[i], L"--", 2) == 0 ? parseRunOption(argc, argv, &i, options)
+																							: placeRunArgument(argv[i], options);
+		if (!ok) {
+			return false;
+		}
+	}
+	if (!options->seeds) {
+		options->seeds = L"keep";
+	}
+	return options->input != NULL;
+}
+
+// The input path with its extension replaced by .csv ("next.json" -> "next.csv").
+static bool defaultOutput(const Path *input, Path *output) {
+	wchar_t path[HARNESS_PATH_LENGTH];
+	wcscpy(path, input->wide);
+	wchar_t *name = wcsrchr(path, L'\\');
+	wchar_t *dot = wcsrchr(name ? name : path, L'.');
+	if (dot) {
+		*dot = 0;
+	}
+	if (wcslen(path) + wcslen(L".csv") >= HARNESS_PATH_LENGTH) {
+		return false;
+	}
+	wcscat(path, L".csv");
+	return absolutePath(path, output);
+}
+
 int commands_run(int argc, wchar_t **argv) {
 	RunOptions options;
-	if (argc < 5 || !parseRunOptions(argc, argv, &options)) {
+	if (!parseRunArguments(argc, argv, &options)) {
 		fprintf(
 			stderr,
-			"usage: fm24ctl run <input.bin|.json> <seeds> <output.csv> [--keep-match] [--recompute]"
+			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--keep-match] [--recompute]"
 			" [--threads N] [--profile <samples.txt>]\n"
 		);
 		return EXIT_USAGE;
@@ -287,11 +343,14 @@ int commands_run(int argc, wchar_t **argv) {
 	Path output;
 	Path profile = {0};
 	char seeds[256];
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
+	if (!absolutePath(options.input, &input) ||
+			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
 			(options.profile && !absolutePath(options.profile, &profile)) ||
-			!paths_toUtf8(argv[3], seeds, sizeof seeds) || !prepareInput(&input, options.recompute)) {
+			!paths_toUtf8(options.seeds, seeds, sizeof seeds) ||
+			!prepareInput(&input, options.recompute)) {
 		return EXIT_FAILED;
 	}
+	printf("results: %s\n", output.utf8);
 	char job[JOB_LENGTH];
 	(void)snprintf(
 		job,

@@ -14,7 +14,8 @@ enum {
 	CLIENT_RESULT_LENGTH = 512,
 };
 
-// Writes the job file, signals the DLL and waits for it. If `result` is non-NULL it receives the
+// Writes the job file, signals the DLL and waits for it. Injects the DLL first if this protocol's
+// harness is not loaded in fm.exe yet. If `result` is non-NULL it receives the
 // DLL's one-line result (or a note to check harness.log). Prints and returns false on failure.
 bool client_submit(const char *job, unsigned timeoutMs, char *result, size_t resultSize);
 
