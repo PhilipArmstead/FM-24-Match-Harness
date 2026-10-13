@@ -34,7 +34,13 @@ run `fm24ctl.exe get-next-fixture next-fixture.json`
 
 This will dump the internal **NEXT_FIXTURE** object in to an editable JSON
 object. You can name it whatever you like and also optionally specify a seed via
-the `--seed <N>` flag. The only thing the seed determines is crowd attendance.
+the `--seed <N>` flag. Besides the match itself, the seed decides some pre-match
+details: crowd attendance, the officials, the weather and a random value per
+player.
+
+Export after clicking "Simulate Match" and before clicking "Continue". On the
+Team Selection screen your team isn't submitted yet, so the game picks your
+line-up itself when it builds the match, and the result won't match the game's.
 
 ## Run the next fixture
 
@@ -43,7 +49,9 @@ If you're using Command Prompt, run `fm24ctl.exe run next-fixture.json`
 
 This will run the fixture using the exported settings and generated seed once.
 
-You can run multiple times or with a new seed by specifying the seed flag:
+You can run multiple times or with a new seed by specifying the seed flag.
+A given seed plays exactly as the game would with that seed, including the
+result and the statistics:
 
 ```
 .\fm24ctl run next-fixture.json 1
@@ -52,7 +60,7 @@ You can run multiple times or with a new seed by specifying the seed flag:
 ```
 
 > Note: fixtures run on threads but they take around ~4s to execute so don't
-> the range of seeds too high if you're not prepared to wait.
+> set the range of seeds too high if you're not prepared to wait.
 
 Results are output in a CSV file whose name matches your input file, or you can
 specify your own:
@@ -64,7 +72,9 @@ specify your own:
 ```
 
 If you want to see more detailed outputs, add the `--detailed` flag to the end
-of a `run` command and check the extra CSVs generated.
+of a `run` command and check the extra CSVs generated: one for players and one
+for teams, with each statistic averaged over all the seeds. They match the
+game's own match statistics screens.
 
 ## Experiments
 
@@ -85,9 +95,11 @@ script and my DLL doing most of the work, not your agent.
 
 # Feature suggestions
 
-Got an idea for how I an enhance this? Maybe even more detailed outputs? Better
+Got an idea for how I can enhance this? Maybe even more detailed outputs? Better
 annotated inputs? Do you want a UI to represent what a given JSON blob looks
-like? [Open an issue](PhilipArmstead/FM-24-Match-Harness/issues) and ask kindly.
+like?
+[Open an issue](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues)
+and ask kindly.
 
 # Development
 

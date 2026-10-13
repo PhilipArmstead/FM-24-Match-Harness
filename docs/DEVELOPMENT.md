@@ -6,15 +6,22 @@ FM24 match-engine harness development
 ```
 src/common/  protocol (job file, events, DLL name), byte buffer, files
 src/dll/     game.h (addresses, layouts, signatures), memory, stream,
-             match, rng, database, fixture, trace, sites, labels
-             (rating names), config_writer, output, profiler, job,
-             job_run/build/sensitivity, match_stats, tactic_flags, main
+             match, rng, database, fixture, trace, seed_build (per-seed
+             rebuilds), sites/site_lookup/site_members, labels (rating
+             names), config_writer, output, profiler, job,
+             job_run/build/sensitivity, match_stats, tactic_flags
+             (generated), main
 src/runner/  main, commands, inject, client, paths, json_reader,
              match_config (encoder)
 cmake/       MinGW-w64 toolchain file
 scripts/     build.sh, format.sh, tidy.sh (env.sh: tool locations)
 docs/        PLAN.md: the plan and every finding, phase by phase
 tools/       memscan.py: read-only memory scanner for the running fm.exe
+             ida_annotations.py: IDAPython names and comments for fm.exe
+             fields/: field-name data and generators (tactic_bits.json ->
+               gen_tactic_flags.py -> src/dll/tactic_flags.c; site_ops.json
+               -> gen_site_members.py), diff_configs.py (compare two configs)
+             sensitivity/, experiments/: analysis scripts for CSV outputs
 ```
 
 # Building
@@ -34,9 +41,15 @@ The build uses `-Wall -Wextra -Wpedantic -Wshadow -Wconversion` and friends
 and is warning-free; `format.sh --check` and `tidy.sh` are clean.
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
-path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build; the
-next command injects the new DLL. It loads alongside the old one, and the old
-copy idles on its own events.
+path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake
+re-configures by itself, the DLL is renamed `fm24_harness_p<N>.dll`, and
+`build.sh` replaces the old copy in `bin/`. The next command injects the new
+DLL. It loads alongside the old one, and the old copy idles on its own events
+until the game exits.
+
+**Generated code:** after editing `tools/fields/tactic_bits.json`, run
+`python -I tools/fields/gen_tactic_flags.py` to regenerate
+`src/dll/tactic_flags.c`.
 
 # Use
 
@@ -57,7 +70,9 @@ next to the DLL there.
    sees it start
 3. `fm24ctl run <input> [seeds] [out.csv]`,
    where `<input>` is a `.bin` input or a `.json` config; e.g.
-   `fm24ctl run next.json` plays the config's own seed into `next.csv`
+   `fm24ctl run next.json` plays the config's own seed into `next.csv`.
+   It prints a result line (`ok: N/N runs...` or `error: ...`) and a
+   summary
    - seeds: `keep` (the input's own seed; the default), `42`, `1-1000`, or
      `1,5,10-20`. A seed plays exactly as the game would with that seed
      (`GAME_MATCH__init_from_fixture`'s seed): the seed also draws pre-match
@@ -100,7 +115,9 @@ next to the DLL there.
      and distance (km). Teams: goals, possession, average rating (as the
      game's match statistics screen shows it) and the team totals. The data
      is the engine's own per-player stats objects. The values match the
-     game's statistics screens, team and player (checked on one match)
+     game's statistics screens, team and player (checked on one match). The
+     members are listed in `src/dll/match_stats.c` and `docs/PLAN.md`
+     (Phase 18)
    - both teams' in-match changes (substitutions etc.) are made by the game's
      AI, as when the game simulates a match nobody watches. Before kick-off
      the harness resets the human manager's control flags to "no match plan,
@@ -117,7 +134,7 @@ next to the DLL there.
    (uses the game's serialiser). `fm24ctl encode <in.json> <out.bin>`
    converts back (no game needed).
 6. `fm24ctl sensitivity <out.csv> [--player NAME|UID] [--values 1-20]
-[--seed N]` measures which values the game derives from each rating. It
+   [--seed N]` measures which values the game derives from each rating. It
    builds the next fixture once as a baseline. Then, for each selected player
    (default: everyone in the fixture) and each of their 69 ratings, it changes
    the rating in the database, rebuilds with the same seed, writes every field
@@ -143,8 +160,8 @@ is lossless.
 - **Value:** each field has exactly one: `u8`, `u16`, `u32`, `u64`, `str`
   (u32 length + UTF-8), `hex`, or `u8map`.
 - **Location:** `site` gives the `<call site>/<caller>` RVAs of the write
-  (named parts are in `src/dll/sites.h`), and `p` indexes the `paths` table of serialiser
-  call chains.
+  (named parts are in `src/dll/sites.h`), and `p` indexes the `paths` table
+  of serialiser call chains.
 - **Seed:** the seed field has `"role": "seed"`.
 - **Labels:** blocks carry a `"name"` (`match`, `referee`, `venue`, `fixture`,
   `home.player[3]`, `away.manager`, `home.backroom[2]`, ...), and player
@@ -179,6 +196,9 @@ values the game derives from them (ability, role ratings) don't affect results
 - With `--keep-build`, patching the seed in an input is not the game
   choosing that seed: pre-match data (attendance etc.) also depends on the
   build-time RNG.
+- Rebuilding per seed needs the input to be the human manager's next
+  fixture, in the same game state; once the match is played in the game,
+  use `--keep-build`.
 - One input = one fixture with fixed line-ups and tactics.
 - A game-produced .bin and its JSON export differ in one header byte (offset
   21, a flag the deserialiser sets). Match results are identical.
