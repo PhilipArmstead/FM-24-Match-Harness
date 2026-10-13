@@ -53,11 +53,21 @@ enum MatchLayout {
 	MATCH_RNG_STATE = 58320,  // u64
 	MATCH_BUILD_FLAG = 58928, // byte MatchBuilder_Create clears after the constructor
 	MATCH_TEAM_GOALS = 0x248, // u8 in MATCH_TEAM
-	MATCH_TEAM_MANAGER =
-		312,                // MATCH_TEAM: the manager (its tactic etc.; "<side>.manager" in a config)
-	MANAGER_FLAGS = 7600, // u32 in the manager: the first field of "<side>.manager"
-	MANAGER_HUMAN_IN_CONTROL =
-		0x1, // a human makes the team's in-match changes (docs/PLAN.md Phase 18)
+};
+
+// A team's manager and its control flags (docs/PLAN.md Phase 18).
+enum ManagerLayout {
+	// MATCH_TEAM: the manager (its tactic etc.; "<side>.manager" in a config).
+	MATCH_TEAM_MANAGER = 312,
+	// u32 in the manager: the first field of "<side>.manager".
+	MANAGER_FLAGS = 7600,
+	// A human makes the team's in-match changes (substitutions etc.).
+	MANAGER_HUMAN_IN_CONTROL = 0x1,
+	// Set on AI-managed teams' managers, never on a human's.
+	MANAGER_AI_MANAGED = 0x14000,
+	// A human manager's flags at kick-off with no match plan chosen at the pre-match screen (the
+	// screen clears MANAGER_HUMAN_IN_CONTROL; choosing a plan clears 0x100).
+	MANAGER_HUMAN_NO_PLAN = 0x21306,
 };
 
 // Database layouts.

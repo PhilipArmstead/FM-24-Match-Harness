@@ -10,7 +10,9 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# The protocol version is part of the DLL's file name (see src/common/protocol.h).
+# The protocol version is part of the DLL's file name (see src/common/protocol.h). Changing it
+# re-runs the configure step, so the DLL is renamed without touching this file.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/common/protocol.h)
 file(STRINGS src/common/protocol.h protocol_line REGEX "define HARNESS_PROTOCOL L\"[0-9]+\"")
 string(REGEX MATCH "[0-9]+" HARNESS_PROTOCOL "${protocol_line}")
 

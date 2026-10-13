@@ -86,7 +86,9 @@ void match_handToAssistant(const uint8_t *match) {
 	for (int side = 0; side < 2; ++side) {
 		const uint8_t *team = *(uint8_t *const *)(match + (side ? MATCH_TEAM_AWAY : MATCH_TEAM_HOME));
 		uint8_t *manager = *(uint8_t *const *)(team + MATCH_TEAM_MANAGER);
-		uint32_t flags = memory_loadU32(manager + MANAGER_FLAGS) & ~(uint32_t)MANAGER_HUMAN_IN_CONTROL;
+		uint32_t flags = memory_loadU32(manager + MANAGER_FLAGS);
+		flags = (flags & MANAGER_AI_MANAGED) ? flags & ~(uint32_t)MANAGER_HUMAN_IN_CONTROL
+																				 : (uint32_t)MANAGER_HUMAN_NO_PLAN;
 		memcpy(manager + MANAGER_FLAGS, &flags, sizeof flags);
 	}
 }

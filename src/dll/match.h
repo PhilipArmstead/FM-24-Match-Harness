@@ -39,7 +39,9 @@ uint8_t *match_deserializeOn(unsigned slot, ByteBuffer *bytes);
 void match_delete(uint8_t *match);
 
 // Hands both teams' in-match changes (substitutions etc.) to the game's AI, as when the game
-// simulates a match nobody watches: clears MANAGER_HUMAN_IN_CONTROL. Match plan settings are kept.
+// simulates a match nobody watches. A human-managed team's flags are reset to
+// MANAGER_HUMAN_NO_PLAN: the human is no longer in control, and the match plan settings of whoever
+// built the input are dropped. AI-managed teams are left as they are.
 void match_handToAssistant(const uint8_t *match);
 
 // Prepares the match and plays it to the end with GAME_MATCH__Run.

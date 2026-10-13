@@ -81,9 +81,10 @@ next to the DLL there.
      goals, possession and the team totals. The data is the engine's own
      per-player stats objects
    - both teams' in-match changes (substitutions etc.) are made by the game's
-     AI, as when the game simulates a match: the harness clears the
-     manager's "human in control" flag before kick-off. A Match Plan you set
-     in the game is kept and limits those changes as it would in the game
+     AI, as when the game simulates a match nobody watches. Before kick-off
+     the harness resets the human manager's control flags to "no match plan,
+     not in control", so the Match Plan of whoever built the input doesn't
+     carry over. AI-managed teams are left as they are
    - `--human-control`: keep the input's flags instead. A team built with a
      human in control then makes no tactical changes (nobody is there to make
      them) and may not even replace injured players
