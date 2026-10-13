@@ -29,10 +29,11 @@ typedef struct Job {
 	wchar_t profile[HARNESS_PATH_LENGTH]; // run: optional sample file (see profiler.h)
 	uint32_t *seeds;                      // run
 	size_t seedCount;
-	unsigned threads; // run: worker threads (1..HARNESS_MAX_THREADS)
-	bool keepSeed;    // run: play the input's own seed once
-	bool detailed;    // run: also write per-player and per-team statistics (match_stats.h)
-	bool hasSeed;     // build_next, sensitivity: use `seed` instead of a clock value / 1
+	unsigned threads;  // run: worker threads (1..HARNESS_MAX_THREADS)
+	bool keepSeed;     // run: play the input's own seed once
+	bool detailed;     // run: also write per-player and per-team statistics (match_stats.h)
+	bool humanControl; // run: keep the input's "human in control" flags (no AI in-match changes)
+	bool hasSeed;      // build_next, sensitivity: use `seed` instead of a clock value / 1
 	uint32_t seed;
 	char player[128]; // sensitivity: only players whose name contains this, or with this unique ID
 	uint8_t values[JOB_MAX_VALUES]; // sensitivity: in-game values (1-20) to try; none = one step

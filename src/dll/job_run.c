@@ -161,6 +161,9 @@ static bool playSeed(
 	}
 	QueryPerformanceCounter(&loaded);
 	double cpuLoaded = threadCpuMilliseconds();
+	if (!run->job->humanControl) {
+		match_handToAssistant(match);
+	}
 	match_play(match);
 	QueryPerformanceCounter(&end);
 	if (profiler) {

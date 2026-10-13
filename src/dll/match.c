@@ -9,6 +9,7 @@
 #include "rng.h"
 #include "stream.h"
 
+#include <string.h>
 #include <xmmintrin.h>
 
 
@@ -79,6 +80,15 @@ void match_delete(uint8_t *match) {
 	// The scalar deleting destructor (vtable slot 0), as the game's session code uses.
 	MatchDeleteFn destroy = **(MatchDeleteFn **)match;
 	destroy(match, 1);
+}
+
+void match_handToAssistant(const uint8_t *match) {
+	for (int side = 0; side < 2; ++side) {
+		const uint8_t *team = *(uint8_t *const *)(match + (side ? MATCH_TEAM_AWAY : MATCH_TEAM_HOME));
+		uint8_t *manager = *(uint8_t *const *)(team + MATCH_TEAM_MANAGER);
+		uint32_t flags = memory_loadU32(manager + MANAGER_FLAGS) & ~(uint32_t)MANAGER_HUMAN_IN_CONTROL;
+		memcpy(manager + MANAGER_FLAGS, &flags, sizeof flags);
+	}
 }
 
 void match_play(uint8_t *match) {

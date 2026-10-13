@@ -38,6 +38,10 @@ uint8_t *match_deserialize(ByteBuffer *bytes);
 uint8_t *match_deserializeOn(unsigned slot, ByteBuffer *bytes);
 void match_delete(uint8_t *match);
 
+// Hands both teams' in-match changes (substitutions etc.) to the game's AI, as when the game
+// simulates a match nobody watches: clears MANAGER_HUMAN_IN_CONTROL. Match plan settings are kept.
+void match_handToAssistant(const uint8_t *match);
+
 // Prepares the match and plays it to the end with GAME_MATCH__Run.
 void match_play(uint8_t *match);
 

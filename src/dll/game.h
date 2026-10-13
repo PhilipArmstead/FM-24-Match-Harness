@@ -53,6 +53,11 @@ enum MatchLayout {
 	MATCH_RNG_STATE = 58320,  // u64
 	MATCH_BUILD_FLAG = 58928, // byte MatchBuilder_Create clears after the constructor
 	MATCH_TEAM_GOALS = 0x248, // u8 in MATCH_TEAM
+	MATCH_TEAM_MANAGER =
+		312,                // MATCH_TEAM: the manager (its tactic etc.; "<side>.manager" in a config)
+	MANAGER_FLAGS = 7600, // u32 in the manager: the first field of "<side>.manager"
+	MANAGER_HUMAN_IN_CONTROL =
+		0x1, // a human makes the team's in-match changes (docs/PLAN.md Phase 18)
 };
 
 // Database layouts.

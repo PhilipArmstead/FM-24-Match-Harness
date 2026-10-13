@@ -80,10 +80,13 @@ next to the DLL there.
      pieces taken, goalkeeper saves, goals conceded and distance (km). Teams:
      goals, possession and the team totals. The data is the engine's own
      per-player stats objects
-   - the human side makes **no substitutions** in a harness run, not even for
-     injuries: an injured or sent-off player is not replaced, so the team
-     plays on a man short (this is why its starters can average under 90
-     minutes)
+   - both teams' in-match changes (substitutions etc.) are made by the game's
+     AI, as when the game simulates a match: the harness clears the
+     manager's "human in control" flag before kick-off. A Match Plan you set
+     in the game is kept and limits those changes as it would in the game
+   - `--human-control`: keep the input's flags instead. A team built with a
+     human in control then makes no tactical changes (nobody is there to make
+     them) and may not even replace injured players
 4. `fm24ctl get-next-fixture <out.json|out.bin> [--seed N]` builds the human
    manager's next fixture (~0.2 s). The seed defaults to a clock value, like
    the game. The same seed gives a byte-identical file, because the seed also

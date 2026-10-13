@@ -47,6 +47,7 @@ typedef struct RunOptions {
 	unsigned long threads;
 	const wchar_t *profile;
 	bool detailed;
+	bool humanControl;
 } RunOptions;
 
 typedef struct SensitivityOptions {
@@ -82,7 +83,7 @@ int commands_run(int argc, wchar_t **argv) {
 		fprintf(
 			stderr,
 			"usage: fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]"
-			" [--profile <samples.txt>] [--detailed]\n"
+			" [--profile <samples.txt>] [--detailed] [--human-control]\n"
 		);
 		return EXIT_USAGE;
 	}
@@ -101,13 +102,15 @@ int commands_run(int argc, wchar_t **argv) {
 	(void)snprintf(
 		job,
 		sizeof job,
-		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\ndetailed=%d\n",
+		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\ndetailed=%d\n"
+		"human_control=%d\n",
 		input.utf8,
 		seeds,
 		output.utf8,
 		options.threads,
 		profile.utf8,
-		options.detailed
+		options.detailed,
+		options.humanControl
 	);
 	printf("job submitted; waiting...\n");
 	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, NULL, 0)) {
@@ -352,6 +355,8 @@ static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options
 		options->profile = argv[++*i];
 	} else if (wcscmp(name, L"--detailed") == 0) {
 		options->detailed = true;
+	} else if (wcscmp(name, L"--human-control") == 0) {
+		options->humanControl = true;
 	} else if (wcscmp(name, L"--threads") == 0 && hasValue) {
 		wchar_t *end = NULL;
 		options->threads = wcstoul(argv[++*i], &end, 10);
