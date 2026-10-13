@@ -92,10 +92,6 @@ void database_clubShortName(const uint8_t *team, char *out, size_t size) {
 	}
 }
 
-uint8_t *database_playerRatings(uint8_t *person) {
-	return person + PLAYER_FROM_PERSON + PLAYER_RATINGS;
-}
-
 // A game string object: u32 byte length followed by UTF-8 bytes.
 static bool readString(const uint8_t *object, char *out, size_t size) {
 	uint32_t length = 0;

@@ -35,6 +35,3 @@ bool database_personName(const uint8_t *person, char *out, size_t size);
 
 // The short name of a team's club, or "?".
 void database_clubShortName(const uint8_t *team, char *out, size_t size);
-
-// A person's player ratings (15 positions then 54 attributes, PLAYER_RATING_COUNT bytes).
-uint8_t *database_playerRatings(uint8_t *person);

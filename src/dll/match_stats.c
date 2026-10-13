@@ -35,13 +35,12 @@ enum {
 
 enum { EXACT_FRACTION_BITS = 20 };
 
-typedef enum ValueKind { VALUE_U8, VALUE_U8_PAIR, VALUE_F32, VALUE_F32_THOUSANDTHS } ValueKind;
+typedef enum ValueKind { VALUE_U8, VALUE_F32, VALUE_F32_THOUSANDTHS } ValueKind;
 
 typedef struct PlayerValue {
 	const char *name;
 	ValueKind kind;
 	uint8_t offset;
-	uint8_t second; // VALUE_U8_PAIR: the second byte added
 } PlayerValue;
 
 // Player values, in CSV column order.
@@ -98,52 +97,52 @@ _Static_assert(V_DISTANCE_KM + 1 == MATCH_STATS_PLAYER_VALUES, "one index per pl
 // Members identified by matching one match's sums with the game's own Teams statistics screen
 // (docs/PLAN.md Phase 18).
 static const PlayerValue playerValues[] = {
-	[V_GOALS] = {"goals", VALUE_U8, 127, 0},
-	[V_ASSISTS] = {"assists", VALUE_U8, 147, 0},
-	[V_SHOTS] = {"shots", VALUE_U8, 132, 0},
-	[V_SHOTS_ON_TARGET] = {"shots_on_target", VALUE_U8, 133, 0},
-	[V_BLOCKED_SHOTS] = {"blocked_shots", VALUE_U8, 134, 0},
-	[V_LONG_SHOTS] = {"long_shots", VALUE_U8, 135, 0},
-	[V_XG] = {"xg", VALUE_F32, 48, 0},
-	[V_XA] = {"xa", VALUE_F32, 56, 0},
-	[V_KEY_PASSES] = {"key_passes", VALUE_U8, 176, 0},
-	[V_CLEAR_CUT_CHANCES] = {"clear_cut_chances", VALUE_U8, 136, 0},
-	[V_HALF_CHANCES] = {"half_chances", VALUE_U8, 137, 0},
-	[V_PASSES_ATTEMPTED] = {"passes_attempted", VALUE_U8, 174, 0},
-	[V_PASSES_COMPLETED] = {"passes_completed", VALUE_U8, 175, 0},
-	[V_PROGRESSIVE_PASSES] = {"progressive_passes", VALUE_U8, 221, 0},
-	[V_CROSSES_ATTEMPTED] = {"crosses_attempted", VALUE_U8, 169, 0},
-	[V_CROSSES_COMPLETED] = {"crosses_completed", VALUE_U8, 170, 0},
-	[V_DRIBBLES] = {"dribbles", VALUE_U8, 149, 0},
-	[V_TACKLES_ATTEMPTED] = {"tackles_attempted", VALUE_U8, 178, 0},
-	[V_TACKLES_WON] = {"tackles_won", VALUE_U8, 179, 0},
-	[V_KEY_TACKLES] = {"key_tackles", VALUE_U8, 180, 0},
-	[V_INTERCEPTIONS] = {"interceptions", VALUE_U8, 187, 0},
-	[V_CLEARANCES] = {"clearances", VALUE_U8, 197, 0},
-	[V_BLOCKS] = {"blocks", VALUE_U8, 198, 0},
-	[V_SHOTS_BLOCKED] = {"shots_blocked", VALUE_U8, 144, 0},
-	[V_PRESSURES_ATTEMPTED] = {"pressures_attempted", VALUE_U8, 216, 0},
-	[V_PRESSURES_COMPLETED] = {"pressures_completed", VALUE_U8, 217, 0},
-	[V_HEADERS_ATTEMPTED] = {"headers_attempted", VALUE_U8, 182, 0},
-	[V_HEADERS_WON] = {"headers_won", VALUE_U8, 183, 0},
-	[V_KEY_HEADERS] = {"key_headers", VALUE_U8, 186, 0},
-	[V_FOULS] = {"fouls", VALUE_U8, 151, 0},
-	[V_FOULED] = {"fouled", VALUE_U8, 152, 0},
-	[V_OFFSIDES] = {"offsides", VALUE_U8, 153, 0},
-	[V_YELLOW_CARDS] = {"yellow_cards", VALUE_U8, 154, 0},
-	[V_RED_CARDS] = {"red_cards", VALUE_U8, 155, 0},
-	[V_CORNERS] = {"corners", VALUE_U8, 192, 0},
-	[V_THROW_INS] = {"throw_ins", VALUE_U8, 191, 0},
-	[V_DEFENSIVE_FREE_KICKS] = {"defensive_free_kicks", VALUE_U8, 193, 0},
-	[V_ATTACKING_FREE_KICKS] = {"attacking_free_kicks", VALUE_U8, 194, 0},
-	[V_SAVES_HELD] = {"saves_held", VALUE_U8, 141, 0},
-	[V_SAVES_PARRIED] = {"saves_parried", VALUE_U8, 142, 0},
-	[V_SAVES_TIPPED] = {"saves_tipped", VALUE_U8, 143, 0},
-	[V_GOALS_CONCEDED] = {"goals_conceded", VALUE_U8, 128, 0},
-	[V_POSSESSION_WON] = {"possession_won", VALUE_U8, 195, 0},
-	[V_POSSESSION_LOST] = {"possession_lost", VALUE_U8, 196, 0},
-	[V_HIGH_INTENSITY_SPRINTS] = {"high_intensity_sprints", VALUE_U8, 232, 0},
-	[V_DISTANCE_KM] = {"distance_km", VALUE_F32_THOUSANDTHS, 96, 0},
+	[V_GOALS] = {"goals", VALUE_U8, 127},
+	[V_ASSISTS] = {"assists", VALUE_U8, 147},
+	[V_SHOTS] = {"shots", VALUE_U8, 132},
+	[V_SHOTS_ON_TARGET] = {"shots_on_target", VALUE_U8, 133},
+	[V_BLOCKED_SHOTS] = {"blocked_shots", VALUE_U8, 134},
+	[V_LONG_SHOTS] = {"long_shots", VALUE_U8, 135},
+	[V_XG] = {"xg", VALUE_F32, 48},
+	[V_XA] = {"xa", VALUE_F32, 56},
+	[V_KEY_PASSES] = {"key_passes", VALUE_U8, 176},
+	[V_CLEAR_CUT_CHANCES] = {"clear_cut_chances", VALUE_U8, 136},
+	[V_HALF_CHANCES] = {"half_chances", VALUE_U8, 137},
+	[V_PASSES_ATTEMPTED] = {"passes_attempted", VALUE_U8, 174},
+	[V_PASSES_COMPLETED] = {"passes_completed", VALUE_U8, 175},
+	[V_PROGRESSIVE_PASSES] = {"progressive_passes", VALUE_U8, 221},
+	[V_CROSSES_ATTEMPTED] = {"crosses_attempted", VALUE_U8, 169},
+	[V_CROSSES_COMPLETED] = {"crosses_completed", VALUE_U8, 170},
+	[V_DRIBBLES] = {"dribbles", VALUE_U8, 149},
+	[V_TACKLES_ATTEMPTED] = {"tackles_attempted", VALUE_U8, 178},
+	[V_TACKLES_WON] = {"tackles_won", VALUE_U8, 179},
+	[V_KEY_TACKLES] = {"key_tackles", VALUE_U8, 180},
+	[V_INTERCEPTIONS] = {"interceptions", VALUE_U8, 187},
+	[V_CLEARANCES] = {"clearances", VALUE_U8, 197},
+	[V_BLOCKS] = {"blocks", VALUE_U8, 198},
+	[V_SHOTS_BLOCKED] = {"shots_blocked", VALUE_U8, 144},
+	[V_PRESSURES_ATTEMPTED] = {"pressures_attempted", VALUE_U8, 216},
+	[V_PRESSURES_COMPLETED] = {"pressures_completed", VALUE_U8, 217},
+	[V_HEADERS_ATTEMPTED] = {"headers_attempted", VALUE_U8, 182},
+	[V_HEADERS_WON] = {"headers_won", VALUE_U8, 183},
+	[V_KEY_HEADERS] = {"key_headers", VALUE_U8, 186},
+	[V_FOULS] = {"fouls", VALUE_U8, 151},
+	[V_FOULED] = {"fouled", VALUE_U8, 152},
+	[V_OFFSIDES] = {"offsides", VALUE_U8, 153},
+	[V_YELLOW_CARDS] = {"yellow_cards", VALUE_U8, 154},
+	[V_RED_CARDS] = {"red_cards", VALUE_U8, 155},
+	[V_CORNERS] = {"corners", VALUE_U8, 192},
+	[V_THROW_INS] = {"throw_ins", VALUE_U8, 191},
+	[V_DEFENSIVE_FREE_KICKS] = {"defensive_free_kicks", VALUE_U8, 193},
+	[V_ATTACKING_FREE_KICKS] = {"attacking_free_kicks", VALUE_U8, 194},
+	[V_SAVES_HELD] = {"saves_held", VALUE_U8, 141},
+	[V_SAVES_PARRIED] = {"saves_parried", VALUE_U8, 142},
+	[V_SAVES_TIPPED] = {"saves_tipped", VALUE_U8, 143},
+	[V_GOALS_CONCEDED] = {"goals_conceded", VALUE_U8, 128},
+	[V_POSSESSION_WON] = {"possession_won", VALUE_U8, 195},
+	[V_POSSESSION_LOST] = {"possession_lost", VALUE_U8, 196},
+	[V_HIGH_INTENSITY_SPRINTS] = {"high_intensity_sprints", VALUE_U8, 232},
+	[V_DISTANCE_KM] = {"distance_km", VALUE_F32_THOUSANDTHS, 96},
 };
 
 // A team value: the sum of a player value, or one of these.
@@ -259,7 +258,6 @@ bool matchStats_write(const MatchStatsTotals *totals, const wchar_t *runOutput) 
 static double playerValue(const uint8_t *stats, const PlayerValue *value) {
 	switch (value->kind) {
 		case VALUE_U8: return stats[value->offset];
-		case VALUE_U8_PAIR: return (double)stats[value->offset] + stats[value->second];
 		case VALUE_F32: {
 			float number = 0;
 			memcpy(&number, stats + value->offset, sizeof number);

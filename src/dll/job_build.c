@@ -1,10 +1,8 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Jobs "build_next" (serialise the human manager's next fixture) and "export" (convert a .bin match
-// input into a JSON config).
+// Job "build_next": serialise the human manager's next fixture.
 
-#include "files.h"
 #include "fixture.h"
 #include "job.h"
 #include "log.h"
@@ -13,7 +11,6 @@
 #include "trace.h"
 
 #include <stdio.h>
-#include <string.h>
 #include <windows.h>
 
 
@@ -52,38 +49,6 @@ void jobs_buildNext(const Job *job, const wchar_t *directory) {
 		job_writeResult(directory, "error: serialise or write failed; see harness.log");
 	}
 	trace_free(&serialised);
-}
-
-void jobs_export(const Job *job, const wchar_t *directory) {
-	ByteBuffer input = {0};
-	if (!files_read(job->input, &input)) {
-		job_writeResult(directory, "error: cannot read input");
-		return;
-	}
-	uint8_t *match = match_deserialize(&input);
-	if (!match) {
-		job_writeResult(directory, "error: deserialize failed");
-		buffer_free(&input);
-		return;
-	}
-	Serialised serialised = {0};
-	bool ok = trace_serialize(match, &serialised, output_wantsJson(job->output)) &&
-						output_write(job->output, &serialised, "exported from .bin");
-	match_delete(match);
-	if (ok) {
-		bool same = serialised.bytes.length == input.length &&
-								memcmp(serialised.bytes.data, input.data, input.length) == 0;
-		job_writeResult(
-			directory,
-			"ok: %zu bytes; round trip %s",
-			serialised.bytes.length,
-			same ? "identical" : "DIFFERS from the input (the game re-serialises differently)"
-		);
-	} else {
-		job_writeResult(directory, "error: serialise/trace failed; see harness.log");
-	}
-	trace_free(&serialised);
-	buffer_free(&input);
 }
 
 // The seed MatchBuilder_Create would pick: QueryPerformanceCounter in milliseconds.

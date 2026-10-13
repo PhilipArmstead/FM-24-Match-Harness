@@ -3,8 +3,6 @@
 
 #include "buffer.h"
 
-#include <stdarg.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -21,24 +19,6 @@ bool buffer_append(ByteBuffer *buffer, const void *bytes, size_t size) {
 	buffer->length += size;
 	buffer->data[buffer->length] = 0;
 	return true;
-}
-
-bool buffer_appendFormat(ByteBuffer *buffer, const char *format, ...) {
-	va_list args;
-	va_start(args, format);
-	va_list copy;
-	va_copy(copy, args);
-	int size = vsnprintf(NULL, 0, format, copy);
-	va_end(copy);
-	bool ok = size >= 0 && reserve(buffer, (size_t)size);
-	if (ok) {
-		ok = vsnprintf((char *)buffer->data + buffer->length, (size_t)size + 1, format, args) == size;
-		if (ok) {
-			buffer->length += (size_t)size;
-		}
-	}
-	va_end(args);
-	return ok;
 }
 
 const char *buffer_string(const ByteBuffer *buffer) {

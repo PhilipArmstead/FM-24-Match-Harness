@@ -9,7 +9,7 @@ src/dll/     game.h (addresses, layouts, signatures), memory, stream,
              match, rng, database, fixture, trace, seed_build (per-seed
              rebuilds), sites/site_lookup/site_members, labels (rating
              names), config_writer, output, profiler, job,
-             job_run/build/sensitivity, match_stats, tactic_flags
+             job_run/build, match_stats, tactic_flags
              (generated), main
 src/runner/  main, commands, inject, client, paths, json_reader,
              match_config (encoder)
@@ -21,7 +21,7 @@ tools/       memscan.py: read-only memory scanner for the running fm.exe
              fields/: field-name data and generators (tactic_bits.json ->
                gen_tactic_flags.py -> src/dll/tactic_flags.c; site_ops.json
                -> gen_site_members.py), diff_configs.py (compare two configs)
-             sensitivity/, experiments/: analysis scripts for CSV outputs
+             experiments/: analysis script for team instruction runs
 ```
 
 # Building
@@ -130,24 +130,8 @@ next to the DLL there.
    manager's next fixture (~0.2 s). The seed defaults to a clock value, like
    the game. The same seed gives a byte-identical file, because the seed also
    seeds the thread-local RNG the pre-match setup uses.
-5. `fm24ctl export <input.bin> <out.json>` converts an input to a config
-   (uses the game's serialiser). `fm24ctl encode <in.json> <out.bin>`
-   converts back (no game needed).
-6. `fm24ctl sensitivity <out.csv> [--player NAME|UID] [--values 1-20]
-   [--seed N]` measures which values the game derives from each rating. It
-   builds the next fixture once as a baseline. Then, for each selected player
-   (default: everyone in the fixture) and each of their 69 ratings, it changes
-   the rating in the database, rebuilds with the same seed, writes every field
-   that differs from the baseline, and restores the rating.
-   - default: one in-game step (+1, or -1 at the top); `--values`: each listed
-     in-game value instead (`1-20` gives full response curves)
-   - ~0.12 s per build: one player with `--values 1-20` takes ~2.5 min
-   - CSV: `player_uid, player, player_block, rating, rating_from, rating_to`
-     (database units: positions 1-20, attributes 1-100), then the changed
-     field (`field_block, field` = record index in that block, `site`,
-     `length, old, new`). A row saying `structure changed` means the edit
-     changed the match's layout (e.g. the player dropped out of the squad), so
-     its fields can't be compared
+5. `fm24ctl encode <in.json> <out.bin>` converts a config to a `.bin` input
+   (no game needed).
 
 CSV columns: `seed, home_goals, away_goals, clock_ticks (4/s), finished,
 rng_final, ms`.
@@ -202,7 +186,7 @@ values the game derives from them (ability, role ratings) don't affect results
 - One input = one fixture with fixed line-ups and tactics.
 - A game-produced .bin and its JSON export differ in one header byte (offset
   21, a flag the deserialiser sets). Match results are identical.
-- `get-next-fixture` and `sensitivity` set one byte (`+0x46`) of the real
+- `get-next-fixture` (and every per-seed rebuild) sets one byte (`+0x46`) of the real
   fixture in the save and leave it set, as the game's own match setup
   probably does. The first build after loading a save therefore differs in
   that byte from later builds with the same seed.

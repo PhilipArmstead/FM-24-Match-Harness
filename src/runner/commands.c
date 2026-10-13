@@ -51,12 +51,6 @@ typedef struct RunOptions {
 	bool keepBuild;
 } RunOptions;
 
-typedef struct SensitivityOptions {
-	char player[128]; // name substring or unique ID; "" = every player
-	char seed[32];
-	char values[64]; // in-game values to try ("1-20", "1,10,20"); "" = one step
-} SensitivityOptions;
-
 static bool absolutePath(const wchar_t *argument, Path *out);
 static bool workingPath(const wchar_t *name, Path *out);
 static int submitAndReport(const char *job);
@@ -75,8 +69,6 @@ static bool defaultOutput(const Path *input, Path *output);
 static void printDetailedPaths(const Path *output);
 static bool parseSeedValue(const wchar_t *value, char *seed, size_t size);
 static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size);
-static bool copyOptionValue(const wchar_t *value, char *out, size_t size, const char *name);
-static bool parseSensitivityOptions(int argc, wchar_t **argv, SensitivityOptions *options);
 
 int commands_run(int argc, wchar_t **argv) {
 	RunOptions options;
@@ -141,56 +133,6 @@ int commands_getNextFixture(int argc, wchar_t **argv) {
 	}
 	char job[JOB_LENGTH];
 	(void)snprintf(job, sizeof job, "command=build_next\noutput=%s\nseed=%s\n", output.utf8, seed);
-	return submitAndReport(job);
-}
-
-int commands_sensitivity(int argc, wchar_t **argv) {
-	SensitivityOptions options = {.seed = "1"};
-	if (argc < 3 || !parseSensitivityOptions(argc, argv, &options)) {
-		fprintf(
-			stderr,
-			"usage: fm24ctl sensitivity <output.csv> [--player NAME|UID] [--values 1-20] [--seed N]\n"
-		);
-		return EXIT_USAGE;
-	}
-	Path output;
-	if (!absolutePath(argv[2], &output)) {
-		return EXIT_FAILED;
-	}
-	char job[JOB_LENGTH];
-	(void)snprintf(
-		job,
-		sizeof job,
-		"command=sensitivity\noutput=%s\nseed=%s\nplayer=%s\nvalues=%s\n",
-		output.utf8,
-		options.seed,
-		options.player,
-		options.values
-	);
-	printf(
-		"probing every rating of %s; this takes a while...\n",
-		options.player[0] ? options.player : "all players"
-	);
-	char result[CLIENT_RESULT_LENGTH];
-	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
-		return EXIT_FAILED;
-	}
-	printf("%s\n", result);
-	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
-}
-
-int commands_export(int argc, wchar_t **argv) {
-	if (argc < 4) {
-		fprintf(stderr, "usage: fm24ctl export <input.bin> <output.json>\n");
-		return EXIT_USAGE;
-	}
-	Path input;
-	Path output;
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output)) {
-		return EXIT_FAILED;
-	}
-	char job[JOB_LENGTH];
-	(void)snprintf(job, sizeof job, "command=export\ninput=%s\noutput=%s\n", input.utf8, output.utf8);
 	return submitAndReport(job);
 }
 
@@ -458,36 +400,6 @@ static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t siz
 			return false;
 		}
 		if (!parseSeedValue(argv[++i], seed, size)) {
-			return false;
-		}
-	}
-	return true;
-}
-
-// A UTF-8 option value that must fit and stay on one job-file line.
-static bool copyOptionValue(const wchar_t *value, char *out, size_t size, const char *name) {
-	if (!paths_toUtf8(value, out, size) || strchr(out, '\n')) {
-		fprintf(stderr, "bad %s value\n", name);
-		return false;
-	}
-	return true;
-}
-
-// sensitivity's options after the output path.
-static bool parseSensitivityOptions(int argc, wchar_t **argv, SensitivityOptions *options) {
-	for (int i = 3; i < argc; ++i) {
-		bool hasValue = i + 1 < argc;
-		bool ok = false;
-		if (wcscmp(argv[i], L"--player") == 0 && hasValue) {
-			ok = copyOptionValue(argv[++i], options->player, sizeof options->player, "--player");
-		} else if (wcscmp(argv[i], L"--seed") == 0 && hasValue) {
-			ok = parseSeedValue(argv[++i], options->seed, sizeof options->seed);
-		} else if (wcscmp(argv[i], L"--values") == 0 && hasValue) {
-			ok = copyOptionValue(argv[++i], options->values, sizeof options->values, "--values");
-		} else {
-			fprintf(stderr, "unknown option or missing value: %ls\n", argv[i]);
-		}
-		if (!ok) {
 			return false;
 		}
 	}
