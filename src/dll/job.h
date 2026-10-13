@@ -33,6 +33,7 @@ typedef struct Job {
 	bool keepSeed;     // run: play the input's own seed once
 	bool detailed;     // run: also write per-player and per-team statistics (match_stats.h)
 	bool humanControl; // run: keep the input's "human in control" flags (no AI in-match changes)
+	bool keepBuild;    // run: patch each seed into the input instead of rebuilding it per seed
 	bool hasSeed;      // build_next, sensitivity: use `seed` instead of a clock value / 1
 	uint32_t seed;
 	char player[128]; // sensitivity: only players whose name contains this, or with this unique ID
@@ -49,7 +50,7 @@ void job_writeResult(const wchar_t *directory, const char *format, ...)
 	__attribute__((format(gnu_printf, 2, 3)));
 
 // The job implementations (job_*.c); each reports through job_writeResult and/or the log.
-void jobs_run(const Job *job);
+void jobs_run(const Job *job, const wchar_t *directory);
 void jobs_buildNext(const Job *job, const wchar_t *directory);
 void jobs_export(const Job *job, const wchar_t *directory);
 void jobs_sensitivity(const Job *job, const wchar_t *directory);

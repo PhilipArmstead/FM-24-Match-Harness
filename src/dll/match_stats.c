@@ -50,12 +50,16 @@ typedef enum PlayerValueIndex {
 	V_ASSISTS,
 	V_SHOTS,
 	V_SHOTS_ON_TARGET,
+	V_BLOCKED_SHOTS,
+	V_LONG_SHOTS,
 	V_XG,
 	V_XA,
 	V_KEY_PASSES,
 	V_CLEAR_CUT_CHANCES,
+	V_HALF_CHANCES,
 	V_PASSES_ATTEMPTED,
 	V_PASSES_COMPLETED,
+	V_PROGRESSIVE_PASSES,
 	V_CROSSES_ATTEMPTED,
 	V_CROSSES_COMPLETED,
 	V_DRIBBLES,
@@ -64,11 +68,15 @@ typedef enum PlayerValueIndex {
 	V_KEY_TACKLES,
 	V_INTERCEPTIONS,
 	V_CLEARANCES,
+	V_BLOCKS,
 	V_SHOTS_BLOCKED,
+	V_PRESSURES_ATTEMPTED,
+	V_PRESSURES_COMPLETED,
 	V_HEADERS_ATTEMPTED,
 	V_HEADERS_WON,
 	V_KEY_HEADERS,
 	V_FOULS,
+	V_FOULED,
 	V_OFFSIDES,
 	V_YELLOW_CARDS,
 	V_RED_CARDS,
@@ -80,36 +88,47 @@ typedef enum PlayerValueIndex {
 	V_SAVES_PARRIED,
 	V_SAVES_TIPPED,
 	V_GOALS_CONCEDED,
+	V_POSSESSION_WON,
+	V_POSSESSION_LOST,
+	V_HIGH_INTENSITY_SPRINTS,
 	V_DISTANCE_KM,
 } PlayerValueIndex;
 _Static_assert(V_DISTANCE_KM + 1 == MATCH_STATS_PLAYER_VALUES, "one index per player value");
 
-// The engine's own stat getter (sub_1419DF290) reads these; names come from the match stats panel
-// (sub_140422890) and the values' behaviour (docs/PLAN.md Phase 18).
+// Members identified by matching one match's sums with the game's own Teams statistics screen
+// (docs/PLAN.md Phase 18).
 static const PlayerValue playerValues[] = {
 	[V_GOALS] = {"goals", VALUE_U8, 127, 0},
 	[V_ASSISTS] = {"assists", VALUE_U8, 147, 0},
 	[V_SHOTS] = {"shots", VALUE_U8, 132, 0},
 	[V_SHOTS_ON_TARGET] = {"shots_on_target", VALUE_U8, 133, 0},
+	[V_BLOCKED_SHOTS] = {"blocked_shots", VALUE_U8, 134, 0},
+	[V_LONG_SHOTS] = {"long_shots", VALUE_U8, 135, 0},
 	[V_XG] = {"xg", VALUE_F32, 48, 0},
 	[V_XA] = {"xa", VALUE_F32, 56, 0},
 	[V_KEY_PASSES] = {"key_passes", VALUE_U8, 176, 0},
-	[V_CLEAR_CUT_CHANCES] = {"clear_cut_chances", VALUE_U8, 148, 0},
+	[V_CLEAR_CUT_CHANCES] = {"clear_cut_chances", VALUE_U8, 136, 0},
+	[V_HALF_CHANCES] = {"half_chances", VALUE_U8, 137, 0},
 	[V_PASSES_ATTEMPTED] = {"passes_attempted", VALUE_U8, 174, 0},
 	[V_PASSES_COMPLETED] = {"passes_completed", VALUE_U8, 175, 0},
-	[V_CROSSES_ATTEMPTED] = {"crosses_attempted", VALUE_U8_PAIR, 203, 204},
-	[V_CROSSES_COMPLETED] = {"crosses_completed", VALUE_U8_PAIR, 205, 206},
-	[V_DRIBBLES] = {"dribbles", VALUE_U8, 170, 0},
+	[V_PROGRESSIVE_PASSES] = {"progressive_passes", VALUE_U8, 221, 0},
+	[V_CROSSES_ATTEMPTED] = {"crosses_attempted", VALUE_U8, 169, 0},
+	[V_CROSSES_COMPLETED] = {"crosses_completed", VALUE_U8, 170, 0},
+	[V_DRIBBLES] = {"dribbles", VALUE_U8, 149, 0},
 	[V_TACKLES_ATTEMPTED] = {"tackles_attempted", VALUE_U8, 178, 0},
 	[V_TACKLES_WON] = {"tackles_won", VALUE_U8, 179, 0},
 	[V_KEY_TACKLES] = {"key_tackles", VALUE_U8, 180, 0},
-	[V_INTERCEPTIONS] = {"interceptions", VALUE_U8, 151, 0},
+	[V_INTERCEPTIONS] = {"interceptions", VALUE_U8, 187, 0},
 	[V_CLEARANCES] = {"clearances", VALUE_U8, 197, 0},
+	[V_BLOCKS] = {"blocks", VALUE_U8, 198, 0},
 	[V_SHOTS_BLOCKED] = {"shots_blocked", VALUE_U8, 144, 0},
+	[V_PRESSURES_ATTEMPTED] = {"pressures_attempted", VALUE_U8, 216, 0},
+	[V_PRESSURES_COMPLETED] = {"pressures_completed", VALUE_U8, 217, 0},
 	[V_HEADERS_ATTEMPTED] = {"headers_attempted", VALUE_U8, 182, 0},
 	[V_HEADERS_WON] = {"headers_won", VALUE_U8, 183, 0},
 	[V_KEY_HEADERS] = {"key_headers", VALUE_U8, 186, 0},
-	[V_FOULS] = {"fouls", VALUE_U8, 187, 0},
+	[V_FOULS] = {"fouls", VALUE_U8, 151, 0},
+	[V_FOULED] = {"fouled", VALUE_U8, 152, 0},
 	[V_OFFSIDES] = {"offsides", VALUE_U8, 153, 0},
 	[V_YELLOW_CARDS] = {"yellow_cards", VALUE_U8, 154, 0},
 	[V_RED_CARDS] = {"red_cards", VALUE_U8, 155, 0},
@@ -121,11 +140,14 @@ static const PlayerValue playerValues[] = {
 	[V_SAVES_PARRIED] = {"saves_parried", VALUE_U8, 142, 0},
 	[V_SAVES_TIPPED] = {"saves_tipped", VALUE_U8, 143, 0},
 	[V_GOALS_CONCEDED] = {"goals_conceded", VALUE_U8, 128, 0},
+	[V_POSSESSION_WON] = {"possession_won", VALUE_U8, 195, 0},
+	[V_POSSESSION_LOST] = {"possession_lost", VALUE_U8, 196, 0},
+	[V_HIGH_INTENSITY_SPRINTS] = {"high_intensity_sprints", VALUE_U8, 232, 0},
 	[V_DISTANCE_KM] = {"distance_km", VALUE_F32_THOUSANDTHS, 96, 0},
 };
 
 // A team value: the sum of a player value, or one of these.
-enum { TEAM_GOALS = -1, TEAM_POSSESSION = -2, TEAM_SAVES = -3 };
+enum { TEAM_GOALS = -1, TEAM_POSSESSION = -2, TEAM_SAVES = -3, TEAM_RATING = -4 };
 
 typedef struct TeamValue {
 	const char *name;
@@ -135,15 +157,21 @@ typedef struct TeamValue {
 static const TeamValue teamValues[] = {
 	{"goals", TEAM_GOALS},
 	{"possession", TEAM_POSSESSION},
+	{"average_rating", TEAM_RATING},
 	{"xg", V_XG},
 	{"shots", V_SHOTS},
 	{"shots_on_target", V_SHOTS_ON_TARGET},
+	{"blocked_shots", V_BLOCKED_SHOTS},
+	{"long_shots", V_LONG_SHOTS},
 	{"clear_cut_chances", V_CLEAR_CUT_CHANCES},
+	{"half_chances", V_HALF_CHANCES},
 	{"corners", V_CORNERS},
 	{"fouls", V_FOULS},
+	{"fouled", V_FOULED},
 	{"offsides", V_OFFSIDES},
 	{"passes_attempted", V_PASSES_ATTEMPTED},
 	{"passes_completed", V_PASSES_COMPLETED},
+	{"progressive_passes", V_PROGRESSIVE_PASSES},
 	{"crosses_attempted", V_CROSSES_ATTEMPTED},
 	{"crosses_completed", V_CROSSES_COMPLETED},
 	{"tackles_attempted", V_TACKLES_ATTEMPTED},
@@ -152,13 +180,19 @@ static const TeamValue teamValues[] = {
 	{"headers_won", V_HEADERS_WON},
 	{"interceptions", V_INTERCEPTIONS},
 	{"clearances", V_CLEARANCES},
+	{"blocks", V_BLOCKS},
 	{"shots_blocked", V_SHOTS_BLOCKED},
+	{"pressures_attempted", V_PRESSURES_ATTEMPTED},
+	{"pressures_completed", V_PRESSURES_COMPLETED},
 	{"yellow_cards", V_YELLOW_CARDS},
 	{"red_cards", V_RED_CARDS},
 	{"saves", TEAM_SAVES},
 	{"distance_km", V_DISTANCE_KM},
 	{"key_passes", V_KEY_PASSES},
 	{"dribbles", V_DRIBBLES},
+	{"possession_won", V_POSSESSION_WON},
+	{"possession_lost", V_POSSESSION_LOST},
+	{"high_intensity_sprints", V_HIGH_INTENSITY_SPRINTS},
 };
 _Static_assert(
 	sizeof teamValues / sizeof teamValues[0] == MATCH_STATS_TEAM_VALUES,
@@ -306,6 +340,8 @@ static void addTeam(
 		totals->playerCount = (unsigned)squadSize(team);
 	}
 	double sums[MATCH_STATS_PLAYER_VALUES] = {0};
+	long long ratingMinutes = 0; // rating x 100 x minutes
+	long long teamMinutes = 0;
 	for (int i = 0; i < (int)totals->playerCount && i < squadSize(team); ++i) {
 		const uint8_t *stats = playerStats(team, i);
 		PlayerTotals *player = &totals->players[i];
@@ -318,7 +354,10 @@ static void addTeam(
 		++player->appearances;
 		player->starts += !(memory_loadU32(stats + STATS_FLAGS) & FLAG_SUBSTITUTE);
 		player->minutes += minutes;
-		player->ratingSum += (int16_t)memory_loadU16(stats + STATS_RATING);
+		int rating = (int16_t)memory_loadU16(stats + STATS_RATING);
+		player->ratingSum += rating;
+		ratingMinutes += (long long)rating * minutes;
+		teamMinutes += minutes;
 		for (size_t v = 0; v < MATCH_STATS_PLAYER_VALUES; ++v) {
 			double value = playerValue(stats, &playerValues[v]);
 			player->values[v] += value;
@@ -331,6 +370,10 @@ static void addTeam(
 			totals->values[v] += team[MATCH_TEAM_GOALS];
 		} else if (source == TEAM_POSSESSION) {
 			totals->values[v] += possession(completedPasses(team), completedPasses(opponent));
+		} else if (source == TEAM_RATING) {
+			// Minutes-weighted, truncated to hundredths as the match statistics screen shows it.
+			long long hundredths = teamMinutes ? ratingMinutes / teamMinutes : 0;
+			totals->values[v] += exactValue((double)hundredths / 100.0);
 		} else if (source == TEAM_SAVES) {
 			totals->values[v] += sums[V_SAVES_HELD] + sums[V_SAVES_PARRIED] + sums[V_SAVES_TIPPED];
 		} else {

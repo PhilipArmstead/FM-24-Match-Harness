@@ -3,6 +3,10 @@
 
 // Job "run": plays one match input once per seed and writes a CSV of results.
 //
+// For a list of seeds the input's fixture is rebuilt by the game with each seed and the input's
+// edits re-applied (seed_build.h), so a seed plays as it would in the game. With keep_build the
+// seed is only patched into the input, keeping the pre-match values it was built with.
+//
 // With `threads` > 1 the seeds are shared out between worker threads, each playing whole matches
 // with its own copy of the input and its own game stream. Rows are still written in seed order.
 
@@ -14,6 +18,7 @@
 #include "match_stats.h"
 #include "memory.h"
 #include "profiler.h"
+#include "seed_build.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +48,7 @@ typedef struct Run {
 	FILE *csv;
 	Profiler *profiler;        // samples worker 0 (the job thread)
 	MatchStatsTotals *details; // --detailed: player and team statistics summed over the seeds
+	SeedBuilder *seedBuilder;  // rebuilds the input per seed; NULL: patch the seed into the input
 } Run;
 
 typedef struct Worker {
@@ -67,14 +73,30 @@ static void writeReadyRows(Run *run);
 static DWORD WINAPI worker(LPVOID parameter);
 static void runWorkers(Run *run, unsigned count);
 static bool openRun(const Job *job, const ByteBuffer *input, Run *run);
+static void closeRun(Run *run);
 
-void jobs_run(const Job *job) {
+void jobs_run(const Job *job, const wchar_t *directory) {
 	ByteBuffer input = {0};
 	Run run;
 	if (!files_read(job->input, &input) || !openRun(job, &input, &run)) {
 		log_message("cannot start the run");
+		job_writeResult(directory, "error: cannot start the run; see harness.log");
 		buffer_free(&input);
 		return;
+	}
+	SeedBuilder seedBuilder;
+	if (!job->keepSeed && !job->keepBuild) {
+		char error[256];
+		if (!seedBuilder_open(&seedBuilder, &input, run.fileSeed, error, sizeof error)) {
+			log_message("cannot rebuild per seed: %s", error);
+			job_writeResult(
+				directory, "error: %s (--keep-build plays the input with only its seed changed)", error
+			);
+			closeRun(&run);
+			buffer_free(&input);
+			return;
+		}
+		run.seedBuilder = &seedBuilder;
 	}
 	unsigned threads = job->threads < run.total ? job->threads : (unsigned)run.total;
 	log_message(
@@ -94,13 +116,22 @@ void jobs_run(const Job *job) {
 	runWorkers(&run, threads);
 	profiler_stop(run.profiler);
 	QueryPerformanceCounter(&end);
-	(void)fclose(run.csv);
 	if (run.details && !matchStats_write(run.details, job->output)) {
 		log_message("cannot write the detailed statistics");
 	}
-	DeleteCriticalSection(&run.lock);
-	free(run.details);
-	free(run.results);
+	job_writeResult(
+		directory,
+		"%s: %zu/%zu runs%s%s",
+		run.written == run.total ? "ok" : "error",
+		run.written,
+		run.total,
+		run.seedBuilder ? ", each seed rebuilt by the game" : "",
+		run.written == run.total ? "" : "; see harness.log"
+	);
+	if (run.seedBuilder) {
+		seedBuilder_close(run.seedBuilder);
+	}
+	closeRun(&run);
 	buffer_free(&input);
 	log_message(
 		"job finished: %zu/%zu runs in %.1f s",
@@ -136,7 +167,8 @@ markPhase(Profiler *profiler, const char *phase, uint32_t seed, double wall, dou
 	profiler_mark(profiler, text);
 }
 
-// Plays `input` with `seed` (patched into it); returns false if the match could not be loaded.
+// Plays `seed`: the game's rebuild for it, or `input` with the seed patched in. Returns false if
+// the match could not be built or loaded.
 static bool playSeed(
 	Run *run,
 	unsigned slot,
@@ -146,7 +178,18 @@ static bool playSeed(
 	Profiler *profiler,
 	SeedResult *out
 ) {
-	memcpy(input->data + seedOffset, &seed, sizeof seed);
+	ByteBuffer rebuilt = {0};
+	ByteBuffer *bytes = input;
+	if (run->seedBuilder) {
+		if (!seedBuilder_build(run->seedBuilder, seed, &rebuilt)) {
+			log_message("seed %u: rebuild failed", seed);
+			buffer_free(&rebuilt);
+			return false;
+		}
+		bytes = &rebuilt;
+	} else {
+		memcpy(input->data + seedOffset, &seed, sizeof seed);
+	}
 	LARGE_INTEGER frequency;
 	LARGE_INTEGER start;
 	LARGE_INTEGER loaded;
@@ -154,7 +197,8 @@ static bool playSeed(
 	QueryPerformanceFrequency(&frequency);
 	double cpuStart = threadCpuMilliseconds();
 	QueryPerformanceCounter(&start);
-	uint8_t *match = match_deserializeOn(slot, input);
+	uint8_t *match = match_deserializeOn(slot, bytes);
+	buffer_free(&rebuilt);
 	if (!match) {
 		log_message("seed %u: deserialize failed", seed);
 		return false;
@@ -289,4 +333,11 @@ static bool openRun(const Job *job, const ByteBuffer *input, Run *run) {
 	fprintf(run->csv, "seed,home_goals,away_goals,clock_ticks,finished,rng_final,ms\n");
 	InitializeCriticalSection(&run->lock);
 	return true;
+}
+
+static void closeRun(Run *run) {
+	(void)fclose(run->csv);
+	DeleteCriticalSection(&run->lock);
+	free(run->details);
+	free(run->results);
 }

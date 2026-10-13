@@ -48,7 +48,7 @@ static void runJob(void) {
 	}
 	switch (job.command) {
 		case JOB_NONE: break; // job_read rejects it
-		case JOB_RUN: jobs_run(&job); break;
+		case JOB_RUN: jobs_run(&job, directory); break;
 		case JOB_BUILD_NEXT: jobs_buildNext(&job, directory); break;
 		case JOB_EXPORT: jobs_export(&job, directory); break;
 		case JOB_SENSITIVITY: jobs_sensitivity(&job, directory); break;

@@ -202,6 +202,10 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "values") == 0) {
 		return parseValues(job, value);
 	}
+	if (strcmp(key, "keep_build") == 0) {
+		job->keepBuild = strcmp(value, "1") == 0;
+		return true;
+	}
 	if (strcmp(key, "human_control") == 0) {
 		job->humanControl = strcmp(value, "1") == 0;
 		return true;

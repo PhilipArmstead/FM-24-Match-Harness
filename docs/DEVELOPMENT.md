@@ -59,7 +59,23 @@ next to the DLL there.
    where `<input>` is a `.bin` input or a `.json` config; e.g.
    `fm24ctl run next.json` plays the config's own seed into `next.csv`
    - seeds: `keep` (the input's own seed; the default), `42`, `1-1000`, or
-     `1,5,10-20`
+     `1,5,10-20`. A seed plays exactly as the game would with that seed
+     (`GAME_MATCH__init_from_fixture`'s seed): the seed also draws pre-match
+     values (attendance, the officials' match-day ratings, a random number
+     per player, weather), so for each seed `run` has the game rebuild the
+     input's fixture with that seed and re-applies the input's edits. An
+     unedited dump then matches the game; edited fields keep your values.
+     This needs the input to be the human manager's next fixture in the
+     running game (built in the current game state); otherwise `run` stops
+     with an error. To compare with the game, dump the fixture after clicking
+     "Simulate Match" and before "Continue", and run it before "Continue":
+     until the team is submitted, a build picks the human side's line-up
+     itself, differently for each seed. If a seed's build has a different
+     structure (another line-up or AI tactic) where the input was edited,
+     that seed fails (see `harness.log`)
+   - `--keep-build`: play the input as it is, changing only its seed. The
+     pre-match values stay those of the seed it was built with, so results
+     differ from the game's for other seeds, but it works for any input
    - output: the input's name with a `.csv` extension unless given. An
      argument of only digits, `,` and `-` is read as seeds, so name the output
      e.g. `2024.csv`, not `2024`
@@ -74,12 +90,17 @@ next to the DLL there.
    - `--detailed`: also write `<output>-players.csv` and `<output>-teams.csv`,
      with each statistic averaged per match over all the seeds. Players (both
      squads, substitutes included): appearances, starts, minutes, average
-     rating (over appearances), then goals, assists, shots, on target, xG,
-     xA, key passes, clear-cut chances, passes, crosses, dribbles, tackles,
-     interceptions, clearances, blocks, headers, fouls, offsides, cards, set
-     pieces taken, goalkeeper saves, goals conceded and distance (km). Teams:
-     goals, possession and the team totals. The data is the engine's own
-     per-player stats objects
+     rating (over appearances), then goals, assists, shots, on target,
+     blocked and long shots, xG, xA, key passes, clear-cut and half chances,
+     passes (and progressive passes), crosses, dribbles, tackles,
+     interceptions, clearances, blocks and shots blocked, pressures
+     (attempted, inferred; completed), headers, fouls
+     committed and suffered, offsides, cards, set pieces taken, goalkeeper
+     saves, goals conceded, possession won and lost, high-intensity sprints
+     and distance (km). Teams: goals, possession, average rating (as the
+     game's match statistics screen shows it) and the team totals. The data
+     is the engine's own per-player stats objects. The values match the
+     game's statistics screens, team and player (checked on one match)
    - both teams' in-match changes (substitutions etc.) are made by the game's
      AI, as when the game simulates a match nobody watches. Before kick-off
      the harness resets the human manager's control flags to "no match plan,
@@ -155,8 +176,9 @@ values the game derives from them (ability, role ratings) don't affect results
 
 # Known limits
 
-- **Patching the seed in an input is not the game choosing that seed.**
-  Pre-match data (attendance etc.) also depends on the build-time RNG.
+- With `--keep-build`, patching the seed in an input is not the game
+  choosing that seed: pre-match data (attendance etc.) also depends on the
+  build-time RNG.
 - One input = one fixture with fixed line-ups and tactics.
 - A game-produced .bin and its JSON export differ in one header byte (offset
   21, a flag the deserialiser sets). Match results are identical.
