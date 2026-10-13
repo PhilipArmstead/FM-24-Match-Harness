@@ -13,4 +13,5 @@
 // True if `path` wants a JSON config (and therefore a traced serialisation).
 bool output_wantsJson(const wchar_t *path);
 
-bool output_write(const wchar_t *path, const Serialised *serialised, const char *source);
+// `full`: also write the research keys in a JSON config (see config_writer.h).
+bool output_write(const wchar_t *path, const Serialised *serialised, const char *source, bool full);

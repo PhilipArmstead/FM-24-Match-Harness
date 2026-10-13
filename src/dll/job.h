@@ -31,6 +31,7 @@ typedef struct Job {
 	bool humanControl; // run: keep the input's "human in control" flags (no AI in-match changes)
 	bool keepBuild;    // run: patch each seed into the input instead of rebuilding it per seed
 	bool hasSeed;      // build_next: use `seed` instead of a clock value
+	bool full;         // build_next: also write the research keys in a JSON config
 	uint32_t seed;
 } Job;
 

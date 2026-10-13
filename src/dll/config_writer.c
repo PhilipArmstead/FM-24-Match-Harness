@@ -27,15 +27,17 @@ static size_t writeField(
 	const Serialised *serialised,
 	const FieldLabel *labels,
 	size_t i,
-	size_t seedOffset
+	size_t seedOffset,
+	bool full
 );
-static void writeHeader(FILE *file, const Serialised *serialised, const char *source);
+static void writeHeader(FILE *file, const Serialised *serialised, const char *source, bool full);
 
 bool configWriter_write(
 	const wchar_t *path,
 	const Serialised *serialised,
 	const char *source,
-	const PeopleIndex *people
+	const PeopleIndex *people,
+	bool full
 ) {
 	FieldLabel *labels = labels_compute(serialised, people);
 	if (!labels) {
@@ -48,9 +50,9 @@ bool configWriter_write(
 	}
 	size_t seedOffset = SIZE_MAX;
 	(void)match_seedOffset(serialised->bytes.data, serialised->bytes.length, &seedOffset);
-	writeHeader(file, serialised, source);
+	writeHeader(file, serialised, source, full);
 	for (size_t i = 0; i < serialised->recordCount;) {
-		i += writeField(file, serialised, labels, i, seedOffset);
+		i += writeField(file, serialised, labels, i, seedOffset, full);
 	}
 	fprintf(file, "  ]\n}\n");
 	bool ok = !ferror(file);
@@ -179,21 +181,23 @@ static size_t writeField(
 	const Serialised *serialised,
 	const FieldLabel *labels,
 	size_t i,
-	size_t seedOffset
+	size_t seedOffset,
+	bool full
 ) {
 	const TraceRecord *record = &serialised->records[i];
 	const uint8_t *value = serialised->bytes.data + record->offset;
 	const FieldLabel *label = &labels[i];
 	size_t consumed = 1;
-	fprintf(
-		file, "    {\"site\": \"%x/%x\", \"p\": %u, ", record->site, record->caller, record->path
-	);
+	fprintf(file, "    {");
+	if (full) {
+		fprintf(file, "\"site\": \"%x/%x\", \"p\": %u, ", record->site, record->caller, record->path);
+	}
 	if (label->name[0]) {
 		fprintf(file, "\"name\": ");
 		writeEscapedString(file, label->name);
 		fprintf(file, ", ");
 	}
-	if (label->member) {
+	if (full && label->member) {
 		fprintf(file, "\"member\": \"%s\", ", label->member);
 	}
 	if (label->player[0]) {
@@ -220,7 +224,7 @@ static size_t writeField(
 	return consumed;
 }
 
-static void writeHeader(FILE *file, const Serialised *serialised, const char *source) {
+static void writeHeader(FILE *file, const Serialised *serialised, const char *source, bool full) {
 	const uint8_t *bytes = serialised->bytes.data;
 	fprintf(
 		file,
@@ -230,9 +234,14 @@ static void writeHeader(FILE *file, const Serialised *serialised, const char *so
 	fprintf(file, "  \"engine_version\": \"%u.%u.%u.%u\",\n", bytes[2], bytes[3], bytes[4], bytes[5]);
 	fprintf(file, "  \"source\": ");
 	writeEscapedString(file, source);
-	fprintf(file, ",\n  \"bytes\": %zu,\n  \"paths\": [\n", serialised->bytes.length);
-	for (size_t i = 0; i < serialised->pathCount; ++i) {
-		fprintf(file, "    \"%s\"%s\n", serialised->paths[i], i + 1 < serialised->pathCount ? "," : "");
+	if (full) {
+		fprintf(file, ",\n  \"bytes\": %zu,\n  \"paths\": [\n", serialised->bytes.length);
+		for (size_t i = 0; i < serialised->pathCount; ++i) {
+			fprintf(
+				file, "    \"%s\"%s\n", serialised->paths[i], i + 1 < serialised->pathCount ? "," : ""
+			);
+		}
+		fprintf(file, "  ]");
 	}
-	fprintf(file, "  ],\n  \"fields\": [\n");
+	fprintf(file, ",\n  \"fields\": [\n");
 }

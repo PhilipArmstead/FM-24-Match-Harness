@@ -3,10 +3,15 @@
 
 // Writes a traced serialisation as a JSON match config ("fm24-match-config/1"):
 //
-//   paths[]   distinct serialiser call chains (see trace.h)
+//   bytes     the serialised length (full only)
+//   paths[]   distinct serialiser call chains, see trace.h (full only)
 //   fields[]  one entry per write, in order:
-//             {"site": "<rva>/<caller rva>", "p": <paths index>, ["name": block label,]
-//              ["player": name,] <value> [, "role": "seed"]}
+//             {["site": "<rva>/<caller rva>", "p": <paths index>,] ["name": block label,]
+//              ["member": game object member,] ["player": name,] ["flags": [...],] <value>
+//              [, "role": "seed"]}
+//
+// Only "format" and each field's <value> are read back by the encoder. The research keys (bytes,
+// paths, site, p, member) are written only with `full`.
 //
 // <value> is one of u8 / u16 / u32 / u64 (unsigned integers), str (a u32 byte length followed by
 // that many UTF-8 bytes: the two writes merged into one editable string), hex (raw bytes) or u8map
@@ -24,5 +29,6 @@ bool configWriter_write(
 	const wchar_t *path,
 	const Serialised *serialised,
 	const char *source,
-	const PeopleIndex *people
+	const PeopleIndex *people,
+	bool full
 );

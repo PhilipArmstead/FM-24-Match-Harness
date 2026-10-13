@@ -68,7 +68,7 @@ static bool parseRunArguments(int argc, wchar_t **argv, RunOptions *options);
 static bool defaultOutput(const Path *input, Path *output);
 static void printDetailedPaths(const Path *output);
 static bool parseSeedValue(const wchar_t *value, char *seed, size_t size);
-static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size);
+static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size, bool *full);
 
 int commands_run(int argc, wchar_t **argv) {
 	RunOptions options;
@@ -123,8 +123,9 @@ int commands_run(int argc, wchar_t **argv) {
 
 int commands_getNextFixture(int argc, wchar_t **argv) {
 	char seed[32] = "random";
-	if (argc < 3 || !parseFixtureOptions(argc, argv, seed, sizeof seed)) {
-		fprintf(stderr, "usage: fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n");
+	bool full = false;
+	if (argc < 3 || !parseFixtureOptions(argc, argv, seed, sizeof seed, &full)) {
+		fprintf(stderr, "usage: fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]\n");
 		return EXIT_USAGE;
 	}
 	Path output;
@@ -132,7 +133,9 @@ int commands_getNextFixture(int argc, wchar_t **argv) {
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
-	(void)snprintf(job, sizeof job, "command=build_next\noutput=%s\nseed=%s\n", output.utf8, seed);
+	(void)snprintf(
+		job, sizeof job, "command=build_next\noutput=%s\nseed=%s\nfull=%d\n", output.utf8, seed, full
+	);
 	return submitAndReport(job);
 }
 
@@ -379,7 +382,7 @@ static void printDetailedPaths(const Path *output) {
 	printf("team statistics: %.*s-teams.csv\n", (int)stem, output->utf8);
 }
 
-// get-next-fixture's options after the output path: only `--seed N` (a decimal u32).
+// get-next-fixture's options after the output path: `--seed N` (a decimal u32) and `--full`.
 // A `--seed` value: a decimal u32, copied to `seed` as text. Prints why and returns false if not.
 static bool parseSeedValue(const wchar_t *value, char *seed, size_t size) {
 	wchar_t *end = NULL;
@@ -393,8 +396,12 @@ static bool parseSeedValue(const wchar_t *value, char *seed, size_t size) {
 	return true;
 }
 
-static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size) {
+static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size, bool *full) {
 	for (int i = 3; i < argc; ++i) {
+		if (wcscmp(argv[i], L"--full") == 0) {
+			*full = true;
+			continue;
+		}
 		if (wcscmp(argv[i], L"--seed") != 0 || i + 1 >= argc) {
 			fprintf(stderr, "unknown option or missing value: %ls\n", argv[i]);
 			return false;

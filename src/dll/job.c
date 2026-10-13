@@ -172,6 +172,10 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->seed = job->hasSeed ? (uint32_t)strtoul(value, NULL, 10) : 0;
 		return true;
 	}
+	if (strcmp(key, "full") == 0) {
+		job->full = strcmp(value, "1") == 0;
+		return true;
+	}
 	if (strcmp(key, "keep_build") == 0) {
 		job->keepBuild = strcmp(value, "1") == 0;
 		return true;

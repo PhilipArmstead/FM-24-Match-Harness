@@ -126,10 +126,15 @@ next to the DLL there.
    - `--human-control`: keep the input's flags instead. A team built with a
      human in control then makes no tactical changes (nobody is there to make
      them) and may not even replace injured players
-4. `fm24ctl get-next-fixture <out.json|out.bin> [--seed N]` builds the human
-   manager's next fixture (~0.2 s). The seed defaults to a clock value, like
-   the game. The same seed gives a byte-identical file, because the seed also
-   seeds the thread-local RNG the pre-match setup uses.
+4. `fm24ctl get-next-fixture <out.json|out.bin> [--seed N] [--full]` builds
+   the human manager's next fixture (~0.2 s). The seed defaults to a clock
+   value, like the game. The same seed gives a byte-identical file, because
+   the seed also seeds the thread-local RNG the pre-match setup uses.
+   - `--full` (JSON only): also write the research keys: `bytes` and `paths`
+     in the header, and `site`, `p` and `member` on each field. Without it
+     the file keeps only the values and the labels (`name`, `player`,
+     `flags`, `role`), about 1.5 MB instead of 5.4 MB. Both encode to the
+     same `.bin`
 5. `fm24ctl encode <in.json> <out.bin>` converts a config to a `.bin` input
    (no game needed).
 
@@ -139,13 +144,16 @@ rng_final, ms`.
 ## Match configs (`fm24-match-config/1`)
 
 `fields` lists every write the game's serialiser makes, in order, so encoding
-is lossless.
+is lossless. The encoder reads only `format` and each field's value; every
+other key is an annotation. `site`, `p`, `member` and the header's `paths`
+and `bytes` are written only with `get-next-fixture --full`. User-facing
+field meanings are in `docs/FIXTURE.md`.
 
 - **Value:** each field has exactly one: `u8`, `u16`, `u32`, `u64`, `str`
   (u32 length + UTF-8), `hex`, or `u8map`.
-- **Location:** `site` gives the `<call site>/<caller>` RVAs of the write
-  (named parts are in `src/dll/sites.h`), and `p` indexes the `paths` table
-  of serialiser call chains.
+- **Location** (`--full`): `site` gives the `<call site>/<caller>` RVAs of
+  the write (named parts are in `src/dll/sites.h`), and `p` indexes the
+  `paths` table of serialiser call chains.
 - **Seed:** the seed field has `"role": "seed"`.
 - **Labels:** blocks carry a `"name"` (`match`, `referee`, `venue`, `fixture`,
   `home.player[3]`, `away.manager`, `home.backroom[2]`, ...), and player
@@ -159,7 +167,7 @@ is lossless.
   `.mentality` (1-7), `.team_instructions[0..2]` and each formation slot's
   `.slot[i].position`, `.slot[i].role` (role bit plus a duty bit) and
   `.slot[i].player_instructions[role].bits[0..1]`.
-- **Members:** most fields also carry `"member"`, the game object member the
+- **Members** (`--full`): most fields also carry `"member"`, the game object member the
   serialiser wrote (found in IDA, `tools/fields/`): `MATCH_PLAYER_DATA+0x60`,
   `FIXTURE_RESULT+0x46`, ... Unnamed serialisers appear as `fn_<rva>+0xNN`;
   `STRUCT[element]` is an array element, `(computed)` a value the serialiser

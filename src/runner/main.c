@@ -7,7 +7,7 @@
 //       [--profile <samples.txt>] [--detailed] [--human-control] [--keep-build]
 //       seeds: "keep" (the input's own seed), "42", "1-1000", or "1,5,10-20"
 //       (default "keep"); output defaults to the input with a .csv extension
-//   fm24ctl get-next-fixture <output.json|.bin> [--seed N]
+//   fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]
 //   fm24ctl encode <input.json> <output.bin>
 //
 // fm24ctl.exe, the DLL, the job file and the result file all live in the same directory.
@@ -22,7 +22,7 @@ static const char usage[] =
 	"usage:\n"
 	"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]\n"
 	"      [--profile <samples.txt>] [--detailed] [--human-control] [--keep-build]\n"
-	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N]\n"
+	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]\n"
 	"  fm24ctl encode <input.json> <output.bin>\n";
 
 int wmain(int argc, wchar_t **argv);
