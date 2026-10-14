@@ -83,6 +83,12 @@ uintptr_t game_base(void) {
 	return (uintptr_t)base;
 }
 
+uint32_t game_timestamp(void) {
+	const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
+	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(base + dos->e_lfanew);
+	return nt->FileHeader.TimeDateStamp;
+}
+
 void *game_address(uint32_t rva) {
 	return base + rva;
 }
@@ -118,17 +124,22 @@ uint8_t *game_initThread(void) {
 }
 
 static bool checkTimestamp(void) {
-	const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)base;
-	const IMAGE_NT_HEADERS64 *nt = (const IMAGE_NT_HEADERS64 *)(base + dos->e_lfanew);
-	if (nt->FileHeader.TimeDateStamp != GAME_PE_TIMESTAMP) {
-		log_message(
-			"refusing: fm.exe timestamp %lu, expected %d (different game build)",
-			nt->FileHeader.TimeDateStamp,
-			GAME_PE_TIMESTAMP
-		);
-		return false;
+	uint32_t timestamp = game_timestamp();
+	if (timestamp == GAME_PE_TIMESTAMP_STEAM) {
+		log_message("fm.exe build %u (Steam)", (unsigned)timestamp);
+		return true;
 	}
-	return true;
+	if (timestamp == GAME_PE_TIMESTAMP_EPIC) {
+		log_message("fm.exe build %u (Epic Games)", (unsigned)timestamp);
+		return true;
+	}
+	log_message(
+		"refusing: fm.exe timestamp %u, expected %d (Steam) or %d (Epic Games)",
+		(unsigned)timestamp,
+		GAME_PE_TIMESTAMP_STEAM,
+		GAME_PE_TIMESTAMP_EPIC
+	);
+	return false;
 }
 
 static bool checkSignatures(void) {

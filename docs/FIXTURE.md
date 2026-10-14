@@ -59,7 +59,8 @@ The file has a header and a `fields` array:
 ```
 
 Only `format` and the fields' values are needed to play the file; the rest
-of the header is information.
+of the header is information. `game_build` is the PE timestamp of the
+`fm.exe` that wrote it: 1744804480 (Steam) or 1744804949 (Epic Games).
 
 Each field has exactly one value key:
 

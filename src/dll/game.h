@@ -12,8 +12,13 @@
 #include <stdint.h>
 
 
-// PE timestamp of the only build these addresses are valid for.
-enum { GAME_PE_TIMESTAMP = 1744804480 };
+// PE timestamps of the builds these addresses are valid for. The Epic Games build is a separate
+// link of the same source; `fm24ctl probe` found every function and data address below at the
+// same RVA in it (docs/PLAN.md, Phase 20).
+enum {
+	GAME_PE_TIMESTAMP_STEAM = 1744804480,
+	GAME_PE_TIMESTAMP_EPIC = 1744804949,
+};
 
 // Game functions.
 enum GameFunction {
@@ -124,6 +129,9 @@ typedef void (*VoidFn)(void);
 bool game_init(void);
 
 uintptr_t game_base(void);
+
+// The loaded fm.exe's PE timestamp (one of GAME_PE_TIMESTAMP_*, once game_init succeeded).
+uint32_t game_timestamp(void);
 
 // The address of an RVA in the loaded image.
 void *game_address(uint32_t rva);

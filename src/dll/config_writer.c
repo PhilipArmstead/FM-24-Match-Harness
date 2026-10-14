@@ -229,7 +229,7 @@ static void writeHeader(FILE *file, const Serialised *serialised, const char *so
 	fprintf(
 		file,
 		"{\n  \"format\": \"fm24-match-config/1\",\n  \"game_build\": %u,\n",
-		(unsigned)GAME_PE_TIMESTAMP
+		(unsigned)game_timestamp()
 	);
 	fprintf(file, "  \"engine_version\": \"%u.%u.%u.%u\",\n", bytes[2], bytes[3], bytes[4], bytes[5]);
 	fprintf(file, "  \"source\": ");

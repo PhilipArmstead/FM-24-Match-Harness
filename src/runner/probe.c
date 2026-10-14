@@ -28,7 +28,7 @@
 
 
 enum {
-	STEAM_TIMESTAMP = 1744804480, // the build the harness supports (src/dll/game.h)
+	STEAM_TIMESTAMP = 1744804480, // the build the patterns come from (src/dll/game.h)
 	ANCHOR_LENGTH = 8,
 	ANCHOR_STRIDE = 64,        // long runs get an anchor every this many bytes
 	ANCHORS_PER_FUNCTION = 2,  // how many of a function's rarest anchors find candidates

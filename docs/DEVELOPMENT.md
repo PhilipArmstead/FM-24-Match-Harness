@@ -208,9 +208,14 @@ values the game derives from them (ability, role ratings) don't affect results
 
 # Known limits
 
-- Only the Steam build (PE timestamp 1744804480) is supported; the DLL
-  refuses any other. `fm24ctl probe` maps another build's addresses as a
-  first step towards supporting it.
+- Only the Steam (PE timestamp 1744804480) and Epic Games (1744804949)
+  builds are supported; the DLL refuses any other. `fm24ctl probe` maps
+  another build's addresses as a first step towards supporting it.
+- On the Epic build, configs lack five tactic plan labels (`.mentality`,
+  `.team_instructions`, `.slot[i].position`, `.slot[i].role`,
+  `.slot[i].player_instructions[role]`) and, with `--full`, the `member`
+  notes of functions in `.arch`: that code differs between the builds
+  (`docs/PLAN.md`, Phase 20). Values are unaffected.
 
 - With `--keep-build`, patching the seed in an input is not the game
   choosing that seed: pre-match data (attendance etc.) also depends on the
