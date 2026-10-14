@@ -17,13 +17,14 @@
 
 enum { LABEL_LENGTH = 112, PLAYER_NAME_LENGTH = 128 };
 
-// What the bits of a tactic field mean (docs/PLAN.md Phase 17); see labels_flagName.
+// What the bits of a bit-set field mean (docs/PLAN.md Phase 17, 21); see labels_flagName.
 typedef enum FlagKind {
 	FLAGS_NONE,
 	FLAGS_TEAM_INSTRUCTIONS,   // team_instructions[flagWord]
 	FLAGS_PLAYER_INSTRUCTIONS, // player_instructions[...].bits[flagWord]
 	FLAGS_POSITION,            // a formation slot's position mask
 	FLAGS_ROLE,                // a formation slot's role mask: role and duty
+	FLAGS_TRAITS,              // a player's traits (preferred moves)
 } FlagKind;
 
 typedef struct FieldLabel {

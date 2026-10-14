@@ -203,35 +203,109 @@ static const char *const positionNames[] = {
 	"ST",
 };
 
+// Player trait (preferred move) bits, in FMRTE's order (docs/PLAN.md Phase 21). Bit 39 is shown in
+// game as "cuts inside from both wings".
+static const char *const traitNames[] = {
+	"runs with ball down left",
+	"runs with ball down right",
+	"runs with ball through centre",
+	"gets into opposition area",
+	"moves into channels",
+	"gets forward whenever possible",
+	"plays short simple passes",
+	"tries killer balls often",
+	"shoots from distance",
+	"shoots with power",
+	"places shots",
+	"curls ball",
+	"likes to round keeper",
+	"likes to try to beat offside trap",
+	"uses outside of foot",
+	"marks opponent tightly",
+	"winds up opponents",
+	"argues with officials",
+	"plays with back to goal",
+	"comes deep to get ball",
+	"plays one-twos",
+	"likes to lob keeper",
+	"dictates tempo",
+	"attempts overhead kicks",
+	"looks for pass rather than attempting to score",
+	"plays no through balls",
+	"stops play",
+	"knocks ball past opponent",
+	"moves ball to right foot before dribble attempt",
+	"moves ball to left foot before dribble attempt",
+	"dwells on ball",
+	"arrives late in opponents area",
+	"tries to play way out of trouble",
+	"stays back at all times",
+	"avoids using weaker foot",
+	"tries tricks",
+	"tries long range free kicks",
+	"dives into tackles",
+	"does not dive into tackles",
+	"cuts inside from both wings",
+	"hugs line",
+	"gets crowd going",
+	"tries first time shots",
+	"tries long range passes",
+	"likes ball played into feet",
+	"hits free kick with power",
+	"likes to beat man repeatedly",
+	"likes to switch ball to other flank",
+	"will retire at top",
+	"will play football as long as possible",
+	"possesses long flat throw",
+	"runs with ball often",
+	"runs with ball rarely",
+	"attempts to develop weaker foot",
+	"static target man",
+	"uses long throw to start counter attack",
+	"refrains from taking long shots",
+	"cuts inside from left wing",
+	"cuts inside from right wing",
+	"crosses early",
+	"brings ball out of defence",
+	"plays ball with feet",
+};
+
 typedef struct MemberName {
 	const char *member;
 	const char *name;
+	FlagKind flags;
 } MemberName;
 
 // Members that hold a copy of a database value (docs/PLAN.md Phase 21): every player's and staff
 // member's value equals the database person/player/team field in the comment. The referee's
-// person values come from elsewhere.
+// person values come from elsewhere. Caps match the game's player screen but no single database
+// offset.
 static const MemberName memberNames[] = {
-	{"MATCH_PLAYER_DATA+0x4a", "condition"},            // PLAYER+0x1F8, 0-10000
-	{"MATCH_PLAYER_DATA+0x4c", "sharpness[0]"},         // PLAYER+0x1F4, 0-10000
-	{"MATCH_PLAYER_DATA+0x4e", "sharpness[1]"},         // PLAYER+0x1F4 again
-	{"MATCH_PLAYER_DATA+0x50", "fatigue"},              // PLAYER+0x1F6, signed, 0 is best
-	{"MATCH_PLAYER_DATA+0x56", "home_reputation"},      // PLAYER+0x1FA
-	{"MATCH_PLAYER_DATA+0x58", "current_reputation"},   // PLAYER+0x1FC
-	{"MATCH_PLAYER_DATA+0x5a", "world_reputation"},     // PLAYER+0x1FE
-	{"MATCH_PLAYER_DATA+0x5c", "current_ability"},      // PLAYER+0x200
-	{"MATCH_PLAYER_DATA+0x74", "happiness"},            // PLAYER+0x25F
-	{"MATCH_PLAYER_DATA+0xf4", "preferred_position"},   // PLAYER+0x266
-	{"fn_1a7fdc0+0x40", "person_uid"},                  // PERSON+0x0C
-	{"fn_1a7fdc0+0x54", "nationality"},                 // [PERSON+0x70] nation's unique ID
-	{"fn_1a7fdc0+0x62", "personality.professionalism"}, // PERSON+0x7C
-	{"fn_1a7fdc0+0x63", "personality.loyalty"},         // PERSON+0x7A
-	{"fn_1a7fdc0+0x64", "personality.sportsmanship"},   // PERSON+0x7D
-	{"fn_1a7fdc0+0x65", "personality.temperament"},     // PERSON+0x7E
-	{"fn_1a7fdc0+0x66", "personality.pressure"},        // PERSON+0x7B
-	{"fn_1a7fdc0+0x67", "personality.ambition"},        // PERSON+0x79
-	{"fn_1a7fdc0+0x68", "personality.adaptability"},    // PERSON+0x78
-	{"MATCH_TEAM_BASE+0x112", "reputation"},            // TEAM+0xA8
+	{"MATCH_PLAYER_DATA+0x49", "squad_number", FLAGS_NONE},       // CONTRACT+0x55 (assigned if unset)
+	{"MATCH_PLAYER_DATA+0x100", "traits", FLAGS_TRAITS},          // PERSON+0xF0, one bit per trait
+	{"MATCH_PLAYER_DATA+0x68", "last_transfer_fee", FLAGS_NONE},  // PLAYER+0x1E0
+	{"MATCH_PLAYER_DATA+0x4a", "condition", FLAGS_NONE},          // PLAYER+0x1F8, 0-10000
+	{"MATCH_PLAYER_DATA+0x4c", "sharpness[0]", FLAGS_NONE},       // PLAYER+0x1F4, 0-10000
+	{"MATCH_PLAYER_DATA+0x4e", "sharpness[1]", FLAGS_NONE},       // PLAYER+0x1F4 again
+	{"MATCH_PLAYER_DATA+0x50", "fatigue", FLAGS_NONE},            // PLAYER+0x1F6, signed, 0 is best
+	{"MATCH_PLAYER_DATA+0x56", "home_reputation", FLAGS_NONE},    // PLAYER+0x1FA
+	{"MATCH_PLAYER_DATA+0x58", "current_reputation", FLAGS_NONE}, // PLAYER+0x1FC
+	{"MATCH_PLAYER_DATA+0x5a", "world_reputation", FLAGS_NONE},   // PLAYER+0x1FE
+	{"MATCH_PLAYER_DATA+0x5c", "current_ability", FLAGS_NONE},    // PLAYER+0x200
+	{"MATCH_PLAYER_DATA+0x74", "morale", FLAGS_NONE}, // PLAYER+0x25F (constants.h: happiness)
+	{"MATCH_PLAYER_DATA+0xf4", "preferred_position", FLAGS_NONE}, // PLAYER+0x266
+	{"fn_1a7fdc0+0x40", "person_uid", FLAGS_NONE},                // PERSON+0x0C
+	{"fn_1a7fdc0+0x54", "nationality", FLAGS_NONE},               // [PERSON+0x70] nation's unique ID
+	{"fn_1a7fdc0+0x48", "caps", FLAGS_NONE},                      // international caps
+	{"fn_1a7fdc0+0x69", "age", FLAGS_NONE}, // years, from PERSON+0x44 (date of birth)
+	{"fn_1a7fdc0+0x62", "personality.professionalism", FLAGS_NONE}, // PERSON+0x7C
+	{"fn_1a7fdc0+0x63", "personality.loyalty", FLAGS_NONE},         // PERSON+0x7A
+	{"fn_1a7fdc0+0x64", "personality.sportsmanship", FLAGS_NONE},   // PERSON+0x7D
+	{"fn_1a7fdc0+0x65", "personality.temperament", FLAGS_NONE},     // PERSON+0x7E
+	{"fn_1a7fdc0+0x66", "personality.pressure", FLAGS_NONE},        // PERSON+0x7B
+	{"fn_1a7fdc0+0x67", "personality.ambition", FLAGS_NONE},        // PERSON+0x79
+	{"fn_1a7fdc0+0x68", "personality.adaptability", FLAGS_NONE},    // PERSON+0x78
+	{"MATCH_TEAM_BASE+0x112", "reputation", FLAGS_NONE},            // TEAM+0xA8
 };
 
 // Extra bits of tactic position and role masks (docs/PLAN.md Phase 15, 17).
@@ -300,6 +374,8 @@ const char *labels_flagName(const FieldLabel *label, unsigned bit) {
 		case FLAGS_PLAYER_INSTRUCTIONS: return tacticFlags_playerInstruction(label->flagWord, bit);
 		case FLAGS_POSITION: return positionFlag(bit);
 		case FLAGS_ROLE: return roleFlag(bit);
+		case FLAGS_TRAITS:
+			return bit < sizeof traitNames / sizeof traitNames[0] ? traitNames[bit] : NULL;
 		case FLAGS_NONE:
 		default: return NULL;
 	}
@@ -620,6 +696,7 @@ static void labelMemberField(const Walk *walk, FieldLabel *label) {
 			return;
 		}
 		(void)snprintf(label->name, sizeof label->name, "%s.%s", walk->block, memberNames[k].name);
+		label->flags = memberNames[k].flags;
 		return;
 	}
 }
