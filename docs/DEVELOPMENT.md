@@ -21,7 +21,7 @@ tools/       memscan.py: read-only memory scanner for the running fm.exe
              fields/: field-name data and generators (tactic_bits.json ->
                gen_tactic_flags.py -> src/dll/tactic_flags.c; site_ops.json
                -> gen_site_members.py), diff_configs.py (compare two configs)
-             experiments/: analysis script for team instruction runs
+             experiments/: team instruction analysis and Current Ability experiment
              probe/gen_probe_patterns.py: IDAPython generator of
                src/runner/probe_patterns.c
 ```
