@@ -286,6 +286,7 @@ static int runIndex(const Walk *walk, size_t i);
 static unsigned lowestBit(uint64_t mask);
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelMemberField(const Walk *walk, FieldLabel *label);
+static void labelPersonField(const Walk *walk, FieldLabel *label, const TraceRecord *record);
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record);
 static void labelRecord(Walk *walk, size_t i);
 
@@ -623,6 +624,19 @@ static void labelMemberField(const Walk *walk, FieldLabel *label) {
 	}
 }
 
+// Names the person block's fields that have no member (written from locals): height and weight.
+static void labelPersonField(const Walk *walk, FieldLabel *label, const TraceRecord *record) {
+	const char *name = NULL;
+	switch (record->site) {
+		case SITE_PERSON_HEIGHT: name = "height"; break;
+		case SITE_PERSON_WEIGHT: name = "weight"; break;
+		default: return;
+	}
+	if (!label->name[0]) {
+		(void)snprintf(label->name, sizeof label->name, "%s.%s", walk->block, name);
+	}
+}
+
 // Extends the block label with ".tactic[.part]" if the record was written by the tactic
 // serialiser: one of its return addresses is on the record's call path, or it wrote it directly.
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record) {
@@ -672,6 +686,7 @@ static void labelRecord(Walk *walk, size_t i) {
 	memcpy(label->block, walk->block, sizeof label->block);
 	label->member = siteMembers_find(record->site);
 	labelMemberField(walk, label);
+	labelPersonField(walk, label, record);
 	if (strcmp(walk->block, walk->previousBlock) != 0 && label->name[0] == 0) {
 		(void)snprintf(label->name, sizeof label->name, "%s", walk->block);
 	}

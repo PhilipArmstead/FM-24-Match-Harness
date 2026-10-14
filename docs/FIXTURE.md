@@ -292,6 +292,20 @@ Except for the referee (above), their values come from the person record:
 | `.personality.professionalism` | `u8` | 1-20 | `+0x7C` |
 | `.personality.sportsmanship` | `u8` | 1-20 | `+0x7D` |
 | `.personality.temperament` | `u8` | 1-20 | `+0x7E` |
+| `.height` | `u32` | height in metres, as a 32-bit float (below) | player record `+0x14E` (`u16`, centimetres) |
+| `.weight` | `u8` | weight in kilograms | player record `+0x14C` |
+
+Height and weight come from the player record, so only players have their
+real values. Everyone else has a default, usually 1.82 m and 75 kg.
+
+`.height` holds the raw bits of a float: Ollie Watkins' 180 cm is
+`1072064102`, i.e. 1.8. To convert in Python:
+
+```python
+import struct
+metres = struct.unpack('<f', struct.pack('<I', field['u32']))[0]  # 1072064102 -> 1.8
+field['u32'] = struct.unpack('<I', struct.pack('<f', 1.85))[0]     # set 1.85 m
+```
 
 Controversy (`+0x7F`) isn't copied. A player block's `.person_uid` is
 written in a different place from other people's, so a player block has it
@@ -324,6 +338,8 @@ record (`0x368` for a player who is also staff).
 | `fn_1a7fdc0+0x40` | `.person_uid` | person `+0x0C` |
 | `fn_1a7fdc0+0x54` | `.nationality` | person `+0x70`, then nation `+0x0C` |
 | `fn_1a7fdc0+0x62` to `+0x68` | `.personality.*` | person `+0x78` to `+0x7E` (order above) |
+| `(computed)` at site `1a8004e` | `.height` | player `+0x14E`, divided by 100 and stored as a float |
+| none, at site `1a80064` | `.weight` | player `+0x14C` |
 | `MATCH_TEAM_BASE+0x112` | `.team.reputation` | team `+0xA8` |
 
 Some other members match a database field that has no name yet (for the
