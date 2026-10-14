@@ -9,6 +9,8 @@
 //       (default "keep"); output defaults to the input with a .csv extension
 //   fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]
 //   fm24ctl encode <input.json> <output.bin>
+//   fm24ctl probe [path to fm.exe]
+//       where another build of fm.exe has the code the harness uses (writes probe.txt)
 //
 // fm24ctl.exe, the DLL, the job file and the result file all live in the same directory.
 
@@ -23,7 +25,8 @@ static const char usage[] =
 	"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]\n"
 	"      [--profile <samples.txt>] [--detailed] [--human-control] [--keep-build]\n"
 	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]\n"
-	"  fm24ctl encode <input.json> <output.bin>\n";
+	"  fm24ctl encode <input.json> <output.bin>\n"
+	"  fm24ctl probe [path to fm.exe]\n";
 
 int wmain(int argc, wchar_t **argv);
 
@@ -36,6 +39,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"run", commands_run},
 		{L"get-next-fixture", commands_getNextFixture},
 		{L"encode", commands_encode},
+		{L"probe", commands_probe},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (wcscmp(command, commands[i].name) == 0) {

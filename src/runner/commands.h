@@ -10,3 +10,4 @@
 int commands_run(int argc, wchar_t **argv);
 int commands_getNextFixture(int argc, wchar_t **argv);
 int commands_encode(int argc, wchar_t **argv);
+int commands_probe(int argc, wchar_t **argv); // probe.c

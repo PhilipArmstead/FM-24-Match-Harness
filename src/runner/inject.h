@@ -11,3 +11,6 @@
 // fm24ctl.exe), with CreateRemoteThread + LoadLibraryW.
 // Prints what happened; returns false on failure.
 bool inject_harness(void);
+
+// The process ID of the running fm.exe, or 0 if it isn't running.
+unsigned long inject_findGame(void);

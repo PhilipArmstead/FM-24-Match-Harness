@@ -12,7 +12,7 @@ src/dll/     game.h (addresses, layouts, signatures), memory, stream,
              job_run/build, match_stats, tactic_flags
              (generated), main
 src/runner/  main, commands, inject, client, paths, json_reader,
-             match_config (encoder)
+             match_config (encoder), probe + probe_patterns (generated)
 cmake/       MinGW-w64 toolchain file
 scripts/     build.sh, format.sh, tidy.sh (env.sh: tool locations)
 docs/        PLAN.md: the plan and every finding, phase by phase
@@ -22,6 +22,8 @@ tools/       memscan.py: read-only memory scanner for the running fm.exe
                gen_tactic_flags.py -> src/dll/tactic_flags.c; site_ops.json
                -> gen_site_members.py), diff_configs.py (compare two configs)
              experiments/: analysis script for team instruction runs
+             probe/gen_probe_patterns.py: IDAPython generator of
+               src/runner/probe_patterns.c
 ```
 
 # Building
@@ -49,7 +51,10 @@ until the game exits.
 
 **Generated code:** after editing `tools/fields/tactic_bits.json`, run
 `python -I tools/fields/gen_tactic_flags.py` to regenerate
-`src/dll/tactic_flags.c`.
+`src/dll/tactic_flags.c`. After changing an address in `src/dll/game.h`,
+`sites.h` or `site_members.c`, regenerate `src/runner/probe_patterns.c` in IDA
+on the Steam `fm.exe`:
+`REPO = r"<repo>"; exec(open(REPO + r"\tools\probe\gen_probe_patterns.py").read())`.
 
 # Use
 
@@ -137,6 +142,24 @@ next to the DLL there.
      same `.bin`
 5. `fm24ctl encode <in.json> <out.bin>` converts a config to a `.bin` input
    (no game needed).
+6. `fm24ctl probe [path\to\fm.exe]` reports where another build of `fm.exe`
+   (e.g. the Epic Games one) has the code and data the harness uses. It reads
+   the file only: nothing is injected, and the game isn't needed (without a
+   path it probes the running game's file). It prints a summary and writes
+   `probe.txt` next to `fm24ctl.exe`:
+   - every function the harness calls, reads data through, or labels
+     configs by (100), with its address in that build, the shift from the
+     Steam address and how many of its fixed bytes match;
+   - the six data addresses of `game.h`, read from an instruction that
+     references them;
+   - the most common shifts.
+
+   The patterns are the Steam build's functions with every byte that moves
+   between builds masked: RIP-relative operands, calls and jumps leaving the
+   function, and address-sized immediates and displacements
+   (`tools/probe/gen_probe_patterns.py`). Look-alike functions are told apart
+   by the shift most functions share, and the one `jmp` thunk by its target.
+   On the Steam build all 100 functions are identical at shift 0.
 
 CSV columns: `seed, home_goals, away_goals, clock_ticks (4/s), finished,
 rng_final, ms`.
@@ -184,6 +207,10 @@ values the game derives from them (ability, role ratings) don't affect results
 (`docs/PLAN.md`, Phase 12).
 
 # Known limits
+
+- Only the Steam build (PE timestamp 1744804480) is supported; the DLL
+  refuses any other. `fm24ctl probe` maps another build's addresses as a
+  first step towards supporting it.
 
 - With `--keep-build`, patching the seed in an input is not the game
   choosing that seed: pre-match data (attendance etc.) also depends on the

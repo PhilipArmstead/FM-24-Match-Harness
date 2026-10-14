@@ -64,6 +64,8 @@ add_executable(fm24ctl
 	src/runner/main.c
 	src/runner/match_config.c
 	src/runner/paths.c
+	src/runner/probe.c
+	src/runner/probe_patterns.c
 )
 target_link_libraries(fm24ctl PRIVATE common)
 target_compile_options(fm24ctl PRIVATE ${warnings})

@@ -17,12 +17,11 @@
 
 enum { LOAD_TIMEOUT_MS = 30000 };
 
-static DWORD findGame(void);
 static bool findDll(wchar_t *dllPath, size_t size);
 static bool loadRemotely(HANDLE process, const wchar_t *dllPath);
 
 bool inject_harness(void) {
-	DWORD pid = findGame();
+	DWORD pid = inject_findGame();
 	if (!pid) {
 		fprintf(stderr, "fm.exe is not running\n");
 		return false;
@@ -54,7 +53,7 @@ bool inject_harness(void) {
 	return ok;
 }
 
-static DWORD findGame(void) {
+unsigned long inject_findGame(void) {
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (snapshot == INVALID_HANDLE_VALUE) {
 		return 0;
