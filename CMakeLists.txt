@@ -13,8 +13,9 @@ endif()
 # The protocol version is part of the DLL's file name (see src/common/protocol.h). Changing it
 # re-runs the configure step, so the DLL is renamed without touching this file.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/common/protocol.h)
-file(STRINGS src/common/protocol.h protocol_line REGEX "define HARNESS_PROTOCOL L\"[0-9]+\"")
-string(REGEX MATCH "[0-9]+" HARNESS_PROTOCOL "${protocol_line}")
+file(STRINGS src/common/protocol.h protocol_line REGEX "define HARNESS_PROTOCOL L\"[0-9.]+\"")
+string(REGEX MATCH "L\"([0-9.]+)\"" protocol_match "${protocol_line}")
+set(HARNESS_PROTOCOL "${CMAKE_MATCH_1}")
 
 add_compile_definitions(__USE_MINGW_ANSI_STDIO=1 WIN32_LEAN_AND_MEAN)
 
@@ -51,7 +52,7 @@ add_library(harness SHARED
 	src/dll/tactic_flags.c
 	src/dll/trace.c
 )
-set_target_properties(harness PROPERTIES PREFIX "" OUTPUT_NAME "fm24_harness_p${HARNESS_PROTOCOL}")
+set_target_properties(harness PROPERTIES PREFIX "" OUTPUT_NAME "fm24-harness-${HARNESS_PROTOCOL}")
 target_link_libraries(harness PRIVATE common)
 target_compile_options(harness PRIVATE ${warnings})
 target_link_options(harness PRIVATE -static -static-libgcc)

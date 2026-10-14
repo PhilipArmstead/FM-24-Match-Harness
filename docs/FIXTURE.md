@@ -241,6 +241,106 @@ a test, changing these values made no difference to results, while changing
 the attributes did. The game uses them to pick its team, not to play the
 match.
 
+# Values copied from the game's database
+
+When the game builds a match, it copies some values from its database: from
+each person's record (players, staff and officials), each player's record and
+each team's record. These fields are named in the file. In one fixture, each
+was checked against the database for all 47 players and every manager, staff
+member and backroom entry, and matched every time.
+
+The referee is the exception: the referee block has the same fields, but its
+personality values differ from the referee's database record (pressure 12
+against 10). The game seems to take referees' values from somewhere else.
+
+Whether the engine reads any of them during a match hasn't been tested. As
+with the ratings, editing a field changes only the match, not your save.
+
+## Players
+
+In every `<side>.player[i]` block:
+
+| Name | Type | Meaning | Database (player record) |
+|---|---|---|---|
+| `.condition` | `u16` | physical condition: 0-10000, where 10000 is 100% | `+0x1F8` |
+| `.sharpness[0]`, `.sharpness[1]` | `u16` | match sharpness, same scale. The game writes the same value twice | `+0x1F4` |
+| `.fatigue` | `u16` | fatigue, stored as a negative number: 0 is fresh, 65396 is -140 (65536 minus the value) | `+0x1F6` |
+| `.home_reputation` | `u16` | reputation in the player's home nation, 0-10000 | `+0x1FA` |
+| `.current_reputation` | `u16` | current reputation, 0-10000 | `+0x1FC` |
+| `.world_reputation` | `u16` | world reputation, 0-10000 | `+0x1FE` |
+| `.current_ability` | `u16` | current ability (CA), 1-200 | `+0x200` |
+| `.happiness` | `u8` | happiness | `+0x25F` |
+| `.preferred_position` | `u8` | probably the preferred side: 1 right, 2 left, 3 right or central, 4 left or central, 5 central, 6 not fully understood. 0 is common. Not confirmed | `+0x266` |
+
+`.ability` (see [above](#values-derived-from-ratings)) is current ability
+adjusted for the match, e.g. 158 for a player whose `.current_ability` is
+157.
+
+## Every person
+
+Every player, manager, staff member, backroom entry and official has these.
+Except for the referee (above), their values come from the person record:
+
+| Name | Type | Meaning | Database (person record) |
+|---|---|---|---|
+| `.person_uid` | `u32` | the person's unique ID | `+0x0C` |
+| `.nationality` | `u32` | the unique ID of the person's nation, e.g. 765 for England | `+0x70` (a pointer to the nation; its unique ID is at `+0x0C`) |
+| `.personality.adaptability` | `u8` | 1-20 | `+0x78` |
+| `.personality.ambition` | `u8` | 1-20 | `+0x79` |
+| `.personality.loyalty` | `u8` | 1-20 | `+0x7A` |
+| `.personality.pressure` | `u8` | 1-20 | `+0x7B` |
+| `.personality.professionalism` | `u8` | 1-20 | `+0x7C` |
+| `.personality.sportsmanship` | `u8` | 1-20 | `+0x7D` |
+| `.personality.temperament` | `u8` | 1-20 | `+0x7E` |
+
+Controversy (`+0x7F`) isn't copied. A player block's `.person_uid` is
+written in a different place from other people's, so a player block has it
+only once.
+
+## Teams
+
+| Name | Type | Meaning | Database (team record) |
+|---|---|---|---|
+| `<side>.team.reputation` | `u16` | the team's reputation, 0-10000 | `+0xA8` |
+
+## Where these are in a `--full` export
+
+In a `--full` export these fields carry a `member`. The table maps each one
+to its database field. A player record starts `0x278` bytes before its person
+record (`0x368` for a player who is also staff).
+
+| `member` | Name | Database field |
+|---|---|---|
+| `MATCH_PLAYER_DATA+0x4a` | `.condition` | player `+0x1F8` |
+| `MATCH_PLAYER_DATA+0x4c`, `+0x4e` | `.sharpness[0]`, `.sharpness[1]` | player `+0x1F4` |
+| `MATCH_PLAYER_DATA+0x50` | `.fatigue` | player `+0x1F6` |
+| `MATCH_PLAYER_DATA+0x56` | `.home_reputation` | player `+0x1FA` |
+| `MATCH_PLAYER_DATA+0x58` | `.current_reputation` | player `+0x1FC` |
+| `MATCH_PLAYER_DATA+0x5a` | `.world_reputation` | player `+0x1FE` |
+| `MATCH_PLAYER_DATA+0x5c` | `.current_ability` | player `+0x200` |
+| `MATCH_PLAYER_DATA+0x74` | `.happiness` | player `+0x25F` |
+| `MATCH_PLAYER_DATA+0xf4` | `.preferred_position` | player `+0x266` |
+| `MATCH_PLAYER_DATA+0x108` | `.ratings` | player `+0x208` to `+0x24C` (69 bytes) |
+| `fn_1a7fdc0+0x40` | `.person_uid` | person `+0x0C` |
+| `fn_1a7fdc0+0x54` | `.nationality` | person `+0x70`, then nation `+0x0C` |
+| `fn_1a7fdc0+0x62` to `+0x68` | `.personality.*` | person `+0x78` to `+0x7E` (order above) |
+| `MATCH_TEAM_BASE+0x112` | `.team.reputation` | team `+0xA8` |
+
+Some other members match a database field that has no name yet (for the
+players; `MATCH_PLAYER_DATA+0x52` in 43 of 47):
+
+| `member` | Database field |
+|---|---|
+| `MATCH_PLAYER_DATA+0x52` | player `+0xFC` |
+| `MATCH_PLAYER_DATA+0x54` | player `+0x16D` |
+| `MATCH_PLAYER_DATA+0x68` | player `+0x1E0` (`u32`, looks like a money value, e.g. 17000000) |
+| `MATCH_PLAYER_DATA+0x100` | person `+0xF0` (`u64`) |
+| `fn_1a7fdc0+0x61` | person `+0x169` |
+| `fn_19ba6e0+0x30` | person `+0x18` (`u64`) |
+| `fn_19ba6e0+0x38` | person `+0x0C`: the unique ID again |
+| `fn_19ba6e0+0x45` | person `+0x91` |
+| `fn_5305f90+0x4`, `+0x8` | person `+0x92` |
+
 # Tactics
 
 Each manager's tactic is in `<side>.manager.tactic`:
@@ -660,6 +760,9 @@ name used above is unique.
   means.
 - Whether the engine reads the position ratings, roles, duties, player
   instructions, set pieces and opposition instructions (not tested yet).
+- Whether the engine reads the [values copied from the
+  database](#values-copied-from-the-games-database) (condition, sharpness,
+  personality, ...).
 - Player instruction bit 0:1, and the other unnamed bits.
 - Which set-piece routine is which, which takers list is which set piece, and
   which opposition record is which opponent.

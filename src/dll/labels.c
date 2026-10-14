@@ -203,6 +203,37 @@ static const char *const positionNames[] = {
 	"ST",
 };
 
+typedef struct MemberName {
+	const char *member;
+	const char *name;
+} MemberName;
+
+// Members that hold a copy of a database value (docs/PLAN.md Phase 21): every player's and staff
+// member's value equals the database person/player/team field in the comment. The referee's
+// person values come from elsewhere.
+static const MemberName memberNames[] = {
+	{"MATCH_PLAYER_DATA+0x4a", "condition"},            // PLAYER+0x1F8, 0-10000
+	{"MATCH_PLAYER_DATA+0x4c", "sharpness[0]"},         // PLAYER+0x1F4, 0-10000
+	{"MATCH_PLAYER_DATA+0x4e", "sharpness[1]"},         // PLAYER+0x1F4 again
+	{"MATCH_PLAYER_DATA+0x50", "fatigue"},              // PLAYER+0x1F6, signed, 0 is best
+	{"MATCH_PLAYER_DATA+0x56", "home_reputation"},      // PLAYER+0x1FA
+	{"MATCH_PLAYER_DATA+0x58", "current_reputation"},   // PLAYER+0x1FC
+	{"MATCH_PLAYER_DATA+0x5a", "world_reputation"},     // PLAYER+0x1FE
+	{"MATCH_PLAYER_DATA+0x5c", "current_ability"},      // PLAYER+0x200
+	{"MATCH_PLAYER_DATA+0x74", "happiness"},            // PLAYER+0x25F
+	{"MATCH_PLAYER_DATA+0xf4", "preferred_position"},   // PLAYER+0x266
+	{"fn_1a7fdc0+0x40", "person_uid"},                  // PERSON+0x0C
+	{"fn_1a7fdc0+0x54", "nationality"},                 // [PERSON+0x70] nation's unique ID
+	{"fn_1a7fdc0+0x62", "personality.professionalism"}, // PERSON+0x7C
+	{"fn_1a7fdc0+0x63", "personality.loyalty"},         // PERSON+0x7A
+	{"fn_1a7fdc0+0x64", "personality.sportsmanship"},   // PERSON+0x7D
+	{"fn_1a7fdc0+0x65", "personality.temperament"},     // PERSON+0x7E
+	{"fn_1a7fdc0+0x66", "personality.pressure"},        // PERSON+0x7B
+	{"fn_1a7fdc0+0x67", "personality.ambition"},        // PERSON+0x79
+	{"fn_1a7fdc0+0x68", "personality.adaptability"},    // PERSON+0x78
+	{"MATCH_TEAM_BASE+0x112", "reputation"},            // TEAM+0xA8
+};
+
 // Extra bits of tactic position and role masks (docs/PLAN.md Phase 15, 17).
 enum {
 	POSITION_LEFT_BIT = 20,
@@ -254,6 +285,7 @@ static bool insideTactic(uint32_t address);
 static int runIndex(const Walk *walk, size_t i);
 static unsigned lowestBit(uint64_t mask);
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
+static void labelMemberField(const Walk *walk, FieldLabel *label);
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record);
 static void labelRecord(Walk *walk, size_t i);
 
@@ -573,6 +605,24 @@ static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record) {
 	}
 }
 
+// Names a field whose member holds a known database value. A player block already names its
+// person_uid (SITE_PLAYER_UID), so the person's copy of it is left unnamed there.
+static void labelMemberField(const Walk *walk, FieldLabel *label) {
+	if (!label->member || label->name[0]) {
+		return;
+	}
+	for (size_t k = 0; k < sizeof memberNames / sizeof memberNames[0]; ++k) {
+		if (strcmp(label->member, memberNames[k].member) != 0) {
+			continue;
+		}
+		if (strcmp(memberNames[k].name, "person_uid") == 0 && strstr(walk->block, ".player[")) {
+			return;
+		}
+		(void)snprintf(label->name, sizeof label->name, "%s.%s", walk->block, memberNames[k].name);
+		return;
+	}
+}
+
 // Extends the block label with ".tactic[.part]" if the record was written by the tactic
 // serialiser: one of its return addresses is on the record's call path, or it wrote it directly.
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record) {
@@ -621,6 +671,7 @@ static void labelRecord(Walk *walk, size_t i) {
 	FieldLabel *label = &walk->labels[i];
 	memcpy(label->block, walk->block, sizeof label->block);
 	label->member = siteMembers_find(record->site);
+	labelMemberField(walk, label);
 	if (strcmp(walk->block, walk->previousBlock) != 0 && label->name[0] == 0) {
 		(void)snprintf(label->name, sizeof label->name, "%s", walk->block);
 	}

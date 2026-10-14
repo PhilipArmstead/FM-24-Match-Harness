@@ -6,16 +6,17 @@
 // The runner writes a job file of `key=value` lines next to the DLL, signals HARNESS_EVENT_GO and
 // waits for HARNESS_EVENT_DONE; the DLL writes a one-line outcome to the result file.
 //
-// Bump HARNESS_PROTOCOL to inject a rebuilt DLL while an older copy is still loaded in fm.exe.
+// Bump HARNESS_PROTOCOL (a dotted version: 1.0.0 -> 1.0.1) to inject a rebuilt DLL while an older
+// copy is still loaded in fm.exe.
 // Windows identifies a loaded DLL by its path, so a new build needs a new file name; the old copy
 // keeps waiting on its own, differently named events and never sees the new jobs.
 #pragma once
 
-#define HARNESS_PROTOCOL L"11"
-#define HARNESS_DLL_NAME (L"fm24_harness_p" HARNESS_PROTOCOL L".dll")
+#define HARNESS_PROTOCOL L"1.0.1"
+#define HARNESS_DLL_NAME (L"fm24-harness-" HARNESS_PROTOCOL L".dll")
 // Injected when HARNESS_DLL_NAME is missing (e.g. a renamed release copy). It must have been built
 // with the same HARNESS_PROTOCOL, or the runner never sees its events.
-#define HARNESS_DLL_FALLBACK_NAME L"fm24_harness.dll"
+#define HARNESS_DLL_FALLBACK_NAME L"fm24-harness.dll"
 #define HARNESS_EVENT_GO (L"Local\\FM24Harness_Go_" HARNESS_PROTOCOL)
 #define HARNESS_EVENT_DONE (L"Local\\FM24Harness_Done_" HARNESS_PROTOCOL)
 

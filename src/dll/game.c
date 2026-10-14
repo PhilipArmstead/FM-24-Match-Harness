@@ -12,6 +12,8 @@
 enum {
 	IMAGE_SPAN = 0x1E000000, // generous upper bound on fm.exe's mapped size
 	TEB_TLS_POINTER = 0x58,  // TEB.ThreadLocalStoragePointer
+	JMP_REL32 = 0xE9,
+	JMP_REL32_LENGTH = 5,
 };
 
 typedef struct Signature {
@@ -19,9 +21,13 @@ typedef struct Signature {
 	const char *bytes;
 	size_t length;
 	uint32_t rva;
+	bool thunk; // rva is a `jmp rel32` thunk; bytes are the prologue of its target
 } Signature;
 
-#define SIGNATURE(rva, name, bytes) {(name), (bytes), sizeof(bytes) - 1, (rva)}
+#define SIGNATURE(rva, name, bytes) {(name), (bytes), sizeof(bytes) - 1, (rva), false}
+// A thunk's displacement differs between builds (the Epic build's prepare_to_play target is
+// 0x25D10 further on, docs/PLAN.md Phase 20), so only the opcode and the target are checked.
+#define SIGNATURE_THUNK(rva, name, bytes) {(name), (bytes), sizeof(bytes) - 1, (rva), true}
 
 // The first bytes of every function the harness calls. A mismatch means a different game build,
 // or a software breakpoint (0xCC) planted by a debugger.
@@ -32,7 +38,11 @@ static const Signature signatures[] = {
 		"GAME_MATCH__deserialize",
 		"\x41\x56\x56\x57\x53\x48\x83\xEC\x38"
 	),
-	SIGNATURE(RVA_GAME_MATCH_PREPARE, "GAME_MATCH__prepare_to_play", "\xE9\xDB\x1E\x05\x10"),
+	SIGNATURE_THUNK(
+		RVA_GAME_MATCH_PREPARE,
+		"GAME_MATCH__prepare_to_play",
+		"\x56\x57\x48\x83\xEC\x28\x48\x89\xCE"
+	),
 	SIGNATURE(RVA_GAME_MATCH_RUN, "GAME_MATCH__Run", "\x41\x57\x41\x56\x41\x55\x41\x54\x56"),
 	SIGNATURE(RVA_DATA_BUFFER_CTOR, "DATA_BUFFER__ctor", "\x55\x56\x57\x53\x48\x83\xEC\x38\x48"),
 	SIGNATURE(
@@ -145,11 +155,25 @@ static bool checkTimestamp(void) {
 static bool checkSignatures(void) {
 	for (size_t i = 0; i < sizeof signatures / sizeof signatures[0]; ++i) {
 		const Signature *signature = &signatures[i];
-		if (memcmp(game_address(signature->rva), signature->bytes, signature->length) != 0) {
+		const uint8_t *code = game_address(signature->rva);
+		if (signature->thunk) {
+			if (code[0] != JMP_REL32) {
+				log_message(
+					"refusing: %s at fm.exe+0x%x is not a jmp thunk (software breakpoint?)",
+					signature->name,
+					signature->rva
+				);
+				return false;
+			}
+			int32_t displacement = 0;
+			memcpy(&displacement, code + 1, sizeof displacement);
+			code += JMP_REL32_LENGTH + displacement;
+		}
+		if (memcmp(code, signature->bytes, signature->length) != 0) {
 			log_message(
 				"refusing: prologue of %s at fm.exe+0x%x does not match (software breakpoint?)",
 				signature->name,
-				signature->rva
+				game_rva(code)
 			);
 			return false;
 		}

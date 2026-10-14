@@ -15,7 +15,7 @@ Written in C17.
 
 There are two artifacts produced by this build:
 
-- **`fm24_harness_p<N>.dll`** (`src/dll/`): injected into `fm.exe`. It checks
+- **`fm24-harness-<version>.dll`** (`src/dll/`): injected into `fm.exe`. It checks
   the game build, then runs jobs: play matches, build the next fixture,
   export configs.
 - **`fm24ctl.exe`** (`src/runner/`): injects the DLL, exports fixtures in to
