@@ -451,7 +451,11 @@ static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record) {
 		const uint8_t *person = database_findPerson(walk->people, uniqueId);
 		if (person) {
 			FieldLabel *first = &walk->labels[walk->playerStart];
-			(void)database_personName(person, first->player, sizeof first->player);
+			// Filler players the game makes for squads outside the loaded database
+			// (db::ACTUAL_PLAYER with no database index) have no forename or surname.
+			if (!database_personName(person, first->player, sizeof first->player)) {
+				(void)snprintf(first->player, sizeof first->player, "(unnamed, UID %u)", uniqueId);
+			}
 			(void)snprintf(label->name, sizeof label->name, "%s.person_uid", walk->block);
 			walk->playerNamed = true;
 		}
