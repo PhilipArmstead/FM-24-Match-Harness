@@ -26,7 +26,22 @@ bool fixtureExport_filename(
 	wchar_t away[FIXTURE_TEXT];
 	teamFilename(data->teams[0].name, home);
 	teamFilename(data->teams[1].name, away);
-	int length =
-		swprintf(out, size, L"%ls-v-%ls-%llu.json", home, away, (unsigned long long)timestamp);
-	return length > 0 && (size_t)length < size && length < FIXTURE_EXPORT_FILENAME_LENGTH;
+	wchar_t stamp[32];
+	if (swprintf(stamp, 32, L"%llu", (unsigned long long)timestamp) < 0) {
+		return false;
+	}
+	// MinGW's swprintf fails when the output exactly fills the buffer, so check the length first
+	// and build the name without it.
+	size_t length =
+		wcslen(home) + wcslen(L"-v-") + wcslen(away) + wcslen(L"-") + wcslen(stamp) + wcslen(L".json");
+	if (length >= size || length >= FIXTURE_EXPORT_FILENAME_LENGTH) {
+		return false;
+	}
+	wcscpy(out, home);
+	wcscat(out, L"-v-");
+	wcscat(out, away);
+	wcscat(out, L"-");
+	wcscat(out, stamp);
+	wcscat(out, L".json");
+	return true;
 }
