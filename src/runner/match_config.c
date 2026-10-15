@@ -14,13 +14,20 @@ typedef struct Encoder {
 	JsonReader reader;
 	ByteBuffer *out;
 	ByteBuffer scratch; // strings read from the JSON
-	size_t field;       // index of the field being read, for messages
+	ByteBuffer key;
+	ByteBuffer name;
+	ByteBuffer player;
+	const ConfigVisitor *visitor;
+	size_t field; // index of the field being read, for messages
 } Encoder;
 
 typedef struct FieldState {
 	int values; // how many value keys the field had (must be 1)
+	ConfigValueKind kind;
 } FieldState;
 
+static bool
+parseConfig(Encoder *encoder, const char *json, size_t length, char *error, size_t errorSize);
 static bool failField(Encoder *encoder, const char *message);
 static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t width);
 static bool emitHex(Encoder *encoder, const char *hex, size_t length);
@@ -41,14 +48,38 @@ bool matchConfig_encode(
 	size_t errorSize
 ) {
 	Encoder encoder = {.out = out};
-	jsonReader_init(&encoder.reader, json, length);
-	buffer_clear(out);
+	return parseConfig(&encoder, json, length, error, errorSize);
+}
+
+bool matchConfig_visit(
+	const char *json,
+	size_t length,
+	const ConfigVisitor *visitor,
+	char *error,
+	size_t errorSize
+) {
+	ByteBuffer bytes = {0};
+	Encoder encoder = {.out = &bytes, .visitor = visitor};
+	bool ok = parseConfig(&encoder, json, length, error, errorSize);
+	buffer_free(&bytes);
+	return ok;
+}
+
+static bool
+parseConfig(Encoder *encoder, const char *json, size_t length, char *error, size_t errorSize) {
+	jsonReader_init(&encoder->reader, json, length);
+	buffer_clear(encoder->out);
 	bool formatOk = false;
 	bool haveFields = false;
-	bool ok = readTopLevel(&encoder, &formatOk, &haveFields);
-	buffer_free(&encoder.scratch);
+	bool ok = readTopLevel(encoder, &formatOk, &haveFields);
+	buffer_free(&encoder->scratch);
+	buffer_free(&encoder->key);
+	buffer_free(&encoder->name);
+	buffer_free(&encoder->player);
 	if (!ok) {
-		(void)snprintf(error, errorSize, "%s", encoder.reader.error);
+		(void)snprintf(
+			error, errorSize, "%s", encoder->reader.error[0] ? encoder->reader.error : "out of memory"
+		);
 	} else if (!formatOk) {
 		(void)snprintf(
 			error, errorSize, "missing or unsupported \"format\" (want fm24-match-config/1)"
@@ -69,13 +100,11 @@ static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t widt
 	if (width < 8 && value >> (8 * width)) {
 		return failField(encoder, "value does not fit its width");
 	}
+	uint8_t bytes[8];
 	for (size_t i = 0; i < width; ++i) {
-		uint8_t byte = (uint8_t)(value >> (8 * i));
-		if (!buffer_append(encoder->out, &byte, 1)) {
-			return false;
-		}
+		bytes[i] = (uint8_t)(value >> (8 * i));
 	}
-	return true;
+	return buffer_append(encoder->out, bytes, width);
 }
 
 static bool emitHex(Encoder *encoder, const char *hex, size_t length) {
@@ -152,34 +181,53 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	bool isValue =
 		width || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 || strcmp(key, "hex") == 0;
 	if (!isValue) {
+		if (encoder->visitor && (strcmp(key, "name") == 0 || strcmp(key, "player") == 0)) {
+			return jsonReader_readString(
+				&encoder->reader, strcmp(key, "name") == 0 ? &encoder->name : &encoder->player
+			);
+		}
 		return jsonReader_skipValue(&encoder->reader);
 	}
 	++field->values;
 	if (width) {
+		field->kind = (ConfigValueKind)width;
 		return readUnsignedValue(encoder, width);
 	}
 	if (strcmp(key, "u8map") == 0) {
+		field->kind = CONFIG_RATINGS;
 		return readU8Map(encoder);
 	}
+	field->kind = strcmp(key, "str") == 0 ? CONFIG_STRING : CONFIG_HEX;
 	return readStringValue(encoder, strcmp(key, "hex") == 0);
 }
 
 static bool readField(Encoder *encoder) {
 	JsonReader *reader = &encoder->reader;
 	FieldState field = {0};
-	ByteBuffer key = {0};
+	size_t start = encoder->out->length;
+	buffer_clear(&encoder->name);
+	buffer_clear(&encoder->player);
 	bool ok = jsonReader_consume(reader, '{') || failField(encoder, "expected a field object");
 	if (ok && !jsonReader_consume(reader, '}')) {
 		do {
-			ok = jsonReader_readString(reader, &key) &&
+			ok = jsonReader_readString(reader, &encoder->key) &&
 					 (jsonReader_consume(reader, ':') || failField(encoder, "expected :")) &&
-					 readMember(encoder, buffer_string(&key), &field);
+					 readMember(encoder, buffer_string(&encoder->key), &field);
 		} while (ok && jsonReader_consume(reader, ','));
 		ok = ok && (jsonReader_consume(reader, '}') || failField(encoder, "expected , or }"));
 	}
-	buffer_free(&key);
 	if (ok && field.values != 1) {
 		return failField(encoder, "needs exactly one of u8/u16/u32/u64/str/hex/u8map");
+	}
+	if (ok && encoder->visitor && encoder->visitor->field) {
+		ConfigField value = {
+			.name = buffer_string(&encoder->name),
+			.player = buffer_string(&encoder->player),
+			.kind = field.kind,
+			.bytes = encoder->out->data ? encoder->out->data + start : NULL,
+			.length = encoder->out->length - start,
+		};
+		encoder->visitor->field(encoder->visitor->context, &value);
 	}
 	return ok;
 }
@@ -201,6 +249,27 @@ static bool readFields(Encoder *encoder) {
 	return jsonReader_consume(reader, ']') || jsonReader_fail(reader, "expected , or ] in fields");
 }
 
+static bool readTopMember(Encoder *encoder, const char *key, bool *formatOk, bool *haveFields) {
+	JsonReader *reader = &encoder->reader;
+	if (strcmp(key, "format") == 0) {
+		bool ok = jsonReader_readString(reader, &encoder->scratch);
+		*formatOk = ok && strcmp(buffer_string(&encoder->scratch), "fm24-match-config/1") == 0;
+		return ok;
+	}
+	if (strcmp(key, "fields") == 0) {
+		*haveFields = readFields(encoder);
+		return *haveFields;
+	}
+	if (encoder->visitor && encoder->visitor->source && strcmp(key, "source") == 0) {
+		if (!jsonReader_readString(reader, &encoder->scratch)) {
+			return false;
+		}
+		encoder->visitor->source(encoder->visitor->context, buffer_string(&encoder->scratch));
+		return true;
+	}
+	return jsonReader_skipValue(reader);
+}
+
 // Reads the top-level object; sets the flags for the members a config must have.
 static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 	JsonReader *reader = &encoder->reader;
@@ -210,20 +279,19 @@ static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 	if (ok && !jsonReader_consume(reader, '}')) {
 		do {
 			ok = jsonReader_readString(reader, &key) &&
-					 (jsonReader_consume(reader, ':') || jsonReader_fail(reader, "expected :"));
-			if (ok && strcmp(buffer_string(&key), "format") == 0) {
-				ok = jsonReader_readString(reader, &encoder->scratch);
-				*formatOk = ok && strcmp(buffer_string(&encoder->scratch), "fm24-match-config/1") == 0;
-			} else if (ok && strcmp(buffer_string(&key), "fields") == 0) {
-				ok = readFields(encoder);
-				*haveFields = ok;
-			} else if (ok) {
-				ok = jsonReader_skipValue(reader);
-			}
+					 (jsonReader_consume(reader, ':') || jsonReader_fail(reader, "expected :")) &&
+					 readTopMember(encoder, buffer_string(&key), formatOk, haveFields);
 		} while (ok && jsonReader_consume(reader, ','));
 		ok = ok && (jsonReader_consume(reader, '}') ||
 								 jsonReader_fail(reader, "expected , or } at top level"));
 	}
 	buffer_free(&key);
+	if (ok) {
+		while (
+			reader->position < reader->end && strchr(" \t\r\n", *reader->position) && *reader->position) {
+			++reader->position;
+		}
+		ok = reader->position == reader->end || jsonReader_fail(reader, "trailing data");
+	}
 	return ok;
 }

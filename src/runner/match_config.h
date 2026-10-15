@@ -18,12 +18,45 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+typedef enum ConfigValueKind {
+	CONFIG_U8 = 1,
+	CONFIG_U16 = 2,
+	CONFIG_U32 = 4,
+	CONFIG_U64 = 8,
+	CONFIG_STRING,
+	CONFIG_HEX,
+	CONFIG_RATINGS,
+} ConfigValueKind;
+
+typedef struct ConfigField {
+	const char *name;
+	const char *player;
+	ConfigValueKind kind;
+	const uint8_t *bytes; // encoded value, including the length prefix for strings
+	size_t length;
+} ConfigField;
+
+typedef struct ConfigVisitor {
+	void *context;
+	void (*field)(void *context, const ConfigField *field);
+	void (*source)(void *context, const char *source);
+} ConfigVisitor;
 
 // Fills `out` with the encoded bytes. On failure returns false with a message in `error`.
 bool matchConfig_encode(
 	const char *json,
 	size_t length,
 	ByteBuffer *out,
+	char *error,
+	size_t errorSize
+);
+
+// Validates values with the same encoder, visiting each field once. Borrowed strings and bytes
+// remain valid only during the callback. Annotation strings are read only for this operation.
+bool matchConfig_visit(
+	const char *json,
+	size_t length,
+	const ConfigVisitor *visitor,
 	char *error,
 	size_t errorSize
 );

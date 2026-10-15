@@ -15,6 +15,8 @@
 // fm24ctl.exe, the DLL, the job file and the result file all live in the same directory.
 
 #include "commands.h"
+#include "files.h"
+#include "fixture_window.h"
 
 #include <stdio.h>
 #include <wchar.h>
@@ -22,6 +24,7 @@
 
 static const char usage[] =
 	"usage:\n"
+	"  fm24ctl <fixture.bin|.json>  (open the native fixture viewer)\n"
 	"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]\n"
 	"      [--profile <samples.txt>] [--detailed] [--human-control] [--keep-build]\n"
 	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]\n"
@@ -32,6 +35,10 @@ int wmain(int argc, wchar_t **argv);
 
 int wmain(int argc, wchar_t **argv) {
 	const wchar_t *command = argc >= 2 ? argv[1] : L"";
+	if (argc == 2 &&
+			(files_hasExtension(command, L".bin") || files_hasExtension(command, L".json"))) {
+		return fixtureWindow_open(command);
+	}
 	static const struct {
 		const wchar_t *name;
 		int (*run)(int argc, wchar_t **argv);

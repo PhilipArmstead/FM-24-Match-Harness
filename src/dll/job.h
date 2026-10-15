@@ -16,6 +16,7 @@ typedef enum JobCommand {
 	JOB_NONE,       // no "command=" line: the job is rejected
 	JOB_RUN,        // play an input with a list of seeds, write a CSV
 	JOB_BUILD_NEXT, // build the human manager's next fixture to .bin or .json
+	JOB_INSPECT,    // decode existing binary input to JSON without preparing or playing it
 } JobCommand;
 
 typedef struct Job {
@@ -46,3 +47,4 @@ void job_writeResult(const wchar_t *directory, const char *format, ...)
 // The job implementations (job_*.c); each reports through job_writeResult and/or the log.
 void jobs_run(const Job *job, const wchar_t *directory);
 void jobs_buildNext(const Job *job, const wchar_t *directory);
+void jobs_inspect(const Job *job, const wchar_t *directory);

@@ -7,6 +7,7 @@
 #include "site_members.h"
 #include "sites.h"
 #include "tactic_flags.h"
+#include "tactic_names.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -125,82 +126,6 @@ static const char *const ratingNames[69] = {
 	"determination",
 	"composure",
 	"concentration",
-};
-
-// Role IDs are bit indices of the game's role mask (sub_140ABC790); "" = not seen.
-static const char *const roleNames[] = {
-	"goalkeeper",
-	"central_defender",
-	"full_back",
-	"wing_back",
-	"defensive_midfielder",
-	"central_midfielder",
-	"wide_midfielder",
-	"winger",
-	"",
-	"attacking_midfielder",
-	"deep_lying_forward",
-	"advanced_forward",
-	"sweeper_keeper",
-	"",
-	"libero",
-	"deep_lying_playmaker",
-	"box_to_box_midfielder",
-	"advanced_playmaker",
-	"target_man",
-	"poacher",
-	"complete_forward",
-	"",
-	"",
-	"",
-	"ball_playing_defender",
-	"",
-	"",
-	"inside_forward",
-	"ball_winning_midfielder",
-	"no_nonsense_centre_back",
-	"defensive_winger",
-	"pressing_forward",
-	"trequartista",
-	"anchor_man",
-	"",
-	"half_back",
-	"no_nonsense_full_back",
-	"enganche",
-	"complete_wing_back",
-	"regista",
-	"false_nine",
-	"shadow_striker",
-	"wide_target_man",
-	"wide_playmaker",
-	"inverted_wing_back",
-	"raumdeuter",
-	"roaming_playmaker",
-	"mezzala",
-	"carrilero",
-	"inverted_winger",
-	"segundo_volante",
-	"wide_centre_back",
-	"inverted_full_back",
-};
-
-// Position codes in role rating entries (code 1 has not been seen).
-static const char *const positionNames[] = {
-	"GK",
-	"",
-	"DR",
-	"DL",
-	"DC",
-	"WBR",
-	"WBL",
-	"DM",
-	"MR",
-	"ML",
-	"MC",
-	"AMR",
-	"AML",
-	"AMC",
-	"ST",
 };
 
 // Player trait (preferred move) bits, in FMRTE's order (docs/PLAN.md Phase 21). Bit 39 is shown in
@@ -396,8 +321,9 @@ FieldLabel *labels_compute(const Serialised *serialised, const PeopleIndex *peop
 }
 
 static const char *positionFlag(unsigned bit) {
-	if (bit < sizeof positionNames / sizeof positionNames[0] && positionNames[bit][0]) {
-		return positionNames[bit];
+	const char *name = tactic_positionName(bit);
+	if (name) {
+		return name;
 	}
 	switch (bit) {
 		case POSITION_LEFT_BIT: return "left";
@@ -414,10 +340,7 @@ static const char *roleFlag(unsigned bit) {
 		case DUTY_AUTOMATIC_BIT: return "duty: automatic";
 		default: break;
 	}
-	if (bit < sizeof roleNames / sizeof roleNames[0] && roleNames[bit][0]) {
-		return roleNames[bit];
-	}
-	return NULL;
+	return tactic_roleName(bit);
 }
 
 static const char *lookup(const SiteName *table, size_t count, uint32_t site) {
@@ -456,8 +379,8 @@ static void appendIndexedBlock(Walk *walk, const char *text, int index) {
 
 // The role's name, or "role<id>" if it has none.
 static void roleText(unsigned role, char *out, size_t size) {
-	const char *name = role < sizeof roleNames / sizeof roleNames[0] ? roleNames[role] : "";
-	if (name[0]) {
+	const char *name = tactic_roleName(role);
+	if (name) {
 		(void)snprintf(out, size, "%s", name);
 	} else {
 		(void)snprintf(out, size, "role%u", role);
@@ -473,19 +396,14 @@ static void roleEntryName(const Walk *walk, size_t first, char *out, size_t size
 	}
 	unsigned role = serialised->bytes.data[serialised->records[first + 1].offset];
 	unsigned position = serialised->bytes.data[serialised->records[first + 2].offset];
-	const char *roleName = role < sizeof roleNames / sizeof roleNames[0] ? roleNames[role] : "";
-	const char *positionName =
-		position < sizeof positionNames / sizeof positionNames[0] ? positionNames[position] : "";
+	const char *roleName = tactic_roleName(role);
+	const char *positionName = tactic_positionName(position);
 	char roleText[16];
 	char positionText[16];
 	(void)snprintf(roleText, sizeof roleText, "role%u", role);
 	(void)snprintf(positionText, sizeof positionText, "pos%u", position);
 	(void)snprintf(
-		out,
-		size,
-		"%s@%s",
-		roleName[0] ? roleName : roleText,
-		positionName[0] ? positionName : positionText
+		out, size, "%s@%s", roleName ? roleName : roleText, positionName ? positionName : positionText
 	);
 }
 

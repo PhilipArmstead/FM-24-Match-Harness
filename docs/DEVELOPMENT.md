@@ -4,15 +4,21 @@ FM24 match-engine harness development
 # Layout
 
 ```
-src/common/  protocol (job file, events, DLL name), byte buffer, files
+src/common/  protocol (job file, events, DLL name), byte buffer, files,
+             shared tactic role/position names
 src/dll/     game.h (addresses, layouts, signatures), memory, stream,
              match, rng, database, fixture, trace, seed_build (per-seed
              rebuilds), sites/site_lookup/site_members, labels (rating
              names), config_writer, output, profiler, job,
-             job_run/build, match_stats, tactic_flags
+             job_run/build/inspect, match_stats, tactic_flags
              (generated), main
 src/runner/  main, commands, inject, client, paths, json_reader,
-             match_config (encoder), probe + probe_patterns (generated)
+             match_config (encoder and streaming field visitor),
+             fixture_data (platform-independent read model),
+             fixture_load (JSON reads / binary decoding jobs),
+             probe + probe_patterns (generated)
+src/ui/      fixture_window (Win32 controls and GDI pitch drawing), manifest
+tests/       portable fixture reader regression checks
 cmake/       MinGW-w64 toolchain file
 scripts/     build.sh, format.sh, tidy.sh (env.sh: tool locations)
 docs/        PLAN.md: the plan and every finding, phase by phase
@@ -41,6 +47,35 @@ scripts/tidy.sh      # clang-tidy with .clang-tidy (warnings are errors)
 
 The build uses `-Wall -Wextra -Wpedantic -Wshadow -Wconversion` and friends
 and is warning-free; `format.sh --check` and `tidy.sh` are clean.
+
+The viewer uses only Windows system libraries (`user32`, `gdi32`,
+`comctl32` and `msftedit`), with no third-party UI or parsing dependencies.
+It is read-only; `fm24ctl <fixture.json|fixture.bin>` leaves the existing CLI commands
+unchanged. Only binary inspection connects to the harness, using an
+`inspect` job and a temporary JSON file removed after reading. Inspection
+deserialises and traces the existing match without running preparation,
+building another fixture or invoking the engine's match runner.
+
+To build the optional regression executable on Windows, configure with
+`-DFM24_BUILD_TESTS=ON`, build, then run `ctest --test-dir build
+--output-on-failure`. The reader can also be checked on a non-Windows host:
+
+```sh
+cc -std=c17 -O2 -Isrc/common -Isrc/runner \
+  tests/fixture_data_test.c src/runner/fixture_data.c \
+  src/runner/match_config.c src/runner/json_reader.c \
+  src/common/buffer.c src/common/tactic_names.c -o /tmp/fixture_data_test
+/tmp/fixture_data_test
+# Optional integration check against the local Aston Villa/Bristol City baseline:
+/tmp/fixture_data_test tools/experiments/baseline.json
+```
+
+The regression checks cover legacy/unlabelled and current/labelled wellbeing
+fields, calendar dates and leap years (including signed, over-width and
+truncated date/time rejection), Unicode names, both human-control
+orientations, 64-bit role masks, formation derivation, unknown AI assignments
+and malformed JSON numbers and input. The local baseline is not required by
+the synthetic checks.
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake

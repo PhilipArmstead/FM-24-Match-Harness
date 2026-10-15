@@ -10,6 +10,16 @@ This page explains what is in the file, what you can change safely, and what
 the values mean. Some of it is still unknown. Where something hasn't been
 tested, this page says so.
 
+To inspect a fixture visually, run `fm24ctl <file>.json` (or `<file>.bin`).
+This opens a read-only Windows viewer, not a match run. JSON is read offline;
+binary inspection requires FM24 running and idle. The viewer shows stored
+tactics and player wellbeing; it does not guess AI starting assignments,
+weather meanings or league/cup type codes. Its date/time comes from the
+export's advisory `source` annotation, converted to `YYYY-MM-DD HH:MM`
+(accounting for leap years), not a decoded date field. Binary dates remain
+unknown when no date annotation is available. See the
+README's [viewer notes](../README.md#view-a-fixture) for the limits.
+
 # The rules
 
 - **Change values, not structure.** You can change any number or string. Don't

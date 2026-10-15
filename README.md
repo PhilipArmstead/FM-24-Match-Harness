@@ -9,7 +9,7 @@ The output is a CSV showing the results of all matches played.
 
 Written in C17.
 
-> NOTE: this is for Windows only.
+> NOTE: this is for Windows 10 or newer only.
 
 # How does it work?
 
@@ -18,8 +18,8 @@ There are two artifacts produced by this build:
 - **`fm24-harness-<version>.dll`** (`src/dll/`): injected into `fm.exe`. It checks
   the game build, then runs jobs: play matches, build the next fixture,
   export configs.
-- **`fm24ctl.exe`** (`src/runner/`): injects the DLL, exports fixtures in to
-  editable JSON files and passes them to seeded jobs.
+- **`fm24ctl.exe`** (`src/runner/`, `src/ui/`): exports fixtures, passes them
+  to seeded jobs and opens fixtures in a native Windows viewer.
 
 # How to use?
 
@@ -76,6 +76,39 @@ of a `run` command and check the extra CSVs generated: one for players and one
 for teams, with each statistic averaged over all the seeds. They match the
 game's own match statistics screens.
 
+## View a fixture
+
+Pass the fixture path as the first and only argument, without `run`:
+
+```powershell
+.\fm24ctl.exe next-fixture.json
+.\fm24ctl.exe next-fixture.bin
+```
+
+> Note: you can also accomplish this by dragging the file on to the
+> application in Explorer.
+
+This opens a read-only window, with both teams' pitch diagrams, stored tactic
+names, formation shapes, positions, roles and duties. Player tables include
+morale, condition, sharpness and signed fatigue. The single **Starting XI**
+tab lists substitutes beneath the known starters, with `Sub` in the Position
+column and blank Slot, Role and Duty cells.
+
+JSON viewing does not need FM24. Binary viewing requires the supported game
+running and idle: the harness decodes and re-exports the input, without
+building a new fixture, preparing the match or playing it. The viewer does
+not modify the input file.
+
+**Data limits:** the human-controlled side's starting XI maps to its first
+11 players. AI squad order is different, so its 11 tactic rows show
+`<Unknown>` players, followed by its full squad with blank Slot, Position,
+Role and Duty cells. Weather and the
+league/cup type codes are not mapped yet; the competition name is displayed,
+and `Friendly` is recognised. Date/time is shown from the JSON export's
+advisory source annotation, converted from its one-based day of year to
+`YYYY-MM-DD HH:MM` with Gregorian leap years; binary dates without that
+annotation are unknown. Only the referee is shown, not the other officials.
+
 ## Experiments
 
 There's a few things you might want to do with this feature:
@@ -96,8 +129,7 @@ script and my DLL doing most of the work, not your agent.
 # Feature suggestions
 
 Got an idea for how I can enhance this? Maybe even more detailed outputs? Better
-annotated inputs? Do you want a UI to represent what a given JSON blob looks
-like?
+annotated inputs or additional viewer features?
 [Open an issue](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues)
 and ask kindly.
 

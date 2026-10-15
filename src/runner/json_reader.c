@@ -16,6 +16,7 @@ static bool appendUtf8(ByteBuffer *out, unsigned long codePoint);
 static bool readHex4(JsonReader *reader, unsigned long *value);
 static bool readUnicodeEscape(JsonReader *reader, ByteBuffer *out);
 static bool readEscape(JsonReader *reader, ByteBuffer *out);
+static bool numberSyntax(const char *token);
 static bool skipLiteral(JsonReader *reader);
 static bool skipContainer(JsonReader *reader, bool isObject, int depth);
 static bool skipNested(JsonReader *reader, int depth);
@@ -53,6 +54,9 @@ bool jsonReader_readString(JsonReader *reader, ByteBuffer *out) {
 	}
 	while (reader->position < reader->end && *reader->position != '"') {
 		char c = *reader->position++;
+		if ((uint8_t)c < 0x20) {
+			return jsonReader_fail(reader, "unescaped control character in string");
+		}
 		bool ok = c == '\\' ? readEscape(reader, out) : buffer_append(out, &c, 1);
 		if (!ok) {
 			return false;
@@ -79,6 +83,9 @@ bool jsonReader_readNumber(JsonReader *reader, unsigned long long *value, bool *
 	char token[MAX_NUMBER_LENGTH];
 	memcpy(token, start, length);
 	token[length] = 0;
+	if (!numberSyntax(token)) {
+		return jsonReader_fail(reader, "invalid JSON number");
+	}
 	*isUnsigned = strpbrk(token, "-.eE") == NULL;
 	*value = 0;
 	if (*isUnsigned) {
@@ -90,6 +97,47 @@ bool jsonReader_readNumber(JsonReader *reader, unsigned long long *value, bool *
 		}
 	}
 	return true;
+}
+
+static const char *skipDigits(const char *text) {
+	while (*text >= '0' && *text <= '9') {
+		++text;
+	}
+	return text;
+}
+
+static bool numberSyntax(const char *token) {
+	const char *p = token;
+	if (*p == '-') {
+		++p;
+	}
+	if (*p == '0') {
+		++p;
+	} else {
+		if (*p < '1' || *p > '9') {
+			return false;
+		}
+		p = skipDigits(p + 1);
+	}
+	if (*p == '.') {
+		const char *start = ++p;
+		p = skipDigits(p);
+		if (p == start) {
+			return false;
+		}
+	}
+	if (*p == 'e' || *p == 'E') {
+		++p;
+		if (*p == '+' || *p == '-') {
+			++p;
+		}
+		const char *start = p;
+		p = skipDigits(p);
+		if (p == start) {
+			return false;
+		}
+	}
+	return *p == 0;
 }
 
 bool jsonReader_skipValue(JsonReader *reader) {
@@ -155,6 +203,8 @@ static bool readUnicodeEscape(JsonReader *reader, ByteBuffer *out) {
 			return jsonReader_fail(reader, "bad surrogate");
 		}
 		codePoint = 0x10000 + ((codePoint - 0xD800) << 10) + (low - 0xDC00);
+	} else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF) {
+		return jsonReader_fail(reader, "lone surrogate");
 	}
 	return appendUtf8(out, codePoint);
 }

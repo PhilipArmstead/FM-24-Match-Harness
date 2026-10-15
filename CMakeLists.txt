@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(fm24_harness C)
+project(fm24_harness C RC)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -24,6 +24,7 @@ set(warnings -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wmissing-pro
 add_library(common STATIC
 	src/common/buffer.c
 	src/common/files.c
+	src/common/tactic_names.c
 )
 target_include_directories(common PUBLIC src/common)
 target_compile_options(common PRIVATE ${warnings})
@@ -35,6 +36,7 @@ add_library(harness SHARED
 	src/dll/game.c
 	src/dll/job.c
 	src/dll/job_build.c
+	src/dll/job_inspect.c
 	src/dll/job_run.c
 	src/dll/labels.c
 	src/dll/log.c
@@ -60,6 +62,8 @@ target_link_options(harness PRIVATE -static -static-libgcc)
 add_executable(fm24ctl
 	src/runner/client.c
 	src/runner/commands.c
+	src/runner/fixture_data.c
+	src/runner/fixture_load.c
 	src/runner/inject.c
 	src/runner/json_reader.c
 	src/runner/main.c
@@ -67,7 +71,22 @@ add_executable(fm24ctl
 	src/runner/paths.c
 	src/runner/probe.c
 	src/runner/probe_patterns.c
+	src/ui/fixture_window.c
+	src/ui/viewer.rc
 )
-target_link_libraries(fm24ctl PRIVATE common)
+target_include_directories(fm24ctl PRIVATE src/runner src/ui)
+target_link_libraries(fm24ctl PRIVATE common comctl32 user32 gdi32)
+target_compile_definitions(fm24ctl PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_compile_options(fm24ctl PRIVATE ${warnings})
 target_link_options(fm24ctl PRIVATE -municode -static -static-libgcc)
+
+option(FM24_BUILD_TESTS "Build fixture reader regression checks" OFF)
+if(FM24_BUILD_TESTS)
+	enable_testing()
+	add_executable(fixture_data_test tests/fixture_data_test.c
+		src/runner/fixture_data.c src/runner/json_reader.c src/runner/match_config.c)
+	target_include_directories(fixture_data_test PRIVATE src/runner)
+	target_link_libraries(fixture_data_test PRIVATE common)
+	target_compile_options(fixture_data_test PRIVATE ${warnings})
+	add_test(NAME fixture_data COMMAND fixture_data_test)
+endif()

@@ -140,7 +140,7 @@ static bool parseCommand(Job *job, const char *value) {
 	static const struct {
 		const char *name;
 		JobCommand command;
-	} commands[] = {{"run", JOB_RUN}, {"build_next", JOB_BUILD_NEXT}};
+	} commands[] = {{"run", JOB_RUN}, {"build_next", JOB_BUILD_NEXT}, {"inspect", JOB_INSPECT}};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
 			job->command = commands[i].command;
@@ -208,6 +208,7 @@ static bool isComplete(const Job *job) {
 		case JOB_NONE: return false;
 		case JOB_RUN: return hasInput && hasOutput && (job->keepSeed || job->seedCount > 0);
 		case JOB_BUILD_NEXT: return hasOutput;
+		case JOB_INSPECT: return hasInput && hasOutput;
 	}
 	return false;
 }
