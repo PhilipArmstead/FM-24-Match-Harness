@@ -9,7 +9,7 @@ The output is a CSV showing the results of all matches played.
 
 Written in C17.
 
-> NOTE: this is for Windows 10 or newer only.
+> NOTE: this is for Windows 10 or newer only. Steam and Epic Games compatible.
 
 # How does it work?
 
@@ -38,9 +38,10 @@ the `--seed <N>` flag. Besides the match itself, the seed decides some pre-match
 details: crowd attendance, the officials, the weather and a random value per
 player.
 
-Export after clicking "Simulate Match" and before clicking "Continue". On the
-Team Selection screen your team isn't submitted yet, so the game picks your
-line-up itself when it builds the match, and the result won't match the game's.
+If you're trying to replicate a match that the game itself is about to play, 
+you need to export after clicking "Simulate Match"/"Submit Team" but before
+clicking "Continue"/"Go to Match". If you don't care about the exact result of
+the game's real match, you can export the fixture whenever.
 
 ## Run the next fixture
 
