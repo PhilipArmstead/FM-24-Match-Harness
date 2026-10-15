@@ -29,9 +29,10 @@ typedef struct Job {
 	wchar_t profile[HARNESS_PATH_LENGTH]; // run: optional sample file (see profiler.h)
 	uint32_t *seeds;                      // run
 	size_t seedCount;
-	unsigned threads;  // run: worker threads (1..HARNESS_MAX_THREADS)
-	bool keepSeed;     // run: play the input's own seed once
-	bool detailed;     // run: also write per-player and per-team statistics (match_stats.h)
+	unsigned threads;         // run: worker threads (1..HARNESS_MAX_THREADS)
+	uintptr_t progressWindow; // run: optional viewer window receiving HARNESS_PROGRESS_MESSAGE
+	bool keepSeed;            // run: play the input's own seed once
+	bool detailed;            // run: also write per-player and per-team statistics (match_stats.h)
 	bool humanControl; // run: keep the input's "human in control" flags (no AI in-match changes)
 	bool keepBuild;    // run: patch each seed into the input instead of rebuilding it per seed
 	bool hasSeed;      // build_next: use `seed` instead of a clock value

@@ -219,6 +219,16 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->threads = (unsigned)threads;
 		return true;
 	}
+	if (strcmp(key, "progress_window") == 0) {
+		char *end = NULL;
+		unsigned long long window = 0;
+		if (!parseNumber(value, &end, &window) || *end != 0 ||
+				strspn(value, "0123456789") != strlen(value) || window > UINTPTR_MAX) {
+			return false;
+		}
+		job->progressWindow = (uintptr_t)window;
+		return true;
+	}
 	return true; // unknown keys are ignored
 }
 

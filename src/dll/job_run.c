@@ -44,8 +44,10 @@ typedef struct Run {
 	volatile LONG next;   // index of the next seed to hand out
 	volatile LONG failed; // set when a match cannot be loaded; workers stop taking seeds
 	SeedResult *results;
-	CRITICAL_SECTION lock; // guards results[].done/ok, written, the CSV and details
+	CRITICAL_SECTION lock; // guards results, counters, progress, the CSV and details
 	size_t written;        // rows written so far (always a prefix of the seed list)
+	size_t completed;
+	uintptr_t progressWindow;
 	FILE *csv;
 	Profiler *profiler;        // samples worker 0 (the job thread)
 	MatchStatsTotals *details; // --detailed: player and team statistics summed over the seeds
@@ -71,6 +73,7 @@ static bool playSeed(
 	SeedResult *out
 );
 static void writeReadyRows(Run *run);
+static void reportProgress(Run *run);
 static DWORD WINAPI worker(LPVOID parameter);
 static void runWorkers(Run *run, unsigned count);
 static bool openRun(const Job *job, const ByteBuffer *input, Run *run);
@@ -116,6 +119,7 @@ void jobs_run(const Job *job, const wchar_t *directory) {
 	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
 	run.profiler = job->profile[0] ? profiler_start(job->profile) : NULL;
+	reportProgress(&run);
 	runWorkers(&run, threads);
 	profiler_stop(run.profiler);
 	QueryPerformanceCounter(&end);
@@ -253,6 +257,19 @@ static void writeReadyRows(Run *run) {
 	(void)fflush(run->csv);
 }
 
+static void reportProgress(Run *run) {
+	if (run->progressWindow &&
+			!PostMessageW(
+				(HWND)run->progressWindow, // NOLINT(performance-no-int-to-ptr): cross-process HWND.
+				HARNESS_PROGRESS_MESSAGE,
+				(WPARAM)run->completed,
+				(LPARAM)run->total
+			)) {
+		log_message("cannot report simulation progress (Windows error %lu)", GetLastError());
+		run->progressWindow = 0;
+	}
+}
+
 static DWORD WINAPI worker(LPVOID parameter) {
 	const Worker *self = parameter;
 	Run *run = self->run;
@@ -280,6 +297,8 @@ static DWORD WINAPI worker(LPVOID parameter) {
 		EnterCriticalSection(&run->lock);
 		run->results[index] = result;
 		writeReadyRows(run);
+		run->completed += result.ok;
+		reportProgress(run);
 		LeaveCriticalSection(&run->lock);
 		if (!result.ok) {
 			InterlockedExchange(&run->failed, 1);
@@ -315,7 +334,10 @@ static void runWorkers(Run *run, unsigned count) {
 }
 
 static bool openRun(const Job *job, const ByteBuffer *input, Run *run) {
-	*run = (Run){.job = job, .input = input, .total = job->keepSeed ? 1 : job->seedCount};
+	*run = (Run){.job = job,
+		.input = input,
+		.total = job->keepSeed ? 1 : job->seedCount,
+		.progressWindow = job->progressWindow};
 	if (!match_seedOffset(input->data, input->length, &run->seedOffset)) {
 		log_message("the input is not a serialised GAME_MATCH");
 		return false;

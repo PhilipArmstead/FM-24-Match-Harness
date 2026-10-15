@@ -86,26 +86,6 @@ cc -std=c17 -O2 -Isrc/common -Isrc/runner \
 /tmp/fixture_data_test tools/experiments/baseline.json
 ```
 
-The regression checks cover legacy/unlabelled and current/labelled wellbeing
-fields, calendar dates and leap years (including signed, over-width and
-truncated date/time rejection), Unicode names, both human-control
-orientations, 64-bit role masks, formation derivation, unknown AI assignments
-and malformed JSON numbers and input. The local baseline is not required by
-the synthetic checks.
-
-The runner startup checks stub the game export and viewer calls to cover
-no-argument launches, export failures, missing/overlong temporary paths and
-existing command dispatch.
-The export filename checks cover ASCII case folding, spaces, stripped
-Unicode/control/Windows-invalid characters and the 255-character filename
-limit.
-The Windows summary checks exercise RichEdit warning/link styles, link
-notifications, copying into the working directory, refusing overwrite and
-the missing-file message. They also cover tab visibility, simulation form
-defaults and bounds, input rejection, seed-pattern forwarding, detailed
-report flags, duplicate-submission prevention and completion/failure handling
-with a stubbed simulation command.
-
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake
 re-configures by itself, the DLL is renamed `fm24-harness-<version>.dll`, and

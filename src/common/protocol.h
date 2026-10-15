@@ -12,7 +12,7 @@
 // keeps waiting on its own, differently named events and never sees the new jobs.
 #pragma once
 
-#define HARNESS_PROTOCOL L"1.0.10"
+#define HARNESS_PROTOCOL L"1.0.11"
 #define HARNESS_DLL_NAME (L"fm24-harness-" HARNESS_PROTOCOL L".dll")
 // Injected when HARNESS_DLL_NAME is missing (e.g. a renamed release copy). It must have been built
 // with the same HARNESS_PROTOCOL, or the runner never sees its events.
@@ -29,3 +29,6 @@ enum { HARNESS_PATH_LENGTH = 1024 };
 
 // Most worker threads a run job may use.
 enum { HARNESS_MAX_THREADS = 16 };
+
+// Optional run-job notifications to the viewer: completed matches in wParam, total in lParam.
+enum { HARNESS_PROGRESS_MESSAGE = 0x8002 }; // WM_APP + 2

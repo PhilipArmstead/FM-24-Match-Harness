@@ -83,6 +83,10 @@ static bool parseSeedValue(const wchar_t *value, char *seed, size_t size);
 static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size, bool *full);
 
 int commands_run(int argc, wchar_t **argv) {
+	return commands_runWithProgress(argc, argv, 0);
+}
+
+int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow) {
 	RunOptions options;
 	if (!parseRunArguments(argc, argv, &options)) {
 		fprintf(
@@ -109,7 +113,7 @@ int commands_run(int argc, wchar_t **argv) {
 		job,
 		sizeof job,
 		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\ndetailed=%d\n"
-		"human_control=%d\nkeep_build=%d\naway_team=%.0u\n",
+		"human_control=%d\nkeep_build=%d\naway_team=%.0u\nprogress_window=%llu\n",
 		input.utf8,
 		seeds,
 		output.utf8,
@@ -118,7 +122,8 @@ int commands_run(int argc, wchar_t **argv) {
 		options.detailed,
 		options.humanControl,
 		options.keepBuild,
-		awayTeam
+		awayTeam,
+		(unsigned long long)progressWindow
 	);
 	printf("job submitted; waiting...\n");
 	char result[CLIENT_RESULT_LENGTH];
@@ -154,9 +159,15 @@ int commands_getNextFixture(int argc, wchar_t **argv) {
 }
 
 int commands_replaceAway(int argc, wchar_t **argv) {
+	char result[CLIENT_RESULT_LENGTH];
+	return commands_replaceAwayWithResult(argc, argv, result, sizeof result);
+}
+
+int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
 	bool full = argc == 6 && wcscmp(argv[5], L"--full") == 0;
 	if ((argc != 5 && !full) || !files_hasExtension(argv[2], L".json") ||
 			!files_hasExtension(argv[4], L".json")) {
+		(void)snprintf(result, resultSize, "Replace away requires a .json fixture and output.");
 		fprintf(
 			stderr,
 			"usage: fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
@@ -169,8 +180,16 @@ int commands_replaceAway(int argc, wchar_t **argv) {
 	char team[256];
 	size_t size = 0;
 	uint32_t awayTeam = 0;
+	if (!paths_toUtf8(argv[3], team, sizeof team) || !team[0] || strpbrk(team, "\r\n") ||
+			wcsspn(argv[3], L" \t") == wcslen(argv[3])) {
+		(void)snprintf(
+			result, resultSize, "Enter a team ID or club short name (up to 255 UTF-8 bytes)."
+		);
+		fprintf(stderr, "%s\n", result);
+		return EXIT_FAILED;
+	}
+	(void)snprintf(result, resultSize, "Cannot prepare replacement; see the console for details.");
 	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
-			!paths_toUtf8(argv[3], team, sizeof team) || strpbrk(team, "\r\n") ||
 			!readAwayTeam(&input, &awayTeam) || !workingPath(L"_job_input.bin", &bin) ||
 			!encodeToFile(&input, &bin, &size)) {
 		return EXIT_FAILED;
@@ -186,7 +205,16 @@ int commands_replaceAway(int argc, wchar_t **argv) {
 		output.utf8,
 		full
 	);
-	return submitAndReport(job);
+	(void)snprintf(
+		result,
+		resultSize,
+		"Cannot replace away team; FM24 must be running and idle. See the console and harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
 int commands_encode(int argc, wchar_t **argv) {

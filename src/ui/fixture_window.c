@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fixture_window.h"
 
+#include "client.h"
 #include "commands.h"
 #include "fixture_data.h"
 #include "fixture_export.h"
@@ -10,6 +11,7 @@
 #include "protocol.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +24,9 @@
 #include <richedit.h>
 
 
-enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1 };
+enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1, REPLACE_TIMER = 2 };
+
+enum { AWAY_ICON, AWAY_TEAM, AWAY_CONFIRM, AWAY_CANCEL, AWAY_ERROR, AWAY_CONTROL_COUNT };
 
 enum {
 	SIM_THREADS_LABEL,
@@ -40,8 +44,17 @@ typedef struct SimulationJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t seeds[256];
 	wchar_t threads[16];
+	uintptr_t progressWindow;
 	bool detailed;
 } SimulationJob;
+
+typedef struct ReplaceAwayJob {
+	wchar_t input[HARNESS_PATH_LENGTH];
+	wchar_t output[HARNESS_PATH_LENGTH];
+	wchar_t team[256];
+	char error[CLIENT_RESULT_LENGTH];
+	FixtureData *data;
+} ReplaceAwayJob;
 
 typedef struct WindowState {
 	FixtureData *data;
@@ -50,13 +63,18 @@ typedef struct WindowState {
 	wchar_t savedFilename[FIXTURE_EXPORT_FILENAME_LENGTH];
 	HWND metadata;
 	HWND tabs;
+	HWND progress;
 	HWND headings[2];
 	HWND notes[2];
 	HWND pitches[2];
 	HWND lists[2];
 	HWND simulation[SIM_CONTROL_COUNT];
+	HWND away[AWAY_CONTROL_COUNT];
 	HANDLE simulationThread;
+	HANDLE replacementThread;
 	SimulationJob simulationJob;
+	ReplaceAwayJob replacementJob;
+	wchar_t replacementPath[HARNESS_PATH_LENGTH];
 	unsigned long threadLimit;
 	HFONT font;
 	HFONT headingFont;
@@ -66,6 +84,7 @@ typedef struct WindowState {
 	bool failed;
 	bool temporary;
 	bool missing;
+	bool editingAway;
 } WindowState;
 
 static const wchar_t windowClass[] = L"FM24MatchHarness";
@@ -98,6 +117,8 @@ static void showError(HWND window, const wchar_t *message) {
 	MessageBoxW(window, message, L"FM24 Match Harness", MB_OK | MB_ICONERROR);
 }
 
+static void layout(HWND window, WindowState *state);
+
 static DWORD WINAPI simulateFixture(LPVOID parameter) {
 	SimulationJob *job = parameter;
 	wchar_t *arguments[] = {
@@ -106,11 +127,11 @@ static DWORD WINAPI simulateFixture(LPVOID parameter) {
 	if (job->detailed) {
 		arguments[count++] = L"--detailed";
 	}
-	return (DWORD)commands_run(count, arguments);
+	return (DWORD)commands_runWithProgress(count, arguments, job->progressWindow);
 }
 
 static void startSimulation(HWND window, WindowState *state) {
-	if (state->simulationThread) {
+	if (state->simulationThread || state->replacementThread) {
 		return;
 	}
 	SimulationJob *job = &state->simulationJob;
@@ -146,6 +167,7 @@ static void startSimulation(HWND window, WindowState *state) {
 		return;
 	}
 	job->detailed = SendMessageW(state->simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_CHECKED;
+	job->progressWindow = (uintptr_t)window;
 	if (!SetTimer(window, SIMULATION_TIMER, 200, NULL)) {
 		showError(window, L"Cannot monitor the simulation.");
 		return;
@@ -159,11 +181,17 @@ static void startSimulation(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
 		EnableWindow(state->simulation[i], FALSE);
 	}
+	EnableWindow(state->away[AWAY_ICON], FALSE);
+	EnableWindow(state->away[AWAY_CONFIRM], FALSE);
+	SendMessageW(state->progress, PBM_SETRANGE32, 0, 1);
+	SendMessageW(state->progress, PBM_SETPOS, 0, 0);
+	ShowWindow(state->progress, SW_SHOW);
+	layout(window, state);
 	SetFocus(state->tabs);
 	SetWindowTextW(
 		state->simulation[SIM_STATUS],
 		L"Simulating fixture... Please wait before closing "
-		L"the window. Progress is printed to the console."
+		L"the window."
 	);
 }
 
@@ -186,9 +214,13 @@ static void checkSimulation(HWND window, WindowState *state) {
 	KillTimer(window, SIMULATION_TIMER);
 	CloseHandle(state->simulationThread);
 	state->simulationThread = NULL;
+	ShowWindow(state->progress, SW_HIDE);
+	layout(window, state);
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
 		EnableWindow(state->simulation[i], TRUE);
 	}
+	EnableWindow(state->away[AWAY_ICON], TRUE);
+	EnableWindow(state->away[AWAY_CONFIRM], TRUE);
 	const wchar_t *message =
 		result == 0
 			? L"Simulation complete. Results were saved beside the fixture; see the console for paths."
@@ -209,6 +241,11 @@ static void selectTab(WindowState *state) {
 	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		ShowWindow(state->simulation[i], simulation ? SW_SHOW : SW_HIDE);
+	}
+	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
+		bool visible = !simulation && (i == AWAY_ICON ? !state->editingAway : state->editingAway) &&
+									 (i != AWAY_ERROR || GetWindowTextLengthW(state->away[i]) > 0);
+		ShowWindow(state->away[i], visible ? SW_SHOW : SW_HIDE);
 	}
 }
 
@@ -306,6 +343,10 @@ static bool fileMissing(const wchar_t *path) {
 }
 
 static void exportFixture(HWND window, WindowState *state) {
+	if (state->replacementThread) {
+		showError(window, L"Please wait for the away team replacement to finish before exporting.");
+		return;
+	}
 	if (!state->temporary || state->missing) {
 		return;
 	}
@@ -373,6 +414,9 @@ static bool setHeadings(WindowState *state) {
 			team->tactic[0] ? team->tactic : "Unnamed tactic",
 			team->formation[0] ? team->formation : "Formation unknown"
 		);
+		if (side == 1 && state->editingAway) {
+			(void)snprintf(text, sizeof text, "Away: ");
+		}
 		if (!setText(state->headings[side], text)) {
 			return false;
 		}
@@ -495,6 +539,190 @@ static bool fillList(WindowState *state, unsigned side) {
 	return ok;
 }
 
+static void removeReplacement(const wchar_t *path) {
+	if (path[0] && !DeleteFileW(path)) {
+		fprintf(
+			stderr, "cannot remove replacement fixture %ls (Windows error %lu)\n", path, GetLastError()
+		);
+	}
+}
+
+static void awayError(HWND window, WindowState *state, const char *error) {
+	fprintf(stderr, "fixture viewer: %s\n", error);
+	if (!setText(state->away[AWAY_ERROR], error)) {
+		SetWindowTextW(state->away[AWAY_ERROR], L"Cannot display replacement error (invalid UTF-8).");
+	}
+	ShowWindow(state->away[AWAY_ERROR], TabCtrl_GetCurSel(state->tabs) == 0 ? SW_SHOW : SW_HIDE);
+	layout(window, state);
+}
+
+static void editAway(HWND window, WindowState *state, bool editing) {
+	if (state->replacementThread || (editing && state->simulationThread)) {
+		return;
+	}
+	if (editing && !setText(state->away[AWAY_TEAM], state->data->teams[1].name)) {
+		showError(window, L"Cannot display the away team name.");
+		return;
+	}
+	state->editingAway = editing;
+	SetWindowTextW(state->away[AWAY_ERROR], L"");
+	if (!setHeadings(state)) {
+		showError(window, L"Cannot update team headings.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	selectTab(state);
+	layout(window, state);
+	SetFocus(state->away[editing ? AWAY_TEAM : AWAY_ICON]);
+	if (editing) {
+		SendMessageW(state->away[AWAY_TEAM], EM_SETSEL, 0, -1);
+	}
+}
+
+static DWORD WINAPI replaceAway(LPVOID parameter) {
+	ReplaceAwayJob *job = parameter;
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	wchar_t temporary[HARNESS_PATH_LENGTH];
+	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
+	if (!length || length >= HARNESS_PATH_LENGTH ||
+			!GetTempFileNameW(directory, L"fma", 0, temporary)) {
+		(void)snprintf(
+			job->error,
+			sizeof job->error,
+			"Cannot create a replacement fixture (Windows error %lu).",
+			GetLastError()
+		);
+		return 1;
+	}
+	int count = swprintf(job->output, HARNESS_PATH_LENGTH, L"%ls.json", temporary);
+	if (count < 0 || count >= HARNESS_PATH_LENGTH || !MoveFileW(temporary, job->output)) {
+		(void)snprintf(
+			job->error,
+			sizeof job->error,
+			"Cannot create replacement JSON (Windows error %lu).",
+			GetLastError()
+		);
+		removeReplacement(temporary);
+		job->output[0] = 0;
+		return 1;
+	}
+	wchar_t *arguments[] = {
+		L"fm24ctl.exe", L"replace-away", job->input, job->team, job->output, NULL};
+	int result = commands_replaceAwayWithResult(5, arguments, job->error, sizeof job->error);
+	if (result == 0 && !fixtureLoad_open(job->output, job->data, job->error, sizeof job->error)) {
+		result = 1;
+	}
+	return (DWORD)result;
+}
+
+static void startReplacement(HWND window, WindowState *state) {
+	if (!state->editingAway || state->simulationThread || state->replacementThread) {
+		return;
+	}
+	ReplaceAwayJob *job = &state->replacementJob;
+	int length = GetWindowTextW(state->away[AWAY_TEAM], job->team, 256);
+	char team[256];
+	if (!length || GetWindowTextLengthW(state->away[AWAY_TEAM]) >= 256 ||
+			wcsspn(job->team, L" \t") == (size_t)length || wcspbrk(job->team, L"\r\n") ||
+			!paths_toUtf8(job->team, team, sizeof team)) {
+		awayError(window, state, "Enter a team ID or club short name (up to 255 UTF-8 bytes).");
+		SetFocus(state->away[AWAY_TEAM]);
+		return;
+	}
+	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
+	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
+		awayError(window, state, "Cannot resolve the fixture path.");
+		return;
+	}
+	job->data = malloc(sizeof *job->data);
+	if (!job->data) {
+		awayError(window, state, "Out of memory loading the replacement fixture.");
+		return;
+	}
+	job->output[0] = 0;
+	job->error[0] = 0;
+	if (!SetTimer(window, REPLACE_TIMER, 200, NULL)) {
+		free(job->data);
+		job->data = NULL;
+		awayError(window, state, "Cannot monitor the away team replacement.");
+		return;
+	}
+	state->replacementThread = CreateThread(NULL, 0, replaceAway, job, 0, NULL);
+	if (!state->replacementThread) {
+		KillTimer(window, REPLACE_TIMER);
+		free(job->data);
+		job->data = NULL;
+		awayError(window, state, "Cannot start the away team replacement.");
+		return;
+	}
+	SetWindowTextW(state->away[AWAY_ERROR], L"");
+	ShowWindow(state->away[AWAY_ERROR], SW_HIDE);
+	for (unsigned i = AWAY_TEAM; i <= AWAY_CANCEL; ++i) {
+		EnableWindow(state->away[i], FALSE);
+	}
+	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
+	SetFocus(state->tabs);
+}
+
+static void checkReplacement(HWND window, WindowState *state) {
+	if (!state->replacementThread) {
+		return;
+	}
+	DWORD wait = WaitForSingleObject(state->replacementThread, 0);
+	if (wait == WAIT_TIMEOUT) {
+		return;
+	}
+	DWORD result = 1;
+	if (wait != WAIT_OBJECT_0 || !GetExitCodeThread(state->replacementThread, &result)) {
+		KillTimer(window, REPLACE_TIMER);
+		showError(window, L"Cannot read the away team replacement result.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	KillTimer(window, REPLACE_TIMER);
+	CloseHandle(state->replacementThread);
+	state->replacementThread = NULL;
+	for (unsigned i = AWAY_TEAM; i <= AWAY_CANCEL; ++i) {
+		EnableWindow(state->away[i], TRUE);
+	}
+	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
+	ReplaceAwayJob *job = &state->replacementJob;
+	if (result == 0) {
+		removeReplacement(state->replacementPath);
+		wcscpy(state->replacementPath, job->output);
+		job->output[0] = 0;
+		state->path = state->replacementPath;
+		state->savedFilename[0] = 0;
+		state->temporary = true;
+		state->missing = false;
+		*state->data = *job->data;
+		state->editingAway = false;
+		if (!setMetadata(state) || !setHeadings(state) || !fillList(state, 0) || !fillList(state, 1)) {
+			showError(window, L"Cannot display the replacement fixture.");
+			state->failed = true;
+			DestroyWindow(window);
+		} else {
+			for (unsigned side = 0; side < 2; ++side) {
+				InvalidateRect(state->pitches[side], NULL, TRUE);
+			}
+			selectTab(state);
+			layout(window, state);
+			SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? state->away[AWAY_ICON] : state->tabs);
+		}
+	} else {
+		awayError(window, state, job->error);
+		if (TabCtrl_GetCurSel(state->tabs) == 0) {
+			SetFocus(state->away[AWAY_TEAM]);
+		}
+	}
+	removeReplacement(job->output);
+	job->output[0] = 0;
+	free(job->data);
+	job->data = NULL;
+}
+
 static bool setFonts(WindowState *state) {
 	HFONT font = CreateFontW(
 		-MulDiv(10, (int)state->dpi, 72),
@@ -542,6 +770,9 @@ static bool setFonts(WindowState *state) {
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
+	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
+		SendMessageW(state->away[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
 	for (unsigned i = 0; i < 2; ++i) {
 		SendMessageW(state->headings[i], WM_SETFONT, (WPARAM)heading, TRUE);
 		SendMessageW(state->notes[i], WM_SETFONT, (WPARAM)font, TRUE);
@@ -565,48 +796,140 @@ static void layout(HWND window, WindowState *state) {
 	GetClientRect(window, &bounds);
 	int margin = scaled(state, 12);
 	int width = bounds.right - 2 * margin;
-	int tabHeight = scaled(state, 30);
+	int progressHeight = state->simulationThread ? scaled(state, 12) : 0;
+	MoveWindow(
+		state->progress, 0, bounds.bottom - scaled(state, 12), bounds.right, scaled(state, 12), TRUE
+	);
 	MoveWindow(state->metadata, margin, margin, width, state->metadataHeight, FALSE);
 	SendMessageW(state->metadata, EM_REQUESTRESIZE, 0, 0);
 	MoveWindow(state->metadata, margin, margin, width, state->metadataHeight, TRUE);
 	int top = margin + state->metadataHeight + margin;
-	MoveWindow(state->tabs, margin, top, width, tabHeight, TRUE);
-	top += tabHeight + margin;
+	MoveWindow(state->tabs, margin, top, width, bounds.bottom - top - margin - progressHeight, TRUE);
+	RECT page;
+	GetClientRect(state->tabs, &page);
+	TabCtrl_AdjustRect(state->tabs, FALSE, &page);
+	MapWindowPoints(state->tabs, window, (POINT *)&page, 2);
+	int left = page.left + margin;
+	top = page.top + margin;
+	width = page.right - left - margin;
 	static const struct {
 		int x, y, width, height;
 	} positions[SIM_CONTROL_COUNT] = {
-		{0, 0, 480, 24},
-		{0, 28, 100, 28},
-		{100, 28, 20, 28},
-		{0, 74, 480, 24},
-		{0, 102, 480, 30},
-		{0, 150, 480, 28},
-		{0, 194, 180, 34},
-		{0, 244, 700, 80},
+		{0, 4, 180, 24},
+		{192, 0, 58, 28},
+		{250, 0, 20, 28},
+		{0, 46, 100, 24},
+		{192, 42, 220, 30},
+		{0, 92, 220, 28},
+		{0, 136, 180, 34},
+		{0, 186, 620, 80},
 	};
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		MoveWindow(
 			state->simulation[i],
-			margin + scaled(state, positions[i].x),
+			left + scaled(state, positions[i].x),
 			top + scaled(state, positions[i].y),
 			scaled(state, positions[i].width),
 			scaled(state, positions[i].height),
 			TRUE
 		);
 	}
-	int panelHeight = (bounds.bottom - top - 2 * margin) / 2;
+	int panelHeight = (page.bottom - top - 2 * margin) / 2;
 	for (unsigned i = 0; i < 2; ++i) {
 		int y = top + (int)i * (panelHeight + margin);
 		int header = scaled(state, 27);
 		int note = scaled(state, 22);
-		MoveWindow(state->headings[i], margin, y, width, header, TRUE);
-		MoveWindow(state->notes[i], margin, y + header, width, note, TRUE);
+		int headingWidth = width;
+		if (i == 1) {
+			wchar_t text[2 * FIXTURE_TEXT + 128];
+			int length = GetWindowTextW(state->headings[i], text, 2 * FIXTURE_TEXT + 128);
+			HDC dc = GetDC(window);
+			HGDIOBJ oldFont = SelectObject(dc, state->headingFont);
+			SIZE extent = {0};
+			GetTextExtentPoint32W(dc, text, length, &extent);
+			SelectObject(dc, oldFont);
+			headingWidth = extent.cx + scaled(state, 4);
+			if (headingWidth > width - header) {
+				headingWidth = width - header;
+			}
+			MoveWindow(state->away[AWAY_ICON], left + headingWidth, y, header, header, TRUE);
+			if (state->editingAway) {
+				int x = left + headingWidth;
+				int gap = scaled(state, 6);
+				int inputWidth = scaled(state, 190);
+				int buttonWidth = scaled(state, 70);
+				MoveWindow(state->away[AWAY_TEAM], x, y, inputWidth, header, TRUE);
+				x += inputWidth + gap;
+				MoveWindow(state->away[AWAY_CONFIRM], x, y, buttonWidth, header, TRUE);
+				x += buttonWidth + gap;
+				MoveWindow(state->away[AWAY_CANCEL], x, y, buttonWidth, header, TRUE);
+				x += buttonWidth + gap;
+				int errorWidth = left + width - x;
+				int errorHeight = header - scaled(state, 4);
+				SelectObject(dc, state->font);
+				GetWindowTextW(state->away[AWAY_ERROR], text, 2 * FIXTURE_TEXT + 128);
+				RECT errorBounds = {0, 0, errorWidth - GetSystemMetricsForDpi(SM_CXVSCROLL, state->dpi), 0};
+				DrawTextW(dc, text, -1, &errorBounds, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+				SelectObject(dc, oldFont);
+				if (errorBounds.bottom > errorHeight) {
+					errorHeight = errorBounds.bottom;
+					if (errorHeight > scaled(state, 60)) {
+						errorHeight = scaled(state, 60);
+					}
+					header = errorHeight + scaled(state, 4);
+				}
+				MoveWindow(state->away[AWAY_ERROR], x, y + scaled(state, 4), errorWidth, errorHeight, TRUE);
+				ShowScrollBar(state->away[AWAY_ERROR], SB_VERT, errorBounds.bottom > errorHeight);
+			}
+			ReleaseDC(window, dc);
+		}
+		MoveWindow(state->headings[i], left, y, headingWidth, scaled(state, 27), TRUE);
+		MoveWindow(state->notes[i], left, y + header, width, note, TRUE);
 		int height = panelHeight - header - note;
 		int pitchWidth = scaled(state, 220);
-		MoveWindow(state->pitches[i], margin, y + header + note, pitchWidth, height, TRUE);
+		MoveWindow(state->pitches[i], left, y + header + note, pitchWidth, height, TRUE);
 		int offset = pitchWidth + margin;
-		MoveWindow(state->lists[i], margin + offset, y + header + note, width - offset, height, TRUE);
+		MoveWindow(state->lists[i], left + offset, y + header + note, width - offset, height, TRUE);
 	}
+}
+
+static bool createAwayControls(HWND window, WindowState *state) {
+	static const struct {
+		const wchar_t *className;
+		const wchar_t *text;
+		DWORD style;
+		DWORD extended;
+	} controls[AWAY_CONTROL_COUNT] = {
+		{L"BUTTON", L"Replace away team", WS_TABSTOP | BS_OWNERDRAW, 0},
+		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{L"BUTTON", L"Confirm", WS_TABSTOP | BS_PUSHBUTTON, 0},
+		{L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, 0},
+		{L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 0},
+	};
+	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
+		state->away[i] = CreateWindowExW(
+			controls[i].extended,
+			controls[i].className,
+			controls[i].text,
+			WS_CHILD | controls[i].style,
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			GetModuleHandleW(NULL),
+			NULL
+		);
+		if (!state->away[i]) {
+			return false;
+		}
+	}
+	SendMessageW(state->away[AWAY_TEAM], EM_SETLIMITTEXT, 255, 0);
+	SendMessageW(
+		state->away[AWAY_TEAM], EM_SETCUEBANNER, TRUE, (LPARAM)L"Team ID or club short name"
+	);
+	return true;
 }
 
 static bool createSimulationControls(HWND window, WindowState *state) {
@@ -619,7 +942,7 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 		{L"STATIC", L"Number of threads:", 0, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0},
-		{L"STATIC", L"Seed pattern (e.g. 1,4,7-70; keep = fixture seed):", 0, 0},
+		{L"STATIC", L"Seed pattern:", 0, 0},
 		{L"EDIT", L"keep", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{L"BUTTON", L"Generate detailed reports?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
 		{L"BUTTON", L"Simulate fixture", WS_TABSTOP | BS_PUSHBUTTON, 0},
@@ -652,6 +975,7 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 	}
 	SendMessageW(state->simulation[SIM_THREADS], EM_SETLIMITTEXT, 15, 0);
 	SendMessageW(state->simulation[SIM_SEEDS], EM_SETLIMITTEXT, 255, 0);
+	SendMessageW(state->simulation[SIM_SEEDS], EM_SETCUEBANNER, TRUE, (LPARAM)L"e.g. 1,4,7-70");
 	SendMessageW(
 		state->simulation[SIM_SPINNER], UDM_SETBUDDY, (WPARAM)state->simulation[SIM_THREADS], 0
 	);
@@ -680,7 +1004,7 @@ static bool createControls(HWND window, WindowState *state) {
 		0,
 		WC_TABCONTROLW,
 		L"",
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS,
 		0,
 		0,
 		0,
@@ -690,7 +1014,21 @@ static bool createControls(HWND window, WindowState *state) {
 		instance,
 		NULL
 	);
-	if (!state->metadata || !state->tabs) {
+	state->progress = CreateWindowExW(
+		0,
+		PROGRESS_CLASSW,
+		L"Simulation progress",
+		WS_CHILD | PBS_SMOOTH,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		NULL
+	);
+	if (!state->metadata || !state->tabs || !state->progress) {
 		return false;
 	}
 	SendMessageW(state->metadata, EM_SETLIMITTEXT, 8192, 0);
@@ -776,8 +1114,13 @@ static bool createControls(HWND window, WindowState *state) {
 			}
 		}
 	}
-	return createSimulationControls(window, state) && setFonts(state) && setMetadata(state) &&
-				 setHeadings(state) && fillList(state, 0) && fillList(state, 1);
+	bool ok = createAwayControls(window, state) && createSimulationControls(window, state) &&
+						setFonts(state) && setMetadata(state) && setHeadings(state) && fillList(state, 0) &&
+						fillList(state, 1);
+	if (ok) {
+		selectTab(state);
+	}
+	return ok;
 }
 
 static void pitchPoint(uint64_t mask, int *x, int *y) {
@@ -917,6 +1260,236 @@ static LRESULT metadataNotification(HWND window, WindowState *state, const NMHDR
 	return 0;
 }
 
+static void drawEditIcon(const WindowState *state, const DRAWITEMSTRUCT *draw) {
+	// assets/edit.svg in 1/1000 viewBox units; SVG arcs are cubic GDI curves.
+	static const POINT points[] = {
+		{12965, 5462},
+		{7986, 5470},
+		{4952, 5476},
+		{2496, 7936},
+		{2496, 10970},
+		{2496, 24000},
+		{2495, 25459},
+		{3074, 26859},
+		{4106, 27890},
+		{5137, 28922},
+		{6537, 29501},
+		{7996, 29500},
+		{20999, 29500},
+		{24037, 29500},
+		{26499, 27038},
+		{26499, 24000},
+		{26499, 18996},
+		{26499, 18168},
+		{25827, 17496},
+		{24999, 17496},
+		{24171, 17496},
+		{23499, 18168},
+		{23499, 18996},
+		{23499, 24000},
+		{23499, 25381},
+		{22380, 26500},
+		{20999, 26500},
+		{7996, 26500},
+		{6615, 26500},
+		{5496, 25381},
+		{5496, 24000},
+		{5496, 10970},
+		{5496, 9591},
+		{6613, 8472},
+		{7992, 8470},
+		{12971, 8462},
+		{13778, 8431},
+		{14416, 7767},
+		{14414, 6959},
+		{14413, 6151},
+		{13772, 5490},
+		{12965, 5462},
+		{20046, 6411},
+		{13201, 13257},
+		{13064, 13394},
+		{12970, 13568},
+		{12930, 13758},
+		{11849, 18910},
+		{11780, 19239},
+		{11881, 19581},
+		{12117, 19819},
+		{12354, 20058},
+		{12694, 20162},
+		{13024, 20096},
+		{18218, 19058},
+		{18411, 19019},
+		{18589, 18924},
+		{18729, 18784},
+		{25574, 11939},
+		{21461, 4997},
+		{26988, 10525},
+		{28100, 9414},
+		{29625, 7887},
+		{29625, 5414},
+		{28100, 3887},
+		{28099, 3886},
+		{26572, 2361},
+		{24099, 2361},
+		{22572, 3886},
+	};
+	static const BYTE types[] = {
+		6,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		4,
+		4,
+		4,
+		6,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		4,
+		3,
+		6,
+		2,
+		2,
+		4,
+		4,
+		4,
+		2,
+		4,
+		4,
+		5,
+	};
+	HDC dc = draw->hDC;
+	int saved = SaveDC(dc);
+	FillRect(dc, &draw->rcItem, GetSysColorBrush(COLOR_WINDOW));
+	if (draw->itemState & ODS_FOCUS) {
+		RECT focus = draw->rcItem;
+		InflateRect(&focus, -1, -1);
+		DrawFocusRect(dc, &focus);
+	}
+	int inset = scaled(state, 3);
+	int size = draw->rcItem.bottom - draw->rcItem.top - 2 * inset;
+	int pressed = (draw->itemState & ODS_SELECTED) ? 1 : 0;
+	SetMapMode(dc, MM_ANISOTROPIC);
+	SetWindowExtEx(dc, 32000, 32000, NULL);
+	SetViewportExtEx(dc, size, size, NULL);
+	SetViewportOrgEx(
+		dc, draw->rcItem.left + inset + pressed, draw->rcItem.top + inset + pressed, NULL
+	);
+	SetPolyFillMode(dc, WINDING);
+	SelectObject(dc, GetStockObject(DC_BRUSH));
+	SetDCBrushColor(
+		dc, (draw->itemState & ODS_DISABLED) ? GetSysColor(COLOR_GRAYTEXT) : RGB(0, 0, 255)
+	);
+	BeginPath(dc);
+	PolyDraw(dc, points, types, (int)(sizeof points / sizeof points[0]));
+	EndPath(dc);
+	FillPath(dc);
+	RestoreDC(dc, saved);
+}
+
+static LRESULT
+actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPARAM lParam) {
+	switch (message) {
+		case WM_COMMAND:
+			if (HIWORD(wParam) != BN_CLICKED) {
+				break;
+			}
+			if ((HWND)lParam == state->away[AWAY_ICON]) {
+				editAway(window, state, true);
+				return 0;
+			}
+			if ((HWND)lParam == state->away[AWAY_CONFIRM]) {
+				startReplacement(window, state);
+				return 0;
+			}
+			if ((HWND)lParam == state->away[AWAY_CANCEL]) {
+				editAway(window, state, false);
+				return 0;
+			}
+			if ((HWND)lParam == state->simulation[SIM_SUBMIT]) {
+				startSimulation(window, state);
+				return 0;
+			}
+			break;
+		case WM_TIMER:
+			if (wParam == REPLACE_TIMER) {
+				checkReplacement(window, state);
+				return 0;
+			}
+			if (wParam == SIMULATION_TIMER) {
+				checkSimulation(window, state);
+				return 0;
+			}
+			break;
+		case WM_NOTIFY: {
+			const NMHDR *notification = (const NMHDR *)lParam;
+			if (notification->hwndFrom == state->tabs && notification->code == (UINT)TCN_SELCHANGE) {
+				selectTab(state);
+				return 0;
+			}
+			return metadataNotification(window, state, notification);
+		}
+		case WM_CLOSE:
+			if (state->replacementThread) {
+				showError(window, L"An away team replacement is running. Please wait before closing.");
+				return 0;
+			}
+			if (state->simulationThread) {
+				showError(window, L"A simulation is running. Please wait for it to finish before closing.");
+				return 0;
+			}
+			break;
+		default: break;
+	}
+	return DefWindowProcW(window, message, wParam, lParam);
+}
+
 static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
 	WindowState *state = (WindowState *)GetWindowLongPtrW(window, GWLP_USERDATA);
 	if (message == WM_NCCREATE) {
@@ -944,6 +1517,36 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			state->layoutPending = false;
 			layout(window, state);
 			return 0;
+		case HARNESS_PROGRESS_MESSAGE:
+			if (state->simulationThread && lParam > 0 && lParam <= INT_MAX && wParam <= (WPARAM)lParam) {
+				SendMessageW(state->progress, PBM_SETRANGE32, 0, lParam);
+				SendMessageW(state->progress, PBM_SETPOS, wParam, 0);
+			}
+			return 0;
+		case WM_CTLCOLORSTATIC:
+		case WM_CTLCOLORBTN: {
+			HDC dc = (HDC)wParam;
+			SetBkMode(dc, TRANSPARENT);
+			SetTextColor(
+				dc, (HWND)lParam == state->away[AWAY_ERROR] ? RGB(255, 0, 0) : GetSysColor(COLOR_WINDOWTEXT)
+			);
+			SetBkColor(dc, GetSysColor(COLOR_WINDOW));
+			return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+		}
+		case WM_DRAWITEM: {
+			const DRAWITEMSTRUCT *draw = (const DRAWITEMSTRUCT *)lParam;
+			if (draw->hwndItem == state->away[AWAY_ICON]) {
+				drawEditIcon(state, draw);
+				return TRUE;
+			}
+			break;
+		}
+		case WM_SETCURSOR:
+			if ((HWND)wParam == state->away[AWAY_ICON] && IsWindowEnabled(state->away[AWAY_ICON])) {
+				SetCursor(LoadCursorW(NULL, IDC_HAND));
+				return TRUE;
+			}
+			break;
 		case WM_GETMINMAXINFO: {
 			MINMAXINFO *limits = (MINMAXINFO *)lParam;
 			limits->ptMinTrackSize.x = scaled(state, 900);
@@ -971,31 +1574,9 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			return 0;
 		}
 		case WM_COMMAND:
-			if ((HWND)lParam == state->simulation[SIM_SUBMIT] && HIWORD(wParam) == BN_CLICKED) {
-				startSimulation(window, state);
-				return 0;
-			}
-			break;
 		case WM_TIMER:
-			if (wParam == SIMULATION_TIMER) {
-				checkSimulation(window, state);
-				return 0;
-			}
-			break;
-		case WM_NOTIFY: {
-			const NMHDR *notification = (const NMHDR *)lParam;
-			if (notification->hwndFrom == state->tabs && notification->code == (UINT)TCN_SELCHANGE) {
-				selectTab(state);
-				return 0;
-			}
-			return metadataNotification(window, state, notification);
-		}
-		case WM_CLOSE:
-			if (state->simulationThread) {
-				showError(window, L"A simulation is running. Please wait for it to finish before closing.");
-				return 0;
-			}
-			break;
+		case WM_NOTIFY:
+		case WM_CLOSE: return actionMessage(window, state, message, wParam, lParam);
 		case WM_DESTROY: PostQuitMessage(state->failed ? 1 : 0); return 0;
 		default: break;
 	}
@@ -1003,29 +1584,51 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 }
 // NOLINTEND(performance-no-int-to-ptr)
 
+static bool handleKey(HWND window, WindowState *state, const MSG *message) {
+	if (message->message != WM_KEYDOWN) {
+		return false;
+	}
+	if (message->wParam == VK_ESCAPE && state->editingAway && TabCtrl_GetCurSel(state->tabs) == 0) {
+		editAway(window, state, false);
+		return true;
+	}
+	if (message->wParam == VK_RETURN) {
+		if (message->hwnd == state->away[AWAY_ICON] || message->hwnd == state->away[AWAY_CANCEL]) {
+			SendMessageW(message->hwnd, BM_CLICK, 0, 0);
+			return true;
+		}
+		if (message->hwnd == state->away[AWAY_TEAM] || message->hwnd == state->away[AWAY_CONFIRM]) {
+			startReplacement(window, state);
+			return true;
+		}
+		if (message->hwnd == state->simulation[SIM_SUBMIT]) {
+			SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);
+			return true;
+		}
+		if (message->hwnd == state->metadata && state->temporary && !state->missing) {
+			exportFixture(window, state);
+			return true;
+		}
+	}
+	if (message->wParam == VK_TAB) {
+		HWND focus = GetFocus();
+		HWND next =
+			GetNextDlgTabItem(window, focus == window ? NULL : focus, GetKeyState(VK_SHIFT) < 0);
+		if (next) {
+			SetFocus(next);
+			return true;
+		}
+	}
+	return false;
+}
+
 static int runMessageLoop(HWND window, WindowState *state) {
 	ShowWindow(window, SW_SHOW);
 	MSG message;
 	BOOL status;
 	while ((status = GetMessageW(&message, NULL, 0, 0)) > 0) {
-		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN &&
-				message.hwnd == state->simulation[SIM_SUBMIT]) {
-			SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);
+		if (handleKey(window, state, &message)) {
 			continue;
-		}
-		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN &&
-				message.hwnd == state->metadata && state->temporary && !state->missing) {
-			exportFixture(window, state);
-			continue;
-		}
-		if (message.message == WM_KEYDOWN && message.wParam == VK_TAB) {
-			HWND focus = GetFocus();
-			HWND next =
-				GetNextDlgTabItem(window, focus == window ? NULL : focus, GetKeyState(VK_SHIFT) < 0);
-			if (next) {
-				SetFocus(next);
-				continue;
-			}
 		}
 		TranslateMessage(&message);
 		DispatchMessageW(&message);
@@ -1036,6 +1639,13 @@ static int runMessageLoop(HWND window, WindowState *state) {
 		return 1;
 	}
 	return (int)message.wParam;
+}
+
+static void joinThread(HANDLE thread) {
+	if (thread) {
+		WaitForSingleObject(thread, INFINITE);
+		CloseHandle(thread);
+	}
 }
 
 int fixtureWindow_open(const wchar_t *path, bool temporary) {
@@ -1054,8 +1664,8 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	}
 	(void)SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 	HMODULE richEdit = LoadLibraryExW(L"Msftedit.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-	INITCOMMONCONTROLSEX controls = {
-		.dwSize = sizeof controls, .dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS};
+	INITCOMMONCONTROLSEX controls = {.dwSize = sizeof controls,
+		.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS | ICC_PROGRESS_CLASS};
 	HINSTANCE instance = GetModuleHandleW(NULL);
 	WNDCLASSW definition = {.lpfnWndProc = windowProcedure,
 		.hInstance = instance,
@@ -1117,10 +1727,11 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	} else {
 		result = runMessageLoop(window, &state);
 	}
-	if (state.simulationThread) {
-		WaitForSingleObject(state.simulationThread, INFINITE);
-		CloseHandle(state.simulationThread);
-	}
+	joinThread(state.simulationThread);
+	joinThread(state.replacementThread);
+	free(state.replacementJob.data);
+	removeReplacement(state.replacementJob.output);
+	removeReplacement(state.replacementPath);
 	if (state.font) {
 		DeleteObject(state.font);
 		DeleteObject(state.headingFont);
