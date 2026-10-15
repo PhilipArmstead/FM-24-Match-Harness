@@ -3,5 +3,4 @@
 /bin/
 
 # personal research data (FM database content; do not distribute)
-/captures/
-/results/
+/data

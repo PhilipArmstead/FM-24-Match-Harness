@@ -71,6 +71,7 @@ add_executable(fm24ctl
 	src/runner/paths.c
 	src/runner/probe.c
 	src/runner/probe_patterns.c
+	src/ui/fixture_export.c
 	src/ui/fixture_window.c
 	src/ui/viewer.rc
 )
@@ -80,7 +81,7 @@ target_compile_definitions(fm24ctl PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32
 target_compile_options(fm24ctl PRIVATE ${warnings})
 target_link_options(fm24ctl PRIVATE -municode -static -static-libgcc)
 
-option(FM24_BUILD_TESTS "Build fixture reader regression checks" OFF)
+option(FM24_BUILD_TESTS "Build regression checks" OFF)
 if(FM24_BUILD_TESTS)
 	enable_testing()
 	add_executable(fixture_data_test tests/fixture_data_test.c
@@ -89,4 +90,20 @@ if(FM24_BUILD_TESTS)
 	target_link_libraries(fixture_data_test PRIVATE common)
 	target_compile_options(fixture_data_test PRIVATE ${warnings})
 	add_test(NAME fixture_data COMMAND fixture_data_test)
+	add_executable(runner_main_test tests/runner_main_test.c)
+	target_include_directories(runner_main_test PRIVATE src/common src/runner src/ui)
+	target_compile_options(runner_main_test PRIVATE ${warnings})
+	add_test(NAME runner_main COMMAND runner_main_test)
+	add_executable(fixture_export_test tests/fixture_export_test.c src/ui/fixture_export.c)
+	target_include_directories(fixture_export_test PRIVATE src/runner src/ui)
+	target_compile_options(fixture_export_test PRIVATE ${warnings})
+	add_test(NAME fixture_export COMMAND fixture_export_test)
+	add_executable(fixture_window_test tests/fixture_window_test.c
+		src/ui/fixture_export.c src/runner/fixture_data.c src/runner/json_reader.c
+		src/runner/match_config.c src/runner/paths.c)
+	target_include_directories(fixture_window_test PRIVATE src/runner src/ui)
+	target_link_libraries(fixture_window_test PRIVATE common comctl32 user32 gdi32)
+	target_compile_definitions(fixture_window_test PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+	target_compile_options(fixture_window_test PRIVATE ${warnings})
+	add_test(NAME fixture_window COMMAND fixture_window_test)
 endif()

@@ -3,6 +3,8 @@
 
 // fm24ctl: drives the harness DLL inside the running fm.exe, injecting it when needed.
 //
+//   fm24ctl
+//       exports the next fixture to the OS temp directory and opens the viewer
 //   fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]
 //       [--profile <samples.txt>] [--detailed] [--human-control] [--keep-build]
 //       seeds: "keep" (the input's own seed), "42", "1-1000", or "1,5,10-20"
@@ -17,13 +19,16 @@
 #include "commands.h"
 #include "files.h"
 #include "fixture_window.h"
+#include "protocol.h"
 
 #include <stdio.h>
 #include <wchar.h>
+#include <windows.h>
 
 
 static const char usage[] =
 	"usage:\n"
+	"  fm24ctl  (export and view the next fixture)\n"
 	"  fm24ctl <fixture.bin|.json>  (open the native fixture viewer)\n"
 	"  fm24ctl run <input.bin|.json> [seeds] [output.csv] [--threads N]\n"
 	"      [--profile <samples.txt>] [--detailed] [--human-control] [--keep-build]\n"
@@ -34,10 +39,28 @@ static const char usage[] =
 int wmain(int argc, wchar_t **argv);
 
 int wmain(int argc, wchar_t **argv) {
+	if (argc == 1) {
+		wchar_t path[HARNESS_PATH_LENGTH];
+		static const wchar_t filename[] = L"temp-fixture.json";
+		size_t filenameLength = sizeof filename / sizeof filename[0];
+		DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, path);
+		if (!length) {
+			fprintf(stderr, "cannot resolve temporary directory (Windows error %lu)\n", GetLastError());
+			return 1;
+		}
+		if (length > HARNESS_PATH_LENGTH - filenameLength) {
+			fputs("temporary fixture path is too long\n", stderr);
+			return 1;
+		}
+		wmemcpy(path + length, filename, filenameLength);
+		wchar_t *exportArgs[] = {argv[0], L"get-next-fixture", path, NULL};
+		int result = commands_getNextFixture(3, exportArgs);
+		return result ? result : fixtureWindow_open(path, true);
+	}
 	const wchar_t *command = argc >= 2 ? argv[1] : L"";
 	if (argc == 2 &&
 			(files_hasExtension(command, L".bin") || files_hasExtension(command, L".json"))) {
-		return fixtureWindow_open(command);
+		return fixtureWindow_open(command, false);
 	}
 	static const struct {
 		const wchar_t *name;

@@ -17,8 +17,9 @@ src/runner/  main, commands, inject, client, paths, json_reader,
              fixture_data (platform-independent read model),
              fixture_load (JSON reads / binary decoding jobs),
              probe + probe_patterns (generated)
-src/ui/      fixture_window (Win32 controls and GDI pitch drawing), manifest
-tests/       portable fixture reader regression checks
+src/ui/      fixture_window (Win32 controls and GDI pitch drawing),
+             fixture_export (portable export filename generation), manifest
+tests/       fixture reader, runner startup and export regression checks
 cmake/       MinGW-w64 toolchain file
 scripts/     build.sh, format.sh, tidy.sh (env.sh: tool locations)
 docs/        PLAN.md: the plan and every finding, phase by phase
@@ -51,12 +52,19 @@ and is warning-free; `format.sh --check` and `tidy.sh` are clean.
 The viewer uses only Windows system libraries (`user32`, `gdi32`,
 `comctl32` and `msftedit`), with no third-party UI or parsing dependencies.
 It is read-only; `fm24ctl <fixture.json|fixture.bin>` leaves the existing CLI commands
-unchanged. Only binary inspection connects to the harness, using an
+unchanged. With no arguments, it exports the next fixture to
+`temp-fixture.json` in the OS temp directory and opens it only if the export
+succeeds; failures are printed to the console before exiting. Viewing an
+unsaved fixture shows a red warning and an export link in the summary;
+clicking it copies the temporary JSON to the current working directory
+without overwriting an existing file, then shows the saved filename. A
+missing source replaces that line with a red restart message. Viewing an
+existing JSON file does not connect to the game. Binary inspection uses an
 `inspect` job and a temporary JSON file removed after reading. Inspection
 deserialises and traces the existing match without running preparation,
 building another fixture or invoking the engine's match runner.
 
-To build the optional regression executable on Windows, configure with
+To build the optional regression executables on Windows, configure with
 `-DFM24_BUILD_TESTS=ON`, build, then run `ctest --test-dir build
 --output-on-failure`. The reader can also be checked on a non-Windows host:
 
@@ -76,6 +84,16 @@ truncated date/time rejection), Unicode names, both human-control
 orientations, 64-bit role masks, formation derivation, unknown AI assignments
 and malformed JSON numbers and input. The local baseline is not required by
 the synthetic checks.
+
+The runner startup checks stub the game export and viewer calls to cover
+no-argument launches, export failures, missing/overlong temporary paths and
+existing command dispatch.
+The export filename checks cover ASCII case folding, spaces, stripped
+Unicode/control/Windows-invalid characters and the 255-character filename
+limit.
+The Windows summary checks exercise RichEdit warning/link styles, link
+notifications, copying into the working directory, refusing overwrite and
+the missing-file message.
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake

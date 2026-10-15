@@ -78,6 +78,20 @@ game's own match statistics screens.
 
 ## View a fixture
 
+Launch `fm24ctl.exe` without arguments to export the next fixture from the
+running game to `temp-fixture.json` in the operating system's temporary
+directory and open it in the viewer. If the export fails, the reason is
+printed to the console and the application exits without opening a window.
+
+The summary warns that this temporary fixture is not saved. Select **Click
+here** (or focus the summary and press Enter) to copy the JSON into the
+current working directory as `<home-team>-v-<away-team>-<unix-timestamp>.json`.
+Team names are lower case, spaces become hyphens, and non-printable,
+non-ASCII and Windows-invalid filename characters are removed. Existing
+files are never overwritten. After export the summary shows the saved
+filename. If the temporary file is gone, it instead says **Fixture cannot
+be found; restart the app**.
+
 Pass the fixture path as the first and only argument, without `run`:
 
 ```powershell

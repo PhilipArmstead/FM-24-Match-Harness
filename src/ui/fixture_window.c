@@ -3,11 +3,13 @@
 #include "fixture_window.h"
 
 #include "fixture_data.h"
+#include "fixture_export.h"
 #include "fixture_load.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <wchar.h>
 #include <windows.h>
 
@@ -19,7 +21,9 @@ enum { WM_FIXTURE_LAYOUT = WM_APP + 1 };
 
 typedef struct WindowState {
 	FixtureData *data;
+	const wchar_t *path;
 	const wchar_t *filename;
+	wchar_t savedFilename[FIXTURE_EXPORT_FILENAME_LENGTH];
 	HWND metadata;
 	HWND tabs;
 	HWND headings[2];
@@ -32,10 +36,15 @@ typedef struct WindowState {
 	int metadataHeight;
 	bool layoutPending;
 	bool failed;
+	bool temporary;
+	bool missing;
 } WindowState;
 
 static const wchar_t windowClass[] = L"FM24FixtureViewer";
 static const wchar_t pitchClass[] = L"FM24FixturePitch";
+static const wchar_t unsavedPrefix[] = L"This fixture object is not saved. ";
+static const wchar_t exportLink[] = L"Click here";
+static const wchar_t missingFixture[] = L"Fixture cannot be found; restart the app";
 static const wchar_t *const columns[] = {
 	L"Slot",
 	L"Player",
@@ -66,6 +75,16 @@ static bool setText(HWND window, const char *text) {
 	return widen(text, wide, sizeof wide / sizeof wide[0]) && SetWindowTextW(window, wide);
 }
 
+static bool formatMetadata(HWND metadata, LONG start, LONG end, DWORD effects, COLORREF color) {
+	CHARRANGE range = {.cpMin = start, .cpMax = end};
+	SendMessageW(metadata, EM_EXSETSEL, 0, (LPARAM)&range);
+	CHARFORMAT2W format = {.cbSize = sizeof format,
+		.dwMask = CFM_BOLD | CFM_COLOR | CFM_UNDERLINE | CFM_LINK,
+		.dwEffects = effects,
+		.crTextColor = color};
+	return SendMessageW(metadata, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&format) != 0;
+}
+
 static bool setMetadata(WindowState *state) {
 	static const wchar_t filenamePrefix[] = L"Viewing fixture: ";
 	static const char note[] =
@@ -89,32 +108,114 @@ static bool setMetadata(WindowState *state) {
 		note
 	);
 	wchar_t wide[8192];
-	int length = swprintf(wide, 8192, L"%ls%ls\r\n", filenamePrefix, state->filename);
+	int length;
+	if (state->temporary) {
+		length = state->missing
+							 ? swprintf(wide, 8192, L"%ls\r\n", missingFixture)
+							 : swprintf(wide, 8192, L"%ls%ls to export it\r\n", unsavedPrefix, exportLink);
+	} else {
+		length = swprintf(wide, 8192, L"%ls%ls\r\n", filenamePrefix, state->filename);
+	}
 	if (length < 0 || !widen(text, wide + length, 8192 - (size_t)length) ||
 			!SetWindowTextW(state->metadata, wide)) {
 		return false;
 	}
-	CHARFORMAT2W format = {.cbSize = sizeof format, .dwMask = CFM_BOLD};
-	if (!SendMessageW(state->metadata, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&format)) {
+	COLORREF normal = GetSysColor(COLOR_WINDOWTEXT);
+	if (!formatMetadata(state->metadata, 0, -1, 0, normal)) {
 		return false;
 	}
-	LONG start = (LONG)(sizeof filenamePrefix / sizeof filenamePrefix[0] - 1);
-	CHARRANGE filename = {.cpMin = start, .cpMax = start + (LONG)wcslen(state->filename)};
-	SendMessageW(state->metadata, EM_EXSETSEL, 0, (LPARAM)&filename);
-	format.dwEffects = CFE_BOLD;
-	bool ok = SendMessageW(state->metadata, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&format) != 0;
+	bool ok;
+	if (state->temporary) {
+		LONG warningLength = (LONG)wcslen(state->missing ? missingFixture : unsavedPrefix);
+		ok = formatMetadata(state->metadata, 0, warningLength, CFE_BOLD, RGB(255, 0, 0));
+		if (ok && !state->missing) {
+			ok = formatMetadata(
+				state->metadata,
+				warningLength,
+				warningLength + (LONG)wcslen(exportLink),
+				CFE_LINK | CFE_UNDERLINE,
+				RGB(0, 0, 255)
+			);
+		}
+	} else {
+		LONG start = (LONG)(sizeof filenamePrefix / sizeof filenamePrefix[0] - 1);
+		ok = formatMetadata(
+			state->metadata, start, start + (LONG)wcslen(state->filename), CFE_BOLD, normal
+		);
+	}
 	GETTEXTLENGTHEX textLength = {.flags = GTL_NUMCHARS | GTL_PRECISE, .codepage = 1200};
 	LONG noteStart = (LONG)SendMessageW(state->metadata, EM_GETTEXTLENGTHEX, (WPARAM)&textLength, 0) -
 									 (LONG)(sizeof note - 1);
 	if (ok && noteStart >= 0) {
-		CHARRANGE label = {.cpMin = noteStart, .cpMax = noteStart + 5};
-		SendMessageW(state->metadata, EM_EXSETSEL, 0, (LPARAM)&label);
-		ok = SendMessageW(state->metadata, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&format) != 0;
+		ok = formatMetadata(state->metadata, noteStart, noteStart + 5, CFE_BOLD, normal);
 	} else {
 		ok = false;
 	}
 	SendMessageW(state->metadata, EM_SETSEL, 0, 0);
 	return ok;
+}
+
+static bool fileMissing(const wchar_t *path) {
+	if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) {
+		return false;
+	}
+	DWORD error = GetLastError();
+	return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+}
+
+static void exportFixture(HWND window, WindowState *state) {
+	if (!state->temporary || state->missing) {
+		return;
+	}
+	if (fileMissing(state->path)) {
+		state->missing = true;
+	} else {
+		wchar_t filename[FIXTURE_EXPORT_FILENAME_LENGTH];
+		time_t timestamp = time(NULL);
+		if (timestamp == (time_t)-1) {
+			fputs("fixture viewer: cannot read current time\n", stderr);
+			showError(window, L"Cannot read current time.");
+			return;
+		}
+		if (!fixtureExport_filename(
+					state->data, (uint64_t)timestamp, filename, FIXTURE_EXPORT_FILENAME_LENGTH
+				)) {
+			fputs("fixture viewer: export filename is too long\n", stderr);
+			showError(window, L"Fixture export filename is too long.");
+			return;
+		}
+		if (CopyFileW(state->path, filename, TRUE)) {
+			wcscpy(state->savedFilename, filename);
+			state->filename = state->savedFilename;
+			state->temporary = false;
+		} else {
+			DWORD error = GetLastError();
+			if (fileMissing(state->path)) {
+				state->missing = true;
+			} else {
+				wchar_t message[256];
+				(void)swprintf(
+					message,
+					256,
+					L"Cannot export fixture (Windows error %lu). No file was overwritten.",
+					error
+				);
+				fprintf(stderr, "fixture viewer: cannot export fixture (Windows error %lu)\n", error);
+				showError(window, message);
+				return;
+			}
+		}
+	}
+	if (state->missing) {
+		fputs("fixture viewer: Fixture cannot be found; restart the app\n", stderr);
+	}
+	if (!setMetadata(state)) {
+		showError(window, L"Cannot update fixture summary.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	SendMessageW(state->metadata, EM_REQUESTRESIZE, 0, 0);
 }
 
 static bool setHeadings(WindowState *state) {
@@ -375,7 +476,7 @@ static bool createControls(HWND window, WindowState *state) {
 		return false;
 	}
 	SendMessageW(state->metadata, EM_SETLIMITTEXT, 8192, 0);
-	SendMessageW(state->metadata, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE);
+	SendMessageW(state->metadata, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE | ENM_LINK);
 	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = L"Starting XI"};
 	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 0, (LPARAM)&tab) == -1) {
 		return false;
@@ -560,6 +661,40 @@ static LRESULT CALLBACK pitchProcedure(HWND window, UINT message, WPARAM wParam,
 	return DefWindowProcW(window, message, wParam, lParam);
 }
 
+static LRESULT metadataNotification(HWND window, WindowState *state, const NMHDR *notification) {
+	if (notification->hwndFrom != state->metadata) {
+		return 0;
+	}
+	if (notification->code == EN_LINK) {
+		const ENLINK *link = (const ENLINK *)notification;
+		if (link->msg == WM_LBUTTONUP) {
+			exportFixture(window, state);
+			return 1;
+		}
+		return 0;
+	}
+	if (notification->code != EN_REQUESTRESIZE) {
+		return 0;
+	}
+	const REQRESIZE *resize = (const REQRESIZE *)notification;
+	int height =
+		resize->rc.bottom - resize->rc.top + 2 * GetSystemMetricsForDpi(SM_CYEDGE, state->dpi);
+	if (height == state->metadataHeight) {
+		return 0;
+	}
+	state->metadataHeight = height;
+	// Reflow can finish during painting, after layout has already positioned the summary.
+	if (!state->layoutPending) {
+		state->layoutPending = true;
+		if (!PostMessageW(window, WM_FIXTURE_LAYOUT, 0, 0)) {
+			showError(window, L"Cannot schedule summary layout.");
+			state->failed = true;
+			DestroyWindow(window);
+		}
+	}
+	return 0;
+}
+
 static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
 	WindowState *state = (WindowState *)GetWindowLongPtrW(window, GWLP_USERDATA);
 	if (message == WM_NCCREATE) {
@@ -613,40 +748,23 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			);
 			return 0;
 		}
-		case WM_NOTIFY: {
-			const NMHDR *notification = (const NMHDR *)lParam;
-			if (notification->hwndFrom != state->metadata || notification->code != EN_REQUESTRESIZE) {
-				return 0;
-			}
-			const REQRESIZE *resize = (const REQRESIZE *)lParam;
-			int height =
-				resize->rc.bottom - resize->rc.top + 2 * GetSystemMetricsForDpi(SM_CYEDGE, state->dpi);
-			if (height == state->metadataHeight) {
-				return 0;
-			}
-			state->metadataHeight = height;
-			// Reflow can finish during painting, after layout has already positioned the summary.
-			if (!state->layoutPending) {
-				state->layoutPending = true;
-				if (!PostMessageW(window, WM_FIXTURE_LAYOUT, 0, 0)) {
-					showError(window, L"Cannot schedule summary layout.");
-					state->failed = true;
-					DestroyWindow(window);
-				}
-			}
-			return 0;
-		}
+		case WM_NOTIFY: return metadataNotification(window, state, (const NMHDR *)lParam);
 		case WM_DESTROY: PostQuitMessage(state->failed ? 1 : 0); return 0;
 		default: return DefWindowProcW(window, message, wParam, lParam);
 	}
 }
 // NOLINTEND(performance-no-int-to-ptr)
 
-static int runMessageLoop(HWND window) {
+static int runMessageLoop(HWND window, WindowState *state) {
 	ShowWindow(window, SW_SHOW);
 	MSG message;
 	BOOL status;
 	while ((status = GetMessageW(&message, NULL, 0, 0)) > 0) {
+		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN &&
+				message.hwnd == state->metadata && state->temporary && !state->missing) {
+			exportFixture(window, state);
+			continue;
+		}
 		if (message.message == WM_KEYDOWN && message.wParam == VK_TAB) {
 			HWND focus = GetFocus();
 			HWND next =
@@ -667,7 +785,7 @@ static int runMessageLoop(HWND window) {
 	return (int)message.wParam;
 }
 
-int fixtureWindow_open(const wchar_t *path) {
+int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	FixtureData *data = calloc(1, sizeof *data);
 	char error[512] = "";
 	if (!data || !fixtureLoad_open(path, data, error, sizeof error)) {
@@ -702,7 +820,11 @@ int fixtureWindow_open(const wchar_t *path) {
 			filename = cursor + 1;
 		}
 	}
-	WindowState state = {.data = data, .filename = filename, .dpi = GetDpiForSystem()};
+	WindowState state = {.data = data,
+		.path = path,
+		.filename = filename,
+		.dpi = GetDpiForSystem(),
+		.temporary = temporary};
 	HWND window = NULL;
 	if (ok) {
 		RECT workArea;
@@ -740,7 +862,7 @@ int fixtureWindow_open(const wchar_t *path) {
 		);
 		showError(NULL, message);
 	} else {
-		result = runMessageLoop(window);
+		result = runMessageLoop(window, &state);
 	}
 	if (state.font) {
 		DeleteObject(state.font);
