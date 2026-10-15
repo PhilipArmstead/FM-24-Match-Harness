@@ -341,7 +341,7 @@ static void describeWhen(FixtureData *data) {
 	while (start > data->source && start[-1] >= '0' && start[-1] <= '9') {
 		--start;
 	}
-	(void)snprintf(data->when, sizeof data->when, "Invalid export date / time");
+	(void)snprintf(data->when, sizeof data->when, "Invalid export date/time");
 	if (dayText - start != 4) {
 		return;
 	}

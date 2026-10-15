@@ -15,7 +15,7 @@ src/dll/     game.h (addresses, layouts, signatures), memory, stream,
 src/runner/  main, commands, inject, client, paths, json_reader,
              match_config (encoder and streaming field visitor),
              fixture_data (platform-independent read model),
-             fixture_load (JSON reads / binary decoding jobs),
+             fixture_load (JSON reads/binary decoding jobs),
              probe + probe_patterns (generated)
 src/ui/      fixture_window (Win32 controls and GDI pitch drawing),
              fixture_export (portable export filename generation), manifest

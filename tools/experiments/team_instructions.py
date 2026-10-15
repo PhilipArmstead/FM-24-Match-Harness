@@ -8,7 +8,7 @@ make: writes <dir>/<variant>.json and <dir>/list.txt from a labelled config (pro
     home_clear_W_B     one set bit of the home plan[0]'s team instructions cleared
     home_clear_all     all of them cleared
     home_set_W_B       a bit from <bits> that is clear at home, set
-    away_clear_W_B / away_set_W_B   the same for the away plan[0]
+    away_clear_W_B/away_set_W_B   the same for the away plan[0]
 <bits> lists the bits known to be valid choices (seen set in a game-made tactic), "W:B,W:B,...".
 For home only the <bits> also listed in HOME_SET are set (others may clash with home's choices).
 

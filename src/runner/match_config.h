@@ -5,7 +5,7 @@
 // GAME_MATCH bytes the game's deserialiser expects.
 //
 // Each entry of "fields" carries exactly one value, emitted in order:
-//   u8 / u16 / u32 / u64  little-endian unsigned integer
+//   u8/u16/u32/u64  little-endian unsigned integer
 //   str                   u32 byte length, then the UTF-8 bytes
 //   hex                   raw bytes
 //   u8map                 object of u8 values, emitted in key order (a player's ratings)

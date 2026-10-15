@@ -267,7 +267,7 @@ static bool formatMetadata(HWND metadata, LONG start, LONG end, DWORD effects, C
 static bool setMetadata(WindowState *state) {
 	static const wchar_t filenamePrefix[] = L"Viewing fixture: ";
 	static const char note[] =
-		"NOTE: Condition / sharpness are percentages. Fatigue is signed jadedness (0 = fresh), not a "
+		"NOTE: Condition/sharpness are percentages. Fatigue is signed jadedness (0 = fresh), not a "
 		"percentage.";
 	const FixtureData *data = state->data;
 	const char *competition = strcmp(data->matchType, "Friendly") == 0 ? "Friendly"
@@ -283,7 +283,7 @@ static bool setMetadata(WindowState *state) {
 		competition,
 		data->venue[0] ? data->venue : "Unknown",
 		data->when[0] ? data->when : "Unknown (no export date annotation)",
-		data->officials[4][0] ? data->officials[4] : "Not stored / unassigned",
+		data->officials[4][0] ? data->officials[4] : "Not stored/unassigned",
 		note
 	);
 	wchar_t wide[8192];
@@ -423,7 +423,7 @@ static bool setHeadings(WindowState *state) {
 		if (!setText(
 					state->notes[side],
 					team->lineupKnown ? "Stored starting XI; pitch numbers are tactic slots."
-														: "AI / unknown control: assignments unmapped. Squad listed below; AI "
+														: "AI/unknown control: assignments unmapped. Squad listed below; AI "
 															"may replace this tactic."
 				)) {
 			return false;

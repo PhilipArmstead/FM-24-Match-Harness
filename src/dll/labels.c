@@ -248,7 +248,7 @@ typedef struct Walk {
 	const Serialised *serialised;
 	const PeopleIndex *people;
 	FieldLabel *labels;
-	const char *side; // "home" / "away" while inside a team
+	const char *side; // "home"/"away" while inside a team
 	int player;
 	int backroom;
 	size_t playerStart;

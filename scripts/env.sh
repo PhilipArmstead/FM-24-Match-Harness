@@ -1,9 +1,9 @@
 #!/bin/sh
 # Tool locations shared by the scripts; override any of them from the environment.
-#   CMAKE / NINJA: a native Windows CMake and Ninja (the MSYS ones cannot drive the MinGW compiler),
-#                  by default the copies bundled with Visual Studio Build Tools.
-#   MINGW:         the MSYS2 MinGW-w64 prefix (gcc, clang-tidy).
-#   CLANG_FORMAT:  clang-format 22 or newer.
+#   CMAKE/NINJA:  a native Windows CMake and Ninja (the MSYS ones cannot drive the MinGW compiler),
+#                 by default the copies bundled with Visual Studio Build Tools.
+#   MINGW:        the MSYS2 MinGW-w64 prefix (gcc, clang-tidy).
+#   CLANG_FORMAT: clang-format 22 or newer.
 
 VS_CMAKE_DIR="/c/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake"
 : "${CMAKE:=$VS_CMAKE_DIR/CMake/bin/cmake.exe}"

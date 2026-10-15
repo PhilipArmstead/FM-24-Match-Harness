@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The game's DATA_BUFFER: a shared byte buffer with an input and an output stream over it.
-// GAME_MATCH__serialize / __deserialize take a pointer to one of the stream slots.
+// GAME_MATCH__serialize/__deserialize take a pointer to one of the stream slots.
 #pragma once
 
 #include <stddef.h>
