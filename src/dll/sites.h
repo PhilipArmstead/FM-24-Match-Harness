@@ -63,6 +63,13 @@ enum PlayerField {
 	SITE_ROLE_POSITION = 0x1A80FD4,
 };
 
+// Write call sites in the person block (sub_141A7FDC0) every player, staff member and official has
+// (docs/PLAN.md Phase 21). Players get their database values; others mostly a default.
+enum PersonField {
+	SITE_PERSON_HEIGHT = 0x1A8004E, // u32: float metres, from PLAYER+0x14E (u16 cm)
+	SITE_PERSON_WEIGHT = 0x1A80064, // u8: kg, from PLAYER+0x14C
+};
+
 // Return addresses inside the tactic serialiser (sub_141A896D0, a ~7 KB object). Every manager and
 // backroom entry carries one; the managers' are the teams' real tactics (docs/PLAN.md Phase 15).
 // Parts whose meaning is unknown are named by their member offset.

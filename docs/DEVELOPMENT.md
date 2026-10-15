@@ -44,7 +44,7 @@ and is warning-free; `format.sh --check` and `tidy.sh` are clean.
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake
-re-configures by itself, the DLL is renamed `fm24_harness_p<N>.dll`, and
+re-configures by itself, the DLL is renamed `fm24-harness-<version>.dll`, and
 `build.sh` replaces the old copy in `bin/`. The next command injects the new
 DLL. It loads alongside the old one, and the old copy idles on its own events
 until the game exits.
@@ -69,9 +69,9 @@ next to the DLL there.
    `ready; waiting for jobs`. `refusing: ...` means a different game build, or a
    software breakpoint on a called function. If a debugger is attached, it may
    pause fm.exe when the DLL loads: resume the game and the injection completes.
-   It injects `fm24_harness_p<N>.dll` next to `fm24ctl.exe`, or
-   `fm24_harness.dll` if that is missing (e.g. a renamed release copy). The
-   fallback must be a build of the same protocol `<N>`, or the runner never
+   It injects `fm24-harness-<version>.dll` next to `fm24ctl.exe`, or
+   `fm24-harness.dll` if that is missing (e.g. a renamed release copy). The
+   fallback must be a build of the same `<version>`, or the runner never
    sees it start
 3. `fm24ctl run <input> [seeds] [out.csv]`,
    where `<input>` is a `.bin` input or a `.json` config; e.g.

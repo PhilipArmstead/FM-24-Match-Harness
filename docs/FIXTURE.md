@@ -241,6 +241,222 @@ a test, changing these values made no difference to results, while changing
 the attributes did. The game uses them to pick its team, not to play the
 match.
 
+# Values copied from the game's database
+
+When the game builds a match, it copies some values from its database: from
+each person's record (players, staff and officials), each player's record and
+each team's record. These fields are named in the file. In one fixture, each
+was checked against the database for all 47 players and every manager, staff
+member and backroom entry, and matched every time.
+
+The referee is the exception: the referee block has the same fields, but its
+personality values differ from the referee's database record (pressure 12
+against 10). The game seems to take referees' values from somewhere else.
+
+Whether the engine reads any of them during a match hasn't been tested. As
+with the ratings, editing a field changes only the match, not your save.
+
+## Players
+
+In every `<side>.player[i]` block:
+
+| Name | Type | Meaning | Database (player record) |
+|---|---|---|---|
+| `.condition` | `u16` | physical condition: 0-10000, where 10000 is 100% | `+0x1F8` |
+| `.sharpness[0]`, `.sharpness[1]` | `u16` | match sharpness, same scale. The game writes the same value twice | `+0x1F4` |
+| `.fatigue` | `u16` | fatigue (FMRTE's "jadedness"), stored as a negative number: 0 is fresh, 65394 is -142 (65536 minus the value) | `+0x1F6` |
+| `.home_reputation` | `u16` | reputation in the player's home nation, 0-10000 | `+0x1FA` |
+| `.current_reputation` | `u16` | current reputation, 0-10000 | `+0x1FC` |
+| `.world_reputation` | `u16` | world reputation, 0-10000 | `+0x1FE` |
+| `.current_ability` | `u16` | current ability (CA), 1-200 | `+0x200` |
+| `.morale` | `u8` | morale: 11 "fairly good", 12 "quite good", 13 "good" (the other levels aren't mapped yet) | `+0x25F` |
+| `.squad_number` | `u8` | shirt number. A player whose contract has no number (255) gets one for the match | contract `+0x55` |
+| `.last_transfer_fee` | `u32` | the fee of the player's last transfer, in pounds (0 for a free transfer or academy player) | `+0x1E0` |
+| `.traits` | `u64` | player traits (preferred moves), one bit per trait; the `flags` note names them. See [Traits](#traits) | person record `+0xF0` |
+| `.preferred_position` | `u8` | where the player prefers to be when he shares a position with teammates; see the table below | `+0x266` |
+
+`.preferred_position` codes, as the game's position tooltip words them. Codes
+1, 4 and 6 were checked in the game; the others come from FM-Player-Rater's
+notes:
+
+| Value | Preference |
+|---|---|
+| 0 | none (the most common) |
+| 1 | "on the right in a two-man pairing" (Tielemans) |
+| 2 | probably on the left in a two-man pairing |
+| 3 | probably on the right in a two-man pairing or in the middle in a three-man grouping |
+| 4 | "on the left in a two-man pairing or in the middle in a three-man grouping" (Sanson) |
+| 5 | probably in the middle |
+| 6 | "on the right in a two-man pairing or on the right or middle in a three-man grouping" (Bailey) |
+
+`.ability` (see [above](#values-derived-from-ratings)) is current ability
+adjusted for the match, e.g. 158 for a player whose `.current_ability` is
+157.
+
+Not in the file: potential ability, date of birth (only `.age`),
+international goals, wages, bonuses, contract dates, asking price, injury
+risk and relationships.
+
+### Traits
+
+`.traits` is a bit set (see [Bit sets](#bit-sets)). FMRTE's preferred-moves
+list, read across the rows (left, right, left, ...), is in bit order. The
+names checked against six players' trait lists in the game are in **bold**.
+The rest follow from that order.
+
+| Bit | Value | Trait |
+|---|---|---|
+| 0 | 1 | runs with ball down left |
+| 1 | 2 | runs with ball down right |
+| 2 | 4 | runs with ball through centre |
+| 3 | 8 | gets into opposition area |
+| 4 | 16 | **moves into channels** |
+| 5 | 32 | **gets forward whenever possible** |
+| 6 | 64 | plays short simple passes |
+| 7 | 128 | **tries killer balls often** |
+| 8 | 256 | **shoots from distance** |
+| 9 | 512 | shoots with power |
+| 10 | 1024 | places shots |
+| 11 | 2048 | **curls ball** |
+| 12 | 4096 | likes to round keeper |
+| 13 | 8192 | **likes to try to beat offside trap** |
+| 14 | 16384 | **uses outside of foot** |
+| 15 | 32768 | marks opponent tightly |
+| 16 | 65536 | **winds up opponents** |
+| 17 | 131072 | **argues with officials** |
+| 18 | 262144 | plays with back to goal |
+| 19 | 524288 | comes deep to get ball |
+| 20 | 1048576 | **plays one-twos** |
+| 21 | 2097152 | likes to lob keeper |
+| 22 | 4194304 | dictates tempo |
+| 23 | 8388608 | attempts overhead kicks |
+| 24 | 16777216 | looks for pass rather than attempting to score |
+| 25 | 33554432 | plays no through balls |
+| 26 | 67108864 | stops play |
+| 27 | 134217728 | **knocks ball past opponent** |
+| 28 | 268435456 | moves ball to right foot before dribble attempt |
+| 29 | 536870912 | **moves ball to left foot before dribble attempt** |
+| 30 | 1073741824 | dwells on ball |
+| 31 | 2147483648 | arrives late in opponents area |
+| 32 | 4294967296 | **tries to play way out of trouble** |
+| 33 | 8589934592 | stays back at all times |
+| 34 | 17179869184 | avoids using weaker foot |
+| 35 | 34359738368 | **tries tricks** |
+| 36 | 68719476736 | tries long range free kicks |
+| 37 | 137438953472 | dives into tackles |
+| 38 | 274877906944 | does not dive into tackles |
+| 39 | 549755813888 | **cuts inside from both wings** (FMRTE: "cuts inside") |
+| 40 | 1099511627776 | hugs line |
+| 41 | 2199023255552 | gets crowd going |
+| 42 | 4398046511104 | **tries first time shots** |
+| 43 | 8796093022208 | tries long range passes |
+| 44 | 17592186044416 | **likes ball played into feet** |
+| 45 | 35184372088832 | hits free kick with power |
+| 46 | 70368744177664 | likes to beat man repeatedly |
+| 47 | 140737488355328 | likes to switch ball to other flank |
+| 48 | 281474976710656 | will retire at top |
+| 49 | 562949953421312 | will play football as long as possible |
+| 50 | 1125899906842624 | possesses long flat throw |
+| 51 | 2251799813685248 | **runs with ball often** |
+| 52 | 4503599627370496 | runs with ball rarely |
+| 53 | 9007199254740992 | attempts to develop weaker foot |
+| 54 | 18014398509481984 | static target man |
+| 55 | 36028797018963968 | uses long throw to start counter attack |
+| 56 | 72057594037927936 | refrains from taking long shots |
+| 57 | 144115188075855872 | cuts inside from left wing |
+| 58 | 288230376151711744 | **cuts inside from right wing** |
+| 59 | 576460752303423488 | crosses early |
+| 60 | 1152921504606846976 | brings ball out of defence |
+| 61 | 2305843009213693952 | plays ball with feet |
+
+Whether the engine reads traits during a match hasn't been tested.
+
+## Every person
+
+Every player, manager, staff member, backroom entry and official has these.
+Except for the referee (above), their values come from the person record:
+
+| Name | Type | Meaning | Database (person record) |
+|---|---|---|---|
+| `.person_uid` | `u32` | the person's unique ID | `+0x0C` |
+| `.nationality` | `u32` | the unique ID of the person's nation, e.g. 765 for England | `+0x70` (a pointer to the nation; its unique ID is at `+0x0C`) |
+| `.personality.adaptability` | `u8` | 1-20 | `+0x78` |
+| `.personality.ambition` | `u8` | 1-20 | `+0x79` |
+| `.personality.loyalty` | `u8` | 1-20 | `+0x7A` |
+| `.personality.pressure` | `u8` | 1-20 | `+0x7B` |
+| `.personality.professionalism` | `u8` | 1-20 | `+0x7C` |
+| `.personality.sportsmanship` | `u8` | 1-20 | `+0x7D` |
+| `.personality.temperament` | `u8` | 1-20 | `+0x7E` |
+| `.age` | `u8` | age in years on the match date | from the date of birth at `+0x44` |
+| `.caps` | `u32` | international caps (senior) | matches the game's player screen for 3 players; no single database offset found |
+| `.height` | `u32` | height in metres, as a 32-bit float (below) | player record `+0x14E` (`u16`, centimetres) |
+| `.weight` | `u8` | weight in kilograms | player record `+0x14C` |
+
+Height and weight come from the player record, so only players have their
+real values. Everyone else has a default, usually 1.82 m and 75 kg.
+
+`.height` holds the raw bits of a float: Ollie Watkins' 180 cm is
+`1072064102`, i.e. 1.8. To convert in Python:
+
+```python
+import struct
+metres = struct.unpack('<f', struct.pack('<I', field['u32']))[0]  # 1072064102 -> 1.8
+field['u32'] = struct.unpack('<I', struct.pack('<f', 1.85))[0]     # set 1.85 m
+```
+
+Controversy (`+0x7F`) isn't copied. A player block's `.person_uid` is
+written in a different place from other people's, so a player block has it
+only once.
+
+## Teams
+
+| Name | Type | Meaning | Database (team record) |
+|---|---|---|---|
+| `<side>.team.reputation` | `u16` | the team's reputation, 0-10000 | `+0xA8` |
+
+## Where these are in a `--full` export
+
+In a `--full` export these fields carry a `member`. The table maps each one
+to its database field. A player record starts `0x278` bytes before its person
+record (`0x368` for a player who is also staff).
+
+| `member` | Name | Database field |
+|---|---|---|
+| `MATCH_PLAYER_DATA+0x4a` | `.condition` | player `+0x1F8` |
+| `MATCH_PLAYER_DATA+0x4c`, `+0x4e` | `.sharpness[0]`, `.sharpness[1]` | player `+0x1F4` |
+| `MATCH_PLAYER_DATA+0x50` | `.fatigue` | player `+0x1F6` |
+| `MATCH_PLAYER_DATA+0x56` | `.home_reputation` | player `+0x1FA` |
+| `MATCH_PLAYER_DATA+0x58` | `.current_reputation` | player `+0x1FC` |
+| `MATCH_PLAYER_DATA+0x5a` | `.world_reputation` | player `+0x1FE` |
+| `MATCH_PLAYER_DATA+0x5c` | `.current_ability` | player `+0x200` |
+| `MATCH_PLAYER_DATA+0x74` | `.morale` | player `+0x25F` (constants.h calls it happiness) |
+| `MATCH_PLAYER_DATA+0x68` | `.last_transfer_fee` | player `+0x1E0` |
+| `MATCH_PLAYER_DATA+0xf4` | `.preferred_position` | player `+0x266` |
+| `MATCH_PLAYER_DATA+0x49` | `.squad_number` | contract `+0x55` |
+| `MATCH_PLAYER_DATA+0x100` | `.traits` | person `+0xF0` |
+| `fn_1a7fdc0+0x48` | `.caps` | not found |
+| `fn_1a7fdc0+0x69` | `.age` | person `+0x44` (date of birth) |
+| `MATCH_PLAYER_DATA+0x108` | `.ratings` | player `+0x208` to `+0x24C` (69 bytes) |
+| `fn_1a7fdc0+0x40` | `.person_uid` | person `+0x0C` |
+| `fn_1a7fdc0+0x54` | `.nationality` | person `+0x70`, then nation `+0x0C` |
+| `fn_1a7fdc0+0x62` to `+0x68` | `.personality.*` | person `+0x78` to `+0x7E` (order above) |
+| `(computed)` at site `1a8004e` | `.height` | player `+0x14E`, divided by 100 and stored as a float |
+| none, at site `1a80064` | `.weight` | player `+0x14C` |
+| `MATCH_TEAM_BASE+0x112` | `.team.reputation` | team `+0xA8` |
+
+Some other members match a database field that has no name yet (for the
+players; `MATCH_PLAYER_DATA+0x52` in 43 of 47):
+
+| `member` | Database field |
+|---|---|
+| `MATCH_PLAYER_DATA+0x52` | player `+0xFC` |
+| `MATCH_PLAYER_DATA+0x54` | player `+0x16D` |
+| `fn_1a7fdc0+0x61` | person `+0x169` |
+| `fn_19ba6e0+0x30` | person `+0x18` (`u64`) |
+| `fn_19ba6e0+0x38` | person `+0x0C`: the unique ID again |
+| `fn_19ba6e0+0x45` | person `+0x91` |
+| `fn_5305f90+0x4`, `+0x8` | person `+0x92` |
+
 # Tactics
 
 Each manager's tactic is in `<side>.manager.tactic`:
@@ -660,6 +876,9 @@ name used above is unique.
   means.
 - Whether the engine reads the position ratings, roles, duties, player
   instructions, set pieces and opposition instructions (not tested yet).
+- Whether the engine reads the [values copied from the
+  database](#values-copied-from-the-games-database) (condition, sharpness,
+  personality, ...).
 - Player instruction bit 0:1, and the other unnamed bits.
 - Which set-piece routine is which, which takers list is which set piece, and
   which opposition record is which opponent.
