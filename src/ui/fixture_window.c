@@ -40,7 +40,7 @@ typedef struct WindowState {
 	bool missing;
 } WindowState;
 
-static const wchar_t windowClass[] = L"FM24FixtureViewer";
+static const wchar_t windowClass[] = L"FM24MatchHarness";
 static const wchar_t pitchClass[] = L"FM24FixturePitch";
 static const wchar_t unsavedPrefix[] = L"This fixture object is not saved. ";
 static const wchar_t exportLink[] = L"Click here";
@@ -67,7 +67,7 @@ static bool widen(const char *text, wchar_t *out, size_t size) {
 }
 
 static void showError(HWND window, const wchar_t *message) {
-	MessageBoxW(window, message, L"FM24 fixture viewer", MB_OK | MB_ICONERROR);
+	MessageBoxW(window, message, L"FM24 Match Harness", MB_OK | MB_ICONERROR);
 }
 
 static bool setText(HWND window, const char *text) {
@@ -477,7 +477,7 @@ static bool createControls(HWND window, WindowState *state) {
 	}
 	SendMessageW(state->metadata, EM_SETLIMITTEXT, 8192, 0);
 	SendMessageW(state->metadata, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE | ENM_LINK);
-	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = L"Starting XI"};
+	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = L"Squads"};
 	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 0, (LPARAM)&tab) == -1) {
 		return false;
 	}
@@ -839,7 +839,7 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 		window = CreateWindowExW(
 			WS_EX_CONTROLPARENT,
 			windowClass,
-			L"FM24 fixture viewer",
+			L"FM24 Match Harness",
 			WS_OVERLAPPEDWINDOW,
 			CW_USEDEFAULT,
 			CW_USEDEFAULT,
