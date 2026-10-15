@@ -3,6 +3,7 @@
 #include "files.h"
 #include "paths.h"
 #include "protocol.h"
+#include "test.h"
 #include "tests.h"
 
 #include <shobjidl.h>
@@ -30,14 +31,6 @@ static HRESULT WINAPI testCoCreateInstance(
 #undef time
 #undef MessageBoxW
 #undef CoCreateInstance
-
-#define CHECK(expression)                                                                          \
-	do {                                                                                             \
-		if (!(expression)) {                                                                           \
-			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expression);                             \
-			exit(EXIT_FAILURE); /* NOLINT(concurrency-mt-unsafe): single-threaded test. */               \
-		}                                                                                              \
-	} while (0)
 
 static time_t testTime(time_t *out) {
 	if (out) {
@@ -84,20 +77,20 @@ static HRESULT taskbarStateResult = S_OK;
 static HRESULT taskbarValueResult = S_OK;
 
 static HRESULT STDMETHODCALLTYPE testTaskbarInit(ITaskbarList3 *taskbar) {
-	CHECK(taskbar != NULL);
+	ASSERT_BOOL_EQ(taskbar != NULL, true);
 	++taskbarInitializations;
 	return taskbarInitResult;
 }
 
 static ULONG STDMETHODCALLTYPE testTaskbarRelease(ITaskbarList3 *taskbar) {
-	CHECK(taskbar != NULL);
+	ASSERT_BOOL_EQ(taskbar != NULL, true);
 	++taskbarReleases;
 	return 0;
 }
 
 static HRESULT STDMETHODCALLTYPE
 testTaskbarState(ITaskbarList3 *taskbar, HWND window, TBPFLAG progress) {
-	CHECK(taskbar != NULL && window == expectedProgressWindow);
+	ASSERT_BOOL_EQ(taskbar != NULL && window == expectedProgressWindow, true);
 	++taskbarStateCalls;
 	taskbarState = progress;
 	return taskbarStateResult;
@@ -105,8 +98,8 @@ testTaskbarState(ITaskbarList3 *taskbar, HWND window, TBPFLAG progress) {
 
 static HRESULT STDMETHODCALLTYPE
 testTaskbarValue(ITaskbarList3 *taskbar, HWND window, ULONGLONG completed, ULONGLONG total) {
-	CHECK(taskbar != NULL && window == expectedProgressWindow);
-	CHECK(taskbarState == TBPF_NORMAL && completed <= total && total > 0);
+	ASSERT_BOOL_EQ(taskbar != NULL && window == expectedProgressWindow, true);
+	ASSERT_BOOL_EQ(taskbarState == TBPF_NORMAL && completed <= total && total > 0, true);
 	++taskbarValueCalls;
 	taskbarCompleted = completed;
 	taskbarTotal = total;
@@ -125,9 +118,9 @@ static HRESULT WINAPI testCoCreateInstance(
 		.SetProgressState = testTaskbarState,
 		.SetProgressValue = testTaskbarValue};
 	static ITaskbarList3 taskbar = {.lpVtbl = &methods};
-	CHECK(IsEqualGUID(classId, &CLSID_TaskbarList));
-	CHECK(IsEqualGUID(interfaceId, &IID_ITaskbarList3));
-	CHECK(outer == NULL && context == CLSCTX_INPROC_SERVER);
+	ASSERT_BOOL_EQ(IsEqualGUID(classId, &CLSID_TaskbarList), true);
+	ASSERT_BOOL_EQ(IsEqualGUID(interfaceId, &IID_ITaskbarList3), true);
+	ASSERT_BOOL_EQ(outer == NULL && context == CLSCTX_INPROC_SERVER, true);
 	++taskbarCreates;
 	*out = SUCCEEDED(taskbarCreateResult) ? &taskbar : NULL;
 	return taskbarCreateResult;
@@ -138,42 +131,42 @@ unsigned long commands_defaultThreads(void) {
 }
 
 int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow) {
-	CHECK(progressWindow == (uintptr_t)expectedProgressWindow);
-	CHECK(argc == (expectedDetailed ? 7 : 6));
-	CHECK(wcscmp(argv[1], L"run") == 0);
-	CHECK(wcscmp(argv[2], expectedInput) == 0);
-	CHECK(wcscmp(argv[3], expectedSeeds) == 0);
-	CHECK(wcscmp(argv[4], L"--threads") == 0);
-	CHECK(wcscmp(argv[5], expectedThreads) == 0);
+	ASSERT_BOOL_EQ(progressWindow == (uintptr_t)expectedProgressWindow, true);
+	ASSERT_BOOL_EQ(argc == (expectedDetailed ? 7 : 6), true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"run"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
+	ASSERT_INT_EQ(wcscmp(argv[3], expectedSeeds), 0);
+	ASSERT_INT_EQ(wcscmp(argv[4], L"--threads"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[5], expectedThreads), 0);
 	if (expectedDetailed) {
-		CHECK(wcscmp(argv[6], L"--detailed") == 0);
+		ASSERT_INT_EQ(wcscmp(argv[6], L"--detailed"), 0);
 	}
-	CHECK(argv[argc] == NULL);
+	ASSERT_BOOL_EQ(argv[argc] == NULL, true);
 	++simulationCalls;
-	CHECK(WaitForSingleObject(simulationRelease, 5000) == WAIT_OBJECT_0);
+	ASSERT_BOOL_EQ(WaitForSingleObject(simulationRelease, 5000) == WAIT_OBJECT_0, true);
 	return simulationResult;
 }
 
 int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
-	CHECK(argc == 5 && argv[argc] == NULL);
-	CHECK(wcscmp(argv[1], L"replace-away") == 0);
-	CHECK(wcscmp(argv[2], expectedInput) == 0);
-	CHECK(wcscmp(argv[3], expectedTeam) == 0);
-	CHECK(files_hasExtension(argv[4], L".json"));
+	ASSERT_BOOL_EQ(argc == 5 && argv[argc] == NULL, true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"replace-away"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
+	ASSERT_INT_EQ(wcscmp(argv[3], expectedTeam), 0);
+	ASSERT_BOOL_EQ(files_hasExtension(argv[4], L".json"), true);
 	wcscpy(replacementOutput, argv[4]);
 	++replacementCalls;
-	CHECK(WaitForSingleObject(replacementRelease, 5000) == WAIT_OBJECT_0);
+	ASSERT_BOOL_EQ(WaitForSingleObject(replacementRelease, 5000) == WAIT_OBJECT_0, true);
 	(void)snprintf(
 		result, resultSize, "%s", replacementResult ? "error: that is the home team" : "ok"
 	);
 	if (!replacementResult) {
-		CHECK(files_write(argv[4], "{\"replacement\":true}", 20));
+		ASSERT_BOOL_EQ(files_write(argv[4], "{\"replacement\":true}", 20), true);
 	}
 	return replacementResult;
 }
 
 bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t errorSize) {
-	CHECK(wcscmp(path, replacementOutput) == 0);
+	ASSERT_INT_EQ(wcscmp(path, replacementOutput), 0);
 	if (replacementLoadFailure) {
 		(void)snprintf(error, errorSize, "cannot read replacement fixture");
 		return false;
@@ -190,10 +183,10 @@ bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t
 }
 
 static void firstLine(HWND metadata, const wchar_t *expected) {
-	wchar_t text[8192];
-	CHECK(GetWindowTextW(metadata, text, 8192) > 0);
+	wchar_t text[8192] = {0};
+	ASSERT_BOOL_EQ(GetWindowTextW(metadata, text, 8192) > 0, true);
 	text[wcscspn(text, L"\r\n")] = 0;
-	CHECK(wcscmp(text, expected) == 0);
+	ASSERT_INT_EQ(wcscmp(text, expected), 0);
 }
 
 static void checkFormat(HWND metadata, LONG start, LONG end, DWORD effects, COLORREF color) {
@@ -201,19 +194,22 @@ static void checkFormat(HWND metadata, LONG start, LONG end, DWORD effects, COLO
 	SendMessageW(metadata, EM_EXSETSEL, 0, (LPARAM)&range);
 	CHARFORMAT2W format = {.cbSize = sizeof format};
 	SendMessageW(metadata, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&format);
-	CHECK(
+	ASSERT_BOOL_EQ(
 		(format.dwMask & (CFM_BOLD | CFM_COLOR | CFM_UNDERLINE | CFM_LINK)) ==
-		(CFM_BOLD | CFM_COLOR | CFM_UNDERLINE | CFM_LINK)
+			(CFM_BOLD | CFM_COLOR | CFM_UNDERLINE | CFM_LINK),
+		true
 	);
-	CHECK((format.dwEffects & (CFE_BOLD | CFE_UNDERLINE | CFE_LINK)) == effects);
-	CHECK(format.crTextColor == color);
+	ASSERT_BOOL_EQ((format.dwEffects & (CFE_BOLD | CFE_UNDERLINE | CFE_LINK)) == effects, true);
+	ASSERT_BOOL_EQ(format.crTextColor == color, true);
 }
 
 static void checkContents(const wchar_t *path, const char *expected) {
 	ByteBuffer contents = {0};
-	CHECK(files_read(path, &contents));
-	CHECK(contents.length == strlen(expected));
-	CHECK(memcmp(contents.data, expected, contents.length) == 0);
+	ASSERT_BOOL_EQ(files_read(path, &contents), true);
+	ASSERT_BOOL_EQ(contents.length == strlen(expected), true);
+	if (contents.length && contents.length == strlen(expected)) {
+		ASSERT_INT_EQ(memcmp(contents.data, expected, contents.length), 0);
+	}
 	buffer_free(&contents);
 }
 
@@ -224,47 +220,68 @@ static bool controlVisible(HWND control) {
 static void changeTab(HWND window, WindowState *state, int tab) {
 	TabCtrl_SetCurSel(state->tabs, tab);
 	NMHDR notification = {.hwndFrom = state->tabs, .code = (UINT)TCN_SELCHANGE};
-	CHECK(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0, true);
 	for (unsigned i = 0; i < 2; ++i) {
-		CHECK(controlVisible(state->headings[i]) == (tab == 0));
-		CHECK(controlVisible(state->notes[i]) == (tab == 0));
-		CHECK(controlVisible(state->pitches[i]) == (tab == 0));
-		CHECK(controlVisible(state->lists[i]) == (tab == 0));
+		ASSERT_BOOL_EQ(controlVisible(state->headings[i]), tab == 0);
+		ASSERT_BOOL_EQ(controlVisible(state->notes[i]), tab == 0);
+		ASSERT_BOOL_EQ(controlVisible(state->pitches[i]), tab == 0);
+		ASSERT_BOOL_EQ(controlVisible(state->lists[i]), tab == 0);
 	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
-		CHECK(controlVisible(state->simulation[i]) == (tab == 1));
+		ASSERT_BOOL_EQ(controlVisible(state->simulation[i]), tab == 1);
 	}
 	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
-		CHECK(
-			controlVisible(state->away[i]) ==
-			(tab == 0 && (i == AWAY_ICON ? !state->editingAway : state->editingAway) &&
-				(i != AWAY_ERROR || GetWindowTextLengthW(state->away[i]) > 0))
+		ASSERT_BOOL_EQ(
+			controlVisible(state->away[i]),
+			tab == 0 && (i == AWAY_ICON ? !state->editingAway : state->editingAway) &&
+				(i != AWAY_ERROR || GetWindowTextLengthW(state->away[i]) > 0)
 		);
 	}
 }
 
 static void clickSimulate(HWND window, WindowState *state) {
-	CHECK(
+	ASSERT_BOOL_EQ(
 		windowProcedure(
 			window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->simulation[SIM_SUBMIT]
-		) == 0
+		) == 0,
+		true
 	);
 }
 
+static void simulationProgress(HWND window, UINT completed, UINT total, UINT homeWins, UINT draws) {
+	ASSERT_BOOL_EQ(
+		windowProcedure(
+			window,
+			HARNESS_PROGRESS_MESSAGE,
+			(WPARAM)((uint64_t)homeWins << 32 | completed),
+			(LPARAM)((uint64_t)draws << 32 | total)
+		) == 0,
+		true
+	);
+}
+
+static void checkSimulationSummary(const WindowState *state, const wchar_t *expected) {
+	wchar_t text[256] = {0};
+	ASSERT_BOOL_EQ(GetWindowTextW(state->simulation[SIM_SUMMARY], text, 256) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, expected), 0);
+}
+
 static RECT controlBounds(HWND window, HWND control) {
-	RECT bounds;
-	CHECK(GetWindowRect(control, &bounds));
+	RECT bounds = {0};
+	ASSERT_BOOL_EQ(GetWindowRect(control, &bounds), true);
 	MapWindowPoints(NULL, window, (POINT *)&bounds, 2);
 	return bounds;
 }
 
 static void checkPageLayout(HWND window, const WindowState *state) {
-	RECT client;
-	CHECK(GetClientRect(window, &client));
+	RECT client = {0};
+	ASSERT_BOOL_EQ(GetClientRect(window, &client), true);
 	RECT tabs = controlBounds(window, state->tabs);
-	CHECK(tabs.bottom == client.bottom - scaled(state, state->simulationThread ? 24 : 12));
-	RECT page;
-	CHECK(GetClientRect(state->tabs, &page));
+	ASSERT_BOOL_EQ(
+		tabs.bottom == client.bottom - scaled(state, state->simulationThread ? 24 : 12), true
+	);
+	RECT page = {0};
+	ASSERT_BOOL_EQ(GetClientRect(state->tabs, &page), true);
 	TabCtrl_AdjustRect(state->tabs, FALSE, &page);
 	MapWindowPoints(state->tabs, window, (POINT *)&page, 2);
 	HWND contents[] = {state->headings[0],
@@ -273,45 +290,54 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 		state->lists[1],
 		state->simulation[SIM_THREADS_LABEL],
 		state->simulation[SIM_SEEDS],
+		state->simulation[SIM_SUMMARY],
 		state->simulation[SIM_STATUS]};
 	for (unsigned i = 0; i < sizeof contents / sizeof contents[0]; ++i) {
 		RECT bounds = controlBounds(window, contents[i]);
-		CHECK(bounds.left > page.left && bounds.right < page.right);
-		CHECK(bounds.top >= page.top && bounds.bottom < page.bottom);
+		ASSERT_BOOL_EQ(bounds.left > page.left && bounds.right < page.right, true);
+		ASSERT_BOOL_EQ(bounds.top >= page.top && bounds.bottom < page.bottom, true);
 	}
 	RECT seeds = controlBounds(window, state->simulation[SIM_SEEDS]);
-	CHECK(seeds.right - seeds.left == scaled(state, 220));
+	ASSERT_BOOL_EQ(seeds.right - seeds.left == scaled(state, 220), true);
 	RECT threads = controlBounds(window, state->simulation[SIM_THREADS_LABEL]);
-	CHECK(threads.right - threads.left == scaled(state, 180));
+	ASSERT_BOOL_EQ(threads.right - threads.left == scaled(state, 180), true);
+	RECT submit = controlBounds(window, state->simulation[SIM_SUBMIT]);
+	RECT summary = controlBounds(window, state->simulation[SIM_SUMMARY]);
+	RECT status = controlBounds(window, state->simulation[SIM_STATUS]);
+	ASSERT_BOOL_EQ(summary.top > submit.bottom && status.top > summary.bottom, true);
 	RECT progress = controlBounds(window, state->progress);
-	CHECK(progress.left == 0 && progress.right == client.right);
-	CHECK(progress.bottom == client.bottom && progress.bottom - progress.top == scaled(state, 12));
+	ASSERT_BOOL_EQ(progress.left == 0 && progress.right == client.right, true);
+	ASSERT_BOOL_EQ(
+		progress.bottom == client.bottom && progress.bottom - progress.top == scaled(state, 12), true
+	);
 }
 
 static void checkControlColors(HWND window, HWND control, UINT message) {
 	HDC dc = GetDC(control);
-	CHECK(dc != NULL);
-	CHECK(
+	ASSERT_BOOL_EQ(dc != NULL, true);
+	ASSERT_BOOL_EQ(
 		windowProcedure(window, message, (WPARAM)dc, (LPARAM)control) ==
-		(LRESULT)GetSysColorBrush(COLOR_WINDOW)
+			(LRESULT)GetSysColorBrush(COLOR_WINDOW),
+		true
 	);
-	CHECK(GetBkMode(dc) == TRANSPARENT);
-	CHECK(GetTextColor(dc) == GetSysColor(COLOR_WINDOWTEXT));
-	CHECK(GetBkColor(dc) == GetSysColor(COLOR_WINDOW));
-	CHECK(ReleaseDC(control, dc));
+	ASSERT_BOOL_EQ(GetBkMode(dc) == TRANSPARENT, true);
+	ASSERT_BOOL_EQ(GetTextColor(dc) == GetSysColor(COLOR_WINDOWTEXT), true);
+	ASSERT_BOOL_EQ(GetBkColor(dc) == GetSysColor(COLOR_WINDOW), true);
+	ASSERT_BOOL_EQ(ReleaseDC(control, dc), true);
 }
 
 static void clickAway(HWND window, WindowState *state, unsigned control) {
-	CHECK(
+	ASSERT_BOOL_EQ(
 		windowProcedure(window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->away[control]) ==
-		0
+			0,
+		true
 	);
 }
 
 static void checkAwayLayout(HWND window, WindowState *state) {
 	RECT heading = controlBounds(window, state->headings[1]);
 	RECT icon = controlBounds(window, state->away[AWAY_ICON]);
-	CHECK(icon.left == heading.right && icon.top == heading.top);
+	ASSERT_BOOL_EQ(icon.left == heading.right && icon.top == heading.top, true);
 	if (!state->editingAway) {
 		return;
 	}
@@ -320,120 +346,125 @@ static void checkAwayLayout(HWND window, WindowState *state) {
 	RECT cancel = controlBounds(window, state->away[AWAY_CANCEL]);
 	RECT error = controlBounds(window, state->away[AWAY_ERROR]);
 	RECT tabs = controlBounds(window, state->tabs);
-	CHECK(input.left == heading.right && input.top == heading.top);
-	CHECK(confirm.left > input.right && cancel.left > confirm.right);
-	CHECK(error.left > cancel.right && error.right < tabs.right);
-	CHECK(error.top < cancel.bottom);
+	ASSERT_BOOL_EQ(input.left == heading.right && input.top == heading.top, true);
+	ASSERT_BOOL_EQ(confirm.left > input.right && cancel.left > confirm.right, true);
+	ASSERT_BOOL_EQ(error.left > cancel.right && error.right < tabs.right, true);
+	ASSERT_BOOL_EQ(error.top < cancel.bottom, true);
 }
 
 static void checkAwayIcon(HWND window, WindowState *state) {
 	HDC dc = GetDC(window);
 	HDC memory = CreateCompatibleDC(dc);
 	HBITMAP bitmap = CreateCompatibleBitmap(dc, 27, 27);
-	CHECK(memory && bitmap);
+	ASSERT_BOOL_EQ(memory && bitmap, true);
 	HGDIOBJ old = SelectObject(memory, bitmap);
 	DRAWITEMSTRUCT draw = {
 		.hwndItem = state->away[AWAY_ICON], .hDC = memory, .rcItem = {0, 0, 27, 27}};
-	CHECK(windowProcedure(window, WM_DRAWITEM, 0, (LPARAM)&draw) == TRUE);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_DRAWITEM, 0, (LPARAM)&draw) == TRUE, true);
 	unsigned blue = 0;
 	for (int y = 0; y < 27; ++y) {
 		for (int x = 0; x < 27; ++x) {
 			blue += GetPixel(memory, x, y) == RGB(0, 0, 255);
 		}
 	}
-	CHECK(blue > 50);
-	CHECK(GetPixel(memory, 0, 0) == GetSysColor(COLOR_WINDOW));
+	ASSERT_BOOL_EQ(blue > 50, true);
+	ASSERT_BOOL_EQ(GetPixel(memory, 0, 0) == GetSysColor(COLOR_WINDOW), true);
 	SelectObject(memory, old);
-	CHECK(DeleteObject(bitmap));
-	CHECK(DeleteDC(memory));
-	CHECK(ReleaseDC(window, dc));
+	ASSERT_BOOL_EQ(DeleteObject(bitmap), true);
+	ASSERT_BOOL_EQ(DeleteDC(memory), true);
+	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
 }
 
 static void checkAwayEditor(HWND window, WindowState *state) {
-	wchar_t heading[2048];
-	wchar_t text[2048];
+	wchar_t heading[2048] = {0};
+	wchar_t text[2048] = {0};
 	changeTab(window, state, 0);
 	layout(window, state);
 	checkAwayLayout(window, state);
 	checkAwayIcon(window, state);
-	CHECK(GetWindowTextW(state->headings[1], heading, 2048) > 0);
-	CHECK(wcsstr(heading, L"Bristol City") != NULL);
-	CHECK(files_write(state->savedFilename, "original saved fixture", 22));
+	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], heading, 2048) > 0, true);
+	ASSERT_BOOL_EQ(wcsstr(heading, L"Bristol City") != NULL, true);
+	ASSERT_BOOL_EQ(files_write(state->savedFilename, "original saved fixture", 22), true);
 	wchar_t saved[FIXTURE_EXPORT_FILENAME_LENGTH];
 	wcscpy(saved, state->savedFilename);
 	const wchar_t *originalPath = state->path;
 	clickAway(window, state, AWAY_ICON);
-	CHECK(state->editingAway);
-	CHECK(GetWindowTextW(state->headings[1], text, 2048) == 6);
-	CHECK(wcscmp(text, L"Away: ") == 0);
-	CHECK(GetWindowTextW(state->away[AWAY_TEAM], text, 2048) > 0);
-	CHECK(wcscmp(text, L"Bristol City") == 0);
-	CHECK(SendMessageW(state->away[AWAY_TEAM], EM_GETLIMITTEXT, 0, 0) == 255);
+	ASSERT_BOOL_EQ(state->editingAway, true);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) == 6, true);
+	ASSERT_INT_EQ(wcscmp(text, L"Away: "), 0);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_TEAM], text, 2048) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L"Bristol City"), 0);
+	ASSERT_BOOL_EQ(SendMessageW(state->away[AWAY_TEAM], EM_GETLIMITTEXT, 0, 0) == 255, true);
 	checkAwayLayout(window, state);
 	state->dpi = 144;
-	CHECK(SetWindowPos(window, NULL, 0, 0, 1350, 900, SWP_NOMOVE | SWP_NOZORDER));
-	CHECK(setFonts(state));
+	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1350, 900, SWP_NOMOVE | SWP_NOZORDER), true);
+	ASSERT_BOOL_EQ(setFonts(state), true);
 	layout(window, state);
 	checkAwayLayout(window, state);
 	state->dpi = 96;
-	CHECK(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER));
-	CHECK(setFonts(state));
+	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
+	ASSERT_BOOL_EQ(setFonts(state), true);
 	layout(window, state);
-	CHECK(SetWindowTextW(state->away[AWAY_TEAM], L"Not submitted"));
+	ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], L"Not submitted"), true);
 	MSG key = {.hwnd = state->away[AWAY_TEAM], .message = WM_KEYUP, .wParam = VK_ESCAPE};
-	CHECK(!handleKey(window, state, &key) && state->editingAway);
+	ASSERT_BOOL_EQ(!handleKey(window, state, &key) && state->editingAway, true);
 	key.message = WM_KEYDOWN;
-	CHECK(handleKey(window, state, &key));
-	CHECK(!state->editingAway && replacementCalls == 0);
-	CHECK(GetWindowTextW(state->headings[1], text, 2048) > 0 && wcscmp(text, heading) == 0);
-	CHECK(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath);
+	ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
+	ASSERT_BOOL_EQ(!state->editingAway && replacementCalls == 0, true);
+	ASSERT_BOOL_EQ(
+		GetWindowTextW(state->headings[1], text, 2048) > 0 && wcscmp(text, heading) == 0, true
+	);
+	ASSERT_INT_EQ(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath, true);
 	clickAway(window, state, AWAY_ICON);
 	key.wParam = VK_RETURN;
 	static const wchar_t *const invalid[] = {L"", L" \t", L"1\nteam=2"};
 	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
-		CHECK(SetWindowTextW(state->away[AWAY_TEAM], invalid[i]));
-		CHECK(handleKey(window, state, &key));
-		CHECK(!state->replacementThread && replacementCalls == 0 && state->editingAway);
-		CHECK(GetWindowTextLengthW(state->away[AWAY_ERROR]) > 0);
+		ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], invalid[i]), true);
+		ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
+		ASSERT_BOOL_EQ(!state->replacementThread && replacementCalls == 0 && state->editingAway, true);
+		ASSERT_BOOL_EQ(GetWindowTextLengthW(state->away[AWAY_ERROR]) > 0, true);
 	}
-	CHECK(paths_absolute(saved, expectedInput, HARNESS_PATH_LENGTH));
+	ASSERT_BOOL_EQ(paths_absolute(saved, expectedInput, HARNESS_PATH_LENGTH), true);
 	replacementRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
-	CHECK(replacementRelease != NULL);
+	ASSERT_BOOL_EQ(replacementRelease != NULL, true);
 	expectedTeam = L"Aston Villa";
-	CHECK(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam));
+	ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam), true);
 	replacementResult = 1;
 	int errors = errorMessages;
 	unsigned simulations = simulationCalls;
 	clickAway(window, state, AWAY_CONFIRM);
-	CHECK(state->replacementThread != NULL);
+	ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
 	HANDLE worker = state->replacementThread;
-	CHECK(!IsWindowEnabled(state->away[AWAY_CONFIRM]));
-	CHECK(!IsWindowEnabled(state->away[AWAY_CANCEL]));
-	CHECK(!IsWindowEnabled(state->simulation[SIM_SUBMIT]));
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state->away[AWAY_CONFIRM]), true);
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state->away[AWAY_CANCEL]), true);
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
 	clickAway(window, state, AWAY_CONFIRM);
 	clickAway(window, state, AWAY_CANCEL);
 	clickSimulate(window, state);
-	CHECK(state->replacementThread == worker && state->editingAway);
-	CHECK(simulationCalls == simulations);
-	CHECK(windowProcedure(window, WM_CLOSE, 0, 0) == 0);
-	CHECK(IsWindow(window) && errorMessages == ++errors);
-	CHECK(SetEvent(replacementRelease));
-	CHECK(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0);
-	CHECK(windowProcedure(window, WM_TIMER, REPLACE_TIMER, 0) == 0);
-	CHECK(replacementCalls == 1 && !state->replacementThread && state->editingAway);
-	CHECK(GetWindowTextW(state->away[AWAY_ERROR], text, 2048) > 0);
-	CHECK(wcscmp(text, L"error: that is the home team") == 0);
-	CHECK(strcmp(state->data->teams[1].name, "Bristol City") == 0);
-	CHECK(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath);
-	CHECK(fileMissing(replacementOutput));
+	ASSERT_BOOL_EQ(state->replacementThread == worker && state->editingAway, true);
+	ASSERT_BOOL_EQ(simulationCalls == simulations, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_CLOSE, 0, 0), 0);
+	ASSERT_BOOL_EQ(IsWindow(window) && errorMessages == ++errors, true);
+	ASSERT_BOOL_EQ(SetEvent(replacementRelease), true);
+	ASSERT_BOOL_EQ(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, REPLACE_TIMER, 0) == 0, true);
+	ASSERT_BOOL_EQ(replacementCalls == 1 && !state->replacementThread && state->editingAway, true);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_ERROR], text, 2048) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L"error: that is the home team"), 0);
+	ASSERT_INT_EQ(strcmp(state->data->teams[1].name, "Bristol City"), 0);
+	ASSERT_INT_EQ(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath, true);
+	ASSERT_BOOL_EQ(fileMissing(replacementOutput), true);
 	HDC dc = GetDC(state->away[AWAY_ERROR]);
-	CHECK(
+	ASSERT_BOOL_EQ(
 		windowProcedure(window, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)state->away[AWAY_ERROR]) ==
-		(LRESULT)GetSysColorBrush(COLOR_WINDOW)
+			(LRESULT)GetSysColorBrush(COLOR_WINDOW),
+		true
 	);
-	CHECK(GetTextColor(dc) == RGB(255, 0, 0));
-	CHECK(ReleaseDC(state->away[AWAY_ERROR], dc));
-	CHECK(IsWindowEnabled(state->away[AWAY_CONFIRM]) && IsWindowEnabled(state->away[AWAY_CANCEL]));
+	ASSERT_BOOL_EQ(GetTextColor(dc) == RGB(255, 0, 0), true);
+	ASSERT_BOOL_EQ(ReleaseDC(state->away[AWAY_ERROR], dc), true);
+	ASSERT_BOOL_EQ(
+		IsWindowEnabled(state->away[AWAY_CONFIRM]) && IsWindowEnabled(state->away[AWAY_CANCEL]), true
+	);
 	checkAwayLayout(window, state);
 	changeTab(window, state, 1);
 	changeTab(window, state, 0);
@@ -441,118 +472,126 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	replacementResult = 0;
 	replacementLoadFailure = true;
 	expectedTeam = L"Luton Town";
-	CHECK(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam));
+	ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam), true);
 	clickAway(window, state, AWAY_CONFIRM);
-	CHECK(state->replacementThread != NULL);
-	CHECK(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0);
+	ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
+	ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
 	checkReplacement(window, state);
-	CHECK(state->editingAway && strcmp(state->data->teams[1].name, "Bristol City") == 0);
-	CHECK(GetWindowTextW(state->away[AWAY_ERROR], text, 2048) > 0);
-	CHECK(wcscmp(text, L"cannot read replacement fixture") == 0);
-	CHECK(fileMissing(replacementOutput));
+	ASSERT_BOOL_EQ(state->editingAway && strcmp(state->data->teams[1].name, "Bristol City"), 0);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_ERROR], text, 2048) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L"cannot read replacement fixture"), 0);
+	ASSERT_BOOL_EQ(fileMissing(replacementOutput), true);
 	replacementLoadFailure = false;
 	for (unsigned i = 0; i < 2; ++i) {
 		expectedTeam = i ? L"677" : L"Luton Town";
-		CHECK(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam));
+		ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam), true);
 		if (i) {
-			CHECK(paths_absolute(state->path, expectedInput, HARNESS_PATH_LENGTH));
+			ASSERT_BOOL_EQ(paths_absolute(state->path, expectedInput, HARNESS_PATH_LENGTH), true);
 		}
 		wchar_t previous[HARNESS_PATH_LENGTH];
 		wcscpy(previous, state->replacementPath);
 		clickAway(window, state, AWAY_CONFIRM);
-		CHECK(state->replacementThread != NULL);
+		ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
 		changeTab(window, state, 1);
-		CHECK(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0);
+		ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
 		checkReplacement(window, state);
-		CHECK(!state->replacementThread && !state->editingAway && state->temporary);
-		CHECK(!state->savedFilename[0] && !state->missing);
-		CHECK(wcscmp(state->path, replacementOutput) == 0);
+		ASSERT_BOOL_EQ(!state->replacementThread && !state->editingAway && state->temporary, true);
+		ASSERT_BOOL_EQ(!state->savedFilename[0] && !state->missing, true);
+		ASSERT_INT_EQ(wcscmp(state->path, replacementOutput), 0);
 		if (previous[0]) {
-			CHECK(fileMissing(previous));
+			ASSERT_BOOL_EQ(fileMissing(previous), true);
 		}
 		checkContents(state->path, "{\"replacement\":true}");
 		checkContents(saved, "original saved fixture");
 		firstLine(state->metadata, L"This fixture object is not saved. Click here to export it");
 		changeTab(window, state, 0);
-		CHECK(GetWindowTextW(state->headings[1], text, 2048) > 0);
-		CHECK(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]") == 0);
-		CHECK(ListView_GetItemCount(state->lists[1]) == FIXTURE_SLOTS + 1);
-		CHECK(GetWindowLongPtrW(state->pitches[1], GWLP_USERDATA) == (LONG_PTR)&state->data->teams[1]);
-		CHECK(IsWindowEnabled(state->simulation[SIM_SUBMIT]));
+		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]"), 0);
+		ASSERT_BOOL_EQ(ListView_GetItemCount(state->lists[1]) == FIXTURE_SLOTS + 1, true);
+		ASSERT_BOOL_EQ(
+			GetWindowLongPtrW(state->pitches[1], GWLP_USERDATA) == (LONG_PTR)&state->data->teams[1], true
+		);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
 		clickAway(window, state, AWAY_ICON);
 		clickAway(window, state, AWAY_CANCEL);
-		CHECK(GetWindowTextW(state->headings[1], text, 2048) > 0);
-		CHECK(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]") == 0);
+		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]"), 0);
 		if (!i) {
 			clickAway(window, state, AWAY_ICON);
 		}
 	}
-	CHECK(replacementCalls == 4);
+	ASSERT_BOOL_EQ(replacementCalls == 4, true);
 	for (unsigned exported = 0; exported < 2; ++exported) {
 		if (exported) {
 			exportFixture(window, state);
-			CHECK(!state->temporary);
-			CHECK(wcscmp(state->savedFilename, L"aston-villa-v-luton-town-12345.json") == 0);
+			ASSERT_BOOL_EQ(!state->temporary, true);
+			ASSERT_INT_EQ(wcscmp(state->savedFilename, L"aston-villa-v-luton-town-12345.json"), 0);
 			checkContents(state->savedFilename, "{\"replacement\":true}");
 		}
-		CHECK(paths_absolute(
-			exported ? state->savedFilename : state->path, expectedInput, HARNESS_PATH_LENGTH
-		));
+		ASSERT_BOOL_EQ(
+			paths_absolute(
+				exported ? state->savedFilename : state->path, expectedInput, HARNESS_PATH_LENGTH
+			),
+			true
+		);
 		simulationResult = 0;
 		clickSimulate(window, state);
-		CHECK(state->simulationThread != NULL);
-		CHECK(!IsWindowEnabled(state->away[AWAY_ICON]));
+		ASSERT_BOOL_EQ(state->simulationThread != NULL, true);
+		ASSERT_BOOL_EQ(!IsWindowEnabled(state->away[AWAY_ICON]), true);
 		clickAway(window, state, AWAY_ICON);
-		CHECK(!state->editingAway);
-		CHECK(WaitForSingleObject(state->simulationThread, 5000) == WAIT_OBJECT_0);
+		ASSERT_BOOL_EQ(!state->editingAway, true);
+		ASSERT_BOOL_EQ(WaitForSingleObject(state->simulationThread, 5000) == WAIT_OBJECT_0, true);
 		checkSimulation(window, state);
-		CHECK(IsWindowEnabled(state->away[AWAY_ICON]));
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->away[AWAY_ICON]), true);
 	}
-	CHECK(errorMessages == errors);
-	CHECK(CloseHandle(replacementRelease));
-	CHECK(DeleteFileW(saved));
-	CHECK(DeleteFileW(state->savedFilename));
-	CHECK(DeleteFileW(state->replacementPath));
+	ASSERT_BOOL_EQ(errorMessages == errors, true);
+	ASSERT_BOOL_EQ(CloseHandle(replacementRelease), true);
+	ASSERT_BOOL_EQ(DeleteFileW(saved), true);
+	ASSERT_BOOL_EQ(DeleteFileW(state->savedFilename), true);
+	ASSERT_BOOL_EQ(DeleteFileW(state->replacementPath), true);
 	state->replacementPath[0] = 0;
 }
 
 static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	INITCOMMONCONTROLSEX controls = {.dwSize = sizeof controls,
 		.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS | ICC_PROGRESS_CLASS};
-	CHECK(InitCommonControlsEx(&controls));
+	ASSERT_BOOL_EQ(InitCommonControlsEx(&controls), true);
 	HINSTANCE instance = GetModuleHandleW(NULL);
 	WNDCLASSW definition = {.lpfnWndProc = pitchProcedure,
 		.hInstance = instance,
 		.cbWndExtra = sizeof(HFONT),
 		.lpszClassName = pitchClass};
-	CHECK(RegisterClassW(&definition));
+	ASSERT_BOOL_EQ(RegisterClassW(&definition), true);
 	HWND window =
 		CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 900, 600, NULL, NULL, instance, NULL);
-	CHECK(window != NULL);
+	ASSERT_BOOL_EQ(window != NULL, true);
 	WindowState state = {.data = data, .path = path, .filename = L"temp-fixture.json", .dpi = 96};
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
-	CHECK(createControls(window, &state));
+	ASSERT_BOOL_EQ(createControls(window, &state), true);
 	state.taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
-	CHECK(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0);
-	CHECK(TabCtrl_GetItemCount(state.tabs) == 2);
-	wchar_t text[256];
+	ASSERT_BOOL_EQ(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0, true);
+	ASSERT_BOOL_EQ(TabCtrl_GetItemCount(state.tabs) == 2, true);
+	wchar_t text[256] = {0};
 	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = text, .cchTextMax = 256};
-	CHECK(SendMessageW(state.tabs, TCM_GETITEMW, 0, (LPARAM)&tab));
-	CHECK(wcscmp(text, L"Squads") == 0);
-	CHECK(SendMessageW(state.tabs, TCM_GETITEMW, 1, (LPARAM)&tab));
-	CHECK(wcscmp(text, L"Simulation") == 0);
-	int minimum;
-	int maximum;
+	ASSERT_BOOL_EQ(SendMessageW(state.tabs, TCM_GETITEMW, 0, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Squads"), 0);
+	ASSERT_BOOL_EQ(SendMessageW(state.tabs, TCM_GETITEMW, 1, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Simulation"), 0);
+	int minimum = 0;
+	int maximum = 0;
 	SendMessageW(state.simulation[SIM_SPINNER], UDM_GETRANGE32, (WPARAM)&minimum, (LPARAM)&maximum);
-	CHECK(minimum == 1 && maximum == 7);
-	CHECK(GetWindowTextW(state.simulation[SIM_THREADS], text, 256) == 1);
-	CHECK(wcscmp(text, L"7") == 0);
-	CHECK(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) == 4);
-	CHECK(wcscmp(text, L"keep") == 0);
-	CHECK(SendMessageW(state.simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_UNCHECKED);
-	CHECK(SendMessageW(state.simulation[SIM_SEEDS], EM_GETLIMITTEXT, 0, 0) == 255);
-	CHECK(!controlVisible(state.progress));
-	CHECK(GetWindowLongW(state.tabs, GWL_STYLE) & WS_CLIPSIBLINGS);
+	ASSERT_BOOL_EQ(minimum == 1 && maximum == 7, true);
+	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_THREADS], text, 256) == 1, true);
+	ASSERT_INT_EQ(wcscmp(text, L"7"), 0);
+	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) == 4, true);
+	ASSERT_INT_EQ(wcscmp(text, L"keep"), 0);
+	ASSERT_BOOL_EQ(
+		SendMessageW(state.simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_UNCHECKED, true
+	);
+	ASSERT_BOOL_EQ(SendMessageW(state.simulation[SIM_SEEDS], EM_GETLIMITTEXT, 0, 0) == 255, true);
+	ASSERT_BOOL_EQ(GetWindowTextLengthW(state.simulation[SIM_SUMMARY]) == 0, true);
+	ASSERT_BOOL_EQ(!controlVisible(state.progress), true);
+	ASSERT_BOOL_EQ(GetWindowLongW(state.tabs, GWL_STYLE) & WS_CLIPSIBLINGS, true);
 	checkControlColors(window, state.headings[0], WM_CTLCOLORSTATIC);
 	checkControlColors(window, state.notes[0], WM_CTLCOLORSTATIC);
 	checkControlColors(window, state.simulation[SIM_THREADS_LABEL], WM_CTLCOLORSTATIC);
@@ -562,194 +601,294 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	layout(window, &state);
 	checkPageLayout(window, &state);
 	state.dpi = 144;
-	CHECK(SetWindowPos(window, NULL, 0, 0, 1350, 900, SWP_NOMOVE | SWP_NOZORDER));
-	CHECK(setFonts(&state));
+	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1350, 900, SWP_NOMOVE | SWP_NOZORDER), true);
+	ASSERT_BOOL_EQ(setFonts(&state), true);
 	layout(window, &state);
 	checkPageLayout(window, &state);
 	state.dpi = 96;
-	CHECK(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER));
-	CHECK(setFonts(&state));
+	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
+	ASSERT_BOOL_EQ(setFonts(&state), true);
 	layout(window, &state);
 
 	int errors = errorMessages;
 	static const wchar_t *const invalidThreads[] = {L"", L"0", L"8", L"-1", L"abc", L"4294967296"};
 	for (unsigned i = 0; i < sizeof invalidThreads / sizeof invalidThreads[0]; ++i) {
-		CHECK(SetWindowTextW(state.simulation[SIM_THREADS], invalidThreads[i]));
+		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_THREADS], invalidThreads[i]), true);
 		clickSimulate(window, &state);
-		CHECK(state.simulationThread == NULL && errorMessages == ++errors);
+		ASSERT_BOOL_EQ(state.simulationThread == NULL && errorMessages == ++errors, true);
 	}
-	CHECK(SetWindowTextW(state.simulation[SIM_THREADS], L"2"));
+	ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_THREADS], L"2"), true);
 	static const wchar_t *const invalidSeeds[] = {L"", L"abc", L"1\nthreads=7", L"1;2"};
 	for (unsigned i = 0; i < sizeof invalidSeeds / sizeof invalidSeeds[0]; ++i) {
-		CHECK(SetWindowTextW(state.simulation[SIM_SEEDS], invalidSeeds[i]));
+		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_SEEDS], invalidSeeds[i]), true);
 		clickSimulate(window, &state);
-		CHECK(state.simulationThread == NULL && errorMessages == ++errors);
+		ASSERT_BOOL_EQ(state.simulationThread == NULL && errorMessages == ++errors, true);
 	}
-	CHECK(simulationCalls == 0);
+	ASSERT_BOOL_EQ(simulationCalls == 0, true);
 	simulationRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
-	CHECK(simulationRelease != NULL);
+	ASSERT_BOOL_EQ(simulationRelease != NULL, true);
 	expectedProgressWindow = window;
 	static const wchar_t *const patterns[] = {L"1", L"42", L"1-1000", L"1,3,5", L"1,4,7-70", L"keep"};
 	for (unsigned i = 0; i < sizeof patterns / sizeof patterns[0]; ++i) {
 		if (i == 4) {
 			wcscpy(state.savedFilename, L"saved fixture.json");
 		}
-		CHECK(paths_absolute(
-			state.savedFilename[0] ? state.savedFilename : path, expectedInput, HARNESS_PATH_LENGTH
-		));
+		ASSERT_BOOL_EQ(
+			paths_absolute(
+				state.savedFilename[0] ? state.savedFilename : path, expectedInput, HARNESS_PATH_LENGTH
+			),
+			true
+		);
 		expectedSeeds = patterns[i];
 		expectedThreads = i % 2 ? L"7" : L"1";
 		expectedDetailed = i % 2 != 0;
 		simulationResult = i == 5 ? 1 : 0;
-		CHECK(SetWindowTextW(state.simulation[SIM_SEEDS], expectedSeeds));
-		CHECK(SetWindowTextW(state.simulation[SIM_THREADS], expectedThreads));
+		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_SEEDS], expectedSeeds), true);
+		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_THREADS], expectedThreads), true);
 		SendMessageW(
 			state.simulation[SIM_DETAILED], BM_SETCHECK, expectedDetailed ? BST_CHECKED : BST_UNCHECKED, 0
 		);
-		CHECK(ResetEvent(simulationRelease));
+		ASSERT_BOOL_EQ(ResetEvent(simulationRelease), true);
 		clickSimulate(window, &state);
-		CHECK(state.simulationThread != NULL);
+		ASSERT_BOOL_EQ(state.simulationThread != NULL, true);
+		checkSimulationSummary(&state, L"n = 0: home 0 (0.0%) / draw 0 (0.0%) / away 0 (0.0%)");
 		if (i == 0) {
-			CHECK(taskbarStateCalls == 0 && state.taskbar == NULL);
-			CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+			ASSERT_BOOL_EQ(taskbarStateCalls == 0 && state.taskbar == NULL, true);
+			ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
 		}
-		CHECK(state.taskbar != NULL && taskbarState == TBPF_INDETERMINATE);
+		ASSERT_BOOL_EQ(state.taskbar != NULL && taskbarState == TBPF_INDETERMINATE, true);
 		HANDLE worker = state.simulationThread;
-		CHECK(controlVisible(state.progress));
-		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 0);
+		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
+		ASSERT_BOOL_EQ(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 0, true);
 		checkPageLayout(window, &state);
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, 1000) == 0);
-		CHECK(SendMessageW(state.progress, PBM_GETRANGE, FALSE, 0) == 1000);
-		CHECK(taskbarState == TBPF_NORMAL && taskbarCompleted == 0 && taskbarTotal == 1000);
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 250, 1000) == 0);
-		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 250);
-		CHECK(taskbarState == TBPF_NORMAL && taskbarCompleted == 250 && taskbarTotal == 1000);
+		simulationProgress(window, 0, 1000, 0, 0);
+		ASSERT_BOOL_EQ(SendMessageW(state.progress, PBM_GETRANGE, FALSE, 0) == 1000, true);
+		ASSERT_BOOL_EQ(
+			taskbarState == TBPF_NORMAL && taskbarCompleted == 0 && taskbarTotal == 1000, true
+		);
+		checkSimulationSummary(&state, L"n = 0: home 0 (0.0%) / draw 0 (0.0%) / away 0 (0.0%)");
+		simulationProgress(window, 1, 1000, 1, 0);
+		checkSimulationSummary(&state, L"n = 1: home 1 (100.0%) / draw 0 (0.0%) / away 0 (0.0%)");
+		simulationProgress(window, 2, 1000, 1, 1);
+		checkSimulationSummary(&state, L"n = 2: home 1 (50.0%) / draw 1 (50.0%) / away 0 (0.0%)");
+		simulationProgress(window, 3, 1000, 1, 1);
+		checkSimulationSummary(&state, L"n = 3: home 1 (33.3%) / draw 1 (33.3%) / away 1 (33.3%)");
+		simulationProgress(window, 250, 1000, 100, 50);
+		ASSERT_BOOL_EQ(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 250, true);
+		ASSERT_BOOL_EQ(
+			taskbarState == TBPF_NORMAL && taskbarCompleted == 250 && taskbarTotal == 1000, true
+		);
+		checkSimulationSummary(
+			&state, L"n = 250: home 100 (40.0%) / draw 50 (20.0%) / away 100 (40.0%)"
+		);
 		unsigned stateCalls = taskbarStateCalls;
 		unsigned valueCalls = taskbarValueCalls;
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1001, 1000) == 0);
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, 0) == 0);
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, -1) == 0);
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, (LPARAM)INT_MAX + 1) == 0);
-		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 250);
-		CHECK(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls);
+		ASSERT_BOOL_EQ(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1001, 1000) == 0, true);
+		ASSERT_BOOL_EQ(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, 0) == 0, true);
+		ASSERT_BOOL_EQ(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, -1) == 0, true);
+		ASSERT_BOOL_EQ(
+			windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, (LPARAM)INT_MAX + 1) == 0, true
+		);
+		simulationProgress(window, 250, 1000, 251, 0);
+		simulationProgress(window, 250, 1000, 100, 151);
+		ASSERT_BOOL_EQ(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 250, true);
+		ASSERT_BOOL_EQ(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls, true);
+		checkSimulationSummary(
+			&state, L"n = 250: home 100 (40.0%) / draw 50 (20.0%) / away 100 (40.0%)"
+		);
 		unsigned creates = taskbarCreates;
 		unsigned releases = taskbarReleases;
-		CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
-		CHECK(taskbarCreates == creates + 1 && taskbarReleases == releases + 1);
-		CHECK(taskbarInitializations == taskbarCreates);
-		CHECK(taskbarState == TBPF_NORMAL && taskbarCompleted == 250 && taskbarTotal == 1000);
+		ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
+		ASSERT_BOOL_EQ(taskbarCreates == creates + 1 && taskbarReleases == releases + 1, true);
+		ASSERT_BOOL_EQ(taskbarInitializations == taskbarCreates, true);
+		ASSERT_BOOL_EQ(
+			taskbarState == TBPF_NORMAL && taskbarCompleted == 250 && taskbarTotal == 1000, true
+		);
 		if (i == 0) {
 			taskbarValueResult = E_FAIL;
-			CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 500, 1000) == 0);
-			CHECK(state.taskbar == NULL && state.simulationThread == worker);
-			CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 500);
+			simulationProgress(window, 500, 1000, 200, 100);
+			ASSERT_BOOL_EQ(state.taskbar == NULL && state.simulationThread == worker, true);
+			ASSERT_BOOL_EQ(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 500, true);
+			checkSimulationSummary(
+				&state, L"n = 500: home 200 (40.0%) / draw 100 (20.0%) / away 200 (40.0%)"
+			);
 			taskbarValueResult = S_OK;
-			CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
-			CHECK(taskbarCompleted == 500 && taskbarTotal == 1000);
+			ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
+			ASSERT_BOOL_EQ(taskbarCompleted == 500 && taskbarTotal == 1000, true);
 		}
-		CHECK(!IsWindowEnabled(state.simulation[SIM_SUBMIT]));
-		CHECK(WaitForSingleObject(worker, 0) == WAIT_TIMEOUT);
+		ASSERT_BOOL_EQ(!IsWindowEnabled(state.simulation[SIM_SUBMIT]), true);
+		ASSERT_BOOL_EQ(WaitForSingleObject(worker, 0) == WAIT_TIMEOUT, true);
 		clickSimulate(window, &state);
-		CHECK(state.simulationThread == worker);
-		CHECK(windowProcedure(window, WM_CLOSE, 0, 0) == 0);
-		CHECK(IsWindow(window) && errorMessages == ++errors);
+		ASSERT_BOOL_EQ(state.simulationThread == worker, true);
+		ASSERT_BOOL_EQ(windowProcedure(window, WM_CLOSE, 0, 0) == 0, true);
+		ASSERT_BOOL_EQ(IsWindow(window) && errorMessages == ++errors, true);
 		changeTab(window, &state, 0);
-		CHECK(controlVisible(state.progress));
+		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
 		changeTab(window, &state, 1);
-		CHECK(controlVisible(state.progress));
-		CHECK(SetWindowPos(window, NULL, 0, 0, 1000, 700, SWP_NOMOVE | SWP_NOZORDER));
+		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
+		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1000, 700, SWP_NOMOVE | SWP_NOZORDER), true);
 		layout(window, &state);
 		checkPageLayout(window, &state);
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1000, 1000) == 0);
-		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 1000);
-		CHECK(taskbarCompleted == 1000 && taskbarTotal == 1000);
-		CHECK(SetEvent(simulationRelease));
-		CHECK(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0);
-		CHECK(windowProcedure(window, WM_TIMER, SIMULATION_TIMER, 0) == 0);
-		CHECK(state.simulationThread == NULL);
-		CHECK(taskbarState == TBPF_NOPROGRESS);
-		CHECK(!controlVisible(state.progress));
+		simulationProgress(window, 750, 1000, 375, 125);
+		checkSimulationSummary(
+			&state, L"n = 750: home 375 (50.0%) / draw 125 (16.7%) / away 250 (33.3%)"
+		);
+		if (!simulationResult) {
+			ASSERT_BOOL_EQ(
+				PostMessageW(
+					window,
+					HARNESS_PROGRESS_MESSAGE,
+					(WPARAM)(UINT64_C(500) << 32 | 1000),
+					(LPARAM)(UINT64_C(250) << 32 | 1000)
+				),
+				true
+			);
+		}
+		ASSERT_BOOL_EQ(SetEvent(simulationRelease), true);
+		ASSERT_BOOL_EQ(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0, true);
+		ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, SIMULATION_TIMER, 0) == 0, true);
+		ASSERT_BOOL_EQ(state.simulationThread == NULL, true);
+		ASSERT_BOOL_EQ(taskbarState == TBPF_NOPROGRESS, true);
+		ASSERT_BOOL_EQ(!controlVisible(state.progress), true);
+		checkSimulationSummary(
+			&state,
+			simulationResult ? L"n = 750: home 375 (50.0%) / draw 125 (16.7%) / away 250 (33.3%)"
+											 : L"n = 1000: home 500 (50.0%) / draw 250 (25.0%) / away 250 (25.0%)"
+		);
 		checkPageLayout(window, &state);
 		stateCalls = taskbarStateCalls;
 		valueCalls = taskbarValueCalls;
-		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1, 10) == 0);
-		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 1000);
-		CHECK(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls);
-		CHECK(IsWindowEnabled(state.simulation[SIM_SUBMIT]));
-		CHECK(simulationCalls == i + 1);
-		CHECK(GetWindowTextW(state.simulation[SIM_STATUS], text, 256) > 0);
-		CHECK(wcsstr(text, simulationResult ? L"failed" : L"complete") != NULL);
+		ASSERT_BOOL_EQ(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1, 10) == 0, true);
+		ASSERT_BOOL_EQ(
+			SendMessageW(state.progress, PBM_GETPOS, 0, 0) == (simulationResult ? 750 : 1000), true
+		);
+		ASSERT_BOOL_EQ(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls, true);
+		changeTab(window, &state, 0);
+		changeTab(window, &state, 1);
+		checkSimulationSummary(
+			&state,
+			simulationResult ? L"n = 750: home 375 (50.0%) / draw 125 (16.7%) / away 250 (33.3%)"
+											 : L"n = 1000: home 500 (50.0%) / draw 250 (25.0%) / away 250 (25.0%)"
+		);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state.simulation[SIM_SUBMIT]), true);
+		ASSERT_BOOL_EQ(simulationCalls == i + 1, true);
+		ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_STATUS], text, 256) > 0, true);
+		ASSERT_BOOL_EQ(wcsstr(text, simulationResult ? L"failed" : L"complete") != NULL, true);
 		if (simulationResult) {
 			++errors;
 		}
-		CHECK(errorMessages == errors);
-		CHECK(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) > 0);
-		CHECK(wcscmp(text, expectedSeeds) == 0);
+		ASSERT_BOOL_EQ(errorMessages == errors, true);
+		ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, expectedSeeds), 0);
 	}
 	taskbarCreateResult = E_FAIL;
-	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
-	CHECK(state.taskbar == NULL);
+	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
+	ASSERT_BOOL_EQ(state.taskbar == NULL, true);
 	taskbarCreateResult = S_OK;
 	taskbarInitResult = E_FAIL;
-	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
-	CHECK(state.taskbar == NULL);
+	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
+	ASSERT_BOOL_EQ(state.taskbar == NULL, true);
 	taskbarInitResult = S_OK;
 	taskbarStateResult = E_FAIL;
-	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
-	CHECK(state.taskbar == NULL);
+	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
+	ASSERT_BOOL_EQ(state.taskbar == NULL, true);
 	taskbarStateResult = S_OK;
 	checkAwayEditor(window, &state);
-	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
-	CHECK(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS);
+	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
+	ASSERT_BOOL_EQ(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS, true);
 	releaseTaskbar(&state);
-	CHECK(state.taskbar == NULL && taskbarReleases == taskbarInitializations);
-	CHECK(CloseHandle(simulationRelease));
-	CHECK(DestroyWindow(window));
-	CHECK(DeleteObject(state.font));
-	CHECK(DeleteObject(state.headingFont));
-	CHECK(UnregisterClassW(pitchClass, instance));
+	ASSERT_BOOL_EQ(state.taskbar == NULL && taskbarReleases == taskbarInitializations, true);
+	ASSERT_BOOL_EQ(CloseHandle(simulationRelease), true);
+	ASSERT_BOOL_EQ(DestroyWindow(window), true);
+	ASSERT_BOOL_EQ(DeleteObject(state.font), true);
+	ASSERT_BOOL_EQ(DeleteObject(state.headingFont), true);
+	ASSERT_BOOL_EQ(UnregisterClassW(pitchClass, instance), true);
 
 	static const unsigned long limits[] = {1, HARNESS_MAX_THREADS};
 	for (unsigned i = 0; i < sizeof limits / sizeof limits[0]; ++i) {
 		threadLimit = limits[i];
 		window =
 			CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 900, 600, NULL, NULL, instance, NULL);
-		CHECK(window != NULL);
+		ASSERT_BOOL_EQ(window != NULL, true);
 		state = (WindowState){0};
-		CHECK(createSimulationControls(window, &state));
+		ASSERT_BOOL_EQ(createSimulationControls(window, &state), true);
 		SendMessageW(state.simulation[SIM_SPINNER], UDM_GETRANGE32, (WPARAM)&minimum, (LPARAM)&maximum);
-		CHECK(minimum == 1 && maximum == (int)threadLimit);
-		CHECK(SendMessageW(state.simulation[SIM_SPINNER], UDM_GETPOS32, 0, 0) == (LRESULT)threadLimit);
-		CHECK(DestroyWindow(window));
+		ASSERT_BOOL_EQ(minimum == 1 && maximum == (int)threadLimit, true);
+		ASSERT_BOOL_EQ(
+			SendMessageW(state.simulation[SIM_SPINNER], UDM_GETPOS32, 0, 0) == (LRESULT)threadLimit, true
+		);
+		ASSERT_BOOL_EQ(DestroyWindow(window), true);
 	}
 }
 
-int fixture_window_test(int argc, char **argv) {
-	(void)argc;
-	(void)argv;
-	wchar_t original[HARNESS_PATH_LENGTH];
-	wchar_t temporary[HARNESS_PATH_LENGTH];
-	wchar_t directory[HARNESS_PATH_LENGTH];
-	wchar_t outputDirectory[HARNESS_PATH_LENGTH];
-	wchar_t source[HARNESS_PATH_LENGTH];
-	CHECK(GetCurrentDirectoryW(HARNESS_PATH_LENGTH, original) > 0);
-	CHECK(GetTempPathW(HARNESS_PATH_LENGTH, temporary) > 0);
-	CHECK(GetTempFileNameW(temporary, L"fme", 0, directory));
-	CHECK(DeleteFileW(directory));
-	CHECK(CreateDirectoryW(directory, NULL));
-	CHECK(paths_join(outputDirectory, HARNESS_PATH_LENGTH, directory, L"exports"));
-	CHECK(CreateDirectoryW(outputDirectory, NULL));
-	CHECK(paths_join(source, HARNESS_PATH_LENGTH, directory, L"temp-fixture.json"));
-	CHECK(files_write(source, "{\"fixture\":true}", 16));
-	CHECK(SetCurrentDirectoryW(outputDirectory));
-
+TEST(exports_fixtures_and_runs_simulations) {
+	wchar_t original[HARNESS_PATH_LENGTH] = {0};
+	wchar_t temporary[HARNESS_PATH_LENGTH] = {0};
+	wchar_t directory[HARNESS_PATH_LENGTH] = {0};
+	wchar_t outputDirectory[HARNESS_PATH_LENGTH] = {0};
+	wchar_t source[HARNESS_PATH_LENGTH] = {0};
+	DWORD length = GetCurrentDirectoryW(HARNESS_PATH_LENGTH, original);
+	ASSERT_BOOL_EQ(length > 0 && length < HARNESS_PATH_LENGTH, true);
+	if (!length || length >= HARNESS_PATH_LENGTH) {
+		return;
+	}
+	length = GetTempPathW(HARNESS_PATH_LENGTH, temporary);
+	ASSERT_BOOL_EQ(length > 0 && length < HARNESS_PATH_LENGTH, true);
+	if (!length || length >= HARNESS_PATH_LENGTH) {
+		return;
+	}
+	UINT unique = GetTempFileNameW(temporary, L"fme", 0, directory);
+	ASSERT_BOOL_EQ(unique != 0, true);
+	if (!unique) {
+		return;
+	}
+	ASSERT_BOOL_EQ(DeleteFileW(directory), true);
+	BOOL created = CreateDirectoryW(directory, NULL);
+	ASSERT_BOOL_EQ(created, true);
+	if (!created) {
+		return;
+	}
+	bool joined = paths_join(outputDirectory, HARNESS_PATH_LENGTH, directory, L"exports");
+	ASSERT_BOOL_EQ(joined, true);
+	if (!joined) {
+		goto removeDirectory;
+	}
+	created = CreateDirectoryW(outputDirectory, NULL);
+	ASSERT_BOOL_EQ(created, true);
+	if (!created) {
+		goto removeDirectory;
+	}
+	joined = paths_join(source, HARNESS_PATH_LENGTH, directory, L"temp-fixture.json");
+	ASSERT_BOOL_EQ(joined, true);
+	if (!joined) {
+		goto removeOutputDirectory;
+	}
+	bool written = files_write(source, "{\"fixture\":true}", 16);
+	ASSERT_BOOL_EQ(written, true);
+	if (!written) {
+		goto removeOutputDirectory;
+	}
+	BOOL changed = SetCurrentDirectoryW(outputDirectory);
+	ASSERT_BOOL_EQ(changed, true);
+	if (!changed) {
+		goto removeSource;
+	}
 	HMODULE richEdit = LoadLibraryW(L"Msftedit.dll");
-	CHECK(richEdit != NULL);
+	ASSERT_BOOL_EQ(richEdit != NULL, true);
+	if (!richEdit) {
+		goto restoreDirectory;
+	}
 	HWND window =
 		CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 800, 400, NULL, NULL, NULL, NULL);
-	CHECK(window != NULL);
+	ASSERT_BOOL_EQ(window != NULL, true);
+	if (!window) {
+		goto freeRichEdit;
+	}
 	FixtureData *data = calloc(1, sizeof *data);
-	CHECK(data != NULL);
+	ASSERT_BOOL_EQ(data != NULL, true);
+	if (!data) {
+		goto destroyWindow;
+	}
 	(void)snprintf(data->teams[0].name, FIXTURE_TEXT, "Aston Villa");
 	(void)snprintf(data->teams[1].name, FIXTURE_TEXT, "Bristol City");
 	WindowState state = {.data = data, .path = source, .filename = L"temp-fixture.json", .dpi = 96};
@@ -767,14 +906,14 @@ int fixture_window_test(int argc, char **argv) {
 		NULL,
 		NULL
 	);
-	CHECK(state.metadata != NULL);
+	ASSERT_BOOL_EQ(state.metadata != NULL, true);
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
-	CHECK(setMetadata(&state));
+	ASSERT_BOOL_EQ(setMetadata(&state), true);
 	firstLine(state.metadata, L"Viewing fixture: temp-fixture.json");
 	checkFormat(state.metadata, 17, 34, CFE_BOLD, GetSysColor(COLOR_WINDOWTEXT));
 
 	state.temporary = true;
-	CHECK(setMetadata(&state));
+	ASSERT_BOOL_EQ(setMetadata(&state), true);
 	firstLine(state.metadata, L"This fixture object is not saved. Click here to export it");
 	LONG linkStart = (LONG)wcslen(unsavedPrefix);
 	LONG linkEnd = linkStart + (LONG)wcslen(exportLink);
@@ -783,41 +922,56 @@ int fixture_window_test(int argc, char **argv) {
 	checkFormat(state.metadata, linkEnd, linkEnd + 13, 0, GetSysColor(COLOR_WINDOWTEXT));
 
 	ENLINK link = {.nmhdr = {.hwndFrom = state.metadata, .code = EN_LINK}, .msg = WM_LBUTTONDOWN};
-	CHECK(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 0);
-	CHECK(state.temporary);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 0, true);
+	ASSERT_BOOL_EQ(state.temporary, true);
 	link.msg = WM_LBUTTONUP;
-	CHECK(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1);
-	CHECK(!state.temporary && !state.missing && errorMessages == 0);
-	CHECK(wcscmp(state.savedFilename, L"aston-villa-v-bristol-city-12345.json") == 0);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1, true);
+	ASSERT_BOOL_EQ(!state.temporary && !state.missing && errorMessages == 0, true);
+	ASSERT_INT_EQ(wcscmp(state.savedFilename, L"aston-villa-v-bristol-city-12345.json"), 0);
 	firstLine(state.metadata, L"Viewing fixture: aston-villa-v-bristol-city-12345.json");
 	checkContents(state.savedFilename, "{\"fixture\":true}");
 	checkContents(source, "{\"fixture\":true}");
 
-	CHECK(files_write(state.savedFilename, "existing", 8));
+	ASSERT_BOOL_EQ(files_write(state.savedFilename, "existing", 8), true);
 	state.temporary = true;
-	CHECK(setMetadata(&state));
-	CHECK(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1);
-	CHECK(state.temporary && !state.missing && errorMessages == 1);
+	ASSERT_BOOL_EQ(setMetadata(&state), true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1, true);
+	ASSERT_BOOL_EQ(state.temporary && !state.missing && errorMessages == 1, true);
 	firstLine(state.metadata, L"This fixture object is not saved. Click here to export it");
 	checkContents(state.savedFilename, "existing");
-	CHECK(DeleteFileW(state.savedFilename));
+	ASSERT_BOOL_EQ(DeleteFileW(state.savedFilename), true);
 
-	CHECK(DeleteFileW(source));
-	CHECK(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1);
-	CHECK(state.temporary && state.missing && errorMessages == 1);
+	ASSERT_BOOL_EQ(DeleteFileW(source), true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1, true);
+	ASSERT_BOOL_EQ(state.temporary && state.missing && errorMessages == 1, true);
 	firstLine(state.metadata, L"Fixture cannot be found; restart the app");
 	checkFormat(state.metadata, 0, (LONG)wcslen(missingFixture), CFE_BOLD, RGB(255, 0, 0));
-	CHECK(setMetadata(&state));
+	ASSERT_BOOL_EQ(setMetadata(&state), true);
 	firstLine(state.metadata, L"Fixture cannot be found; restart the app");
-	CHECK(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1);
-	CHECK(errorMessages == 1);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1, true);
+	ASSERT_BOOL_EQ(errorMessages == 1, true);
 
 	checkSimulationForm(data, source);
-	CHECK(DestroyWindow(window));
-	CHECK(FreeLibrary(richEdit));
 	free(data);
-	CHECK(SetCurrentDirectoryW(original));
-	CHECK(RemoveDirectoryW(outputDirectory));
-	CHECK(RemoveDirectoryW(directory));
-	return 0;
+destroyWindow:
+	ASSERT_BOOL_EQ(DestroyWindow(window), true);
+freeRichEdit:
+	ASSERT_BOOL_EQ(FreeLibrary(richEdit), true);
+restoreDirectory:
+	ASSERT_BOOL_EQ(SetCurrentDirectoryW(original), true);
+removeSource:
+	if (!fileMissing(source)) {
+		ASSERT_BOOL_EQ(DeleteFileW(source), true);
+	}
+removeOutputDirectory:
+	ASSERT_BOOL_EQ(RemoveDirectoryW(outputDirectory), true);
+removeDirectory:
+	ASSERT_BOOL_EQ(RemoveDirectoryW(directory), true);
+}
+
+void registerFixtureWindowTests(void) {
+	test_run(
+		"fixture window exports fixtures, replaces opponents and runs simulations",
+		test_exports_fixtures_and_runs_simulations
+	);
 }

@@ -38,6 +38,7 @@ enum {
 	SIM_DETAILED,
 	SIM_SUBMIT,
 	SIM_STATUS,
+	SIM_SUMMARY,
 	SIM_CONTROL_COUNT,
 };
 
@@ -154,6 +155,39 @@ static void updateTaskbarProgress(HWND window, WindowState *state) {
 	}
 }
 
+static void
+updateSimulationProgress(HWND window, WindowState *state, WPARAM wParam, LPARAM lParam) {
+	UINT completed = (UINT)wParam;
+	UINT homeWins = (UINT)((uint64_t)wParam >> 32);
+	UINT total = (UINT)lParam;
+	UINT draws = (UINT)((uint64_t)lParam >> 32);
+	if (!state->simulationThread || total == 0 || total > INT_MAX || completed > total ||
+			homeWins > completed || draws > completed - homeWins) {
+		return;
+	}
+	UINT awayWins = completed - homeWins - draws;
+	double percent = completed ? 100.0 / completed : 0;
+	wchar_t summary[256];
+	(void)swprintf(
+		summary,
+		256,
+		L"n = %u: home %u (%.1f%%) / draw %u (%.1f%%) / away %u (%.1f%%)",
+		completed,
+		homeWins,
+		homeWins * percent,
+		draws,
+		draws * percent,
+		awayWins,
+		awayWins * percent
+	);
+	SetWindowTextW(state->simulation[SIM_SUMMARY], summary);
+	state->progressCompleted = completed;
+	state->progressTotal = total;
+	SendMessageW(state->progress, PBM_SETRANGE32, 0, total);
+	SendMessageW(state->progress, PBM_SETPOS, completed, 0);
+	updateTaskbarProgress(window, state);
+}
+
 static HRESULT initializeTaskbar(WindowState *state) {
 	HRESULT result = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 	if (FAILED(result)) {
@@ -257,6 +291,9 @@ static void startSimulation(HWND window, WindowState *state) {
 	}
 	state->progressCompleted = 0;
 	state->progressTotal = 0;
+	SetWindowTextW(
+		state->simulation[SIM_SUMMARY], L"n = 0: home 0 (0.0%) / draw 0 (0.0%) / away 0 (0.0%)"
+	);
 	updateTaskbarProgress(window, state);
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
 		EnableWindow(state->simulation[i], FALSE);
@@ -292,6 +329,13 @@ static void checkSimulation(HWND window, WindowState *state) {
 		return;
 	}
 	KillTimer(window, SIMULATION_TIMER);
+	// The worker can finish after this timer was dequeued, leaving the final snapshot pending.
+	MSG progress;
+	while (PeekMessageW(
+		&progress, window, HARNESS_PROGRESS_MESSAGE, HARNESS_PROGRESS_MESSAGE, PM_REMOVE
+	)) {
+		updateSimulationProgress(window, state, progress.wParam, progress.lParam);
+	}
 	CloseHandle(state->simulationThread);
 	state->simulationThread = NULL;
 	updateTaskbarProgress(window, state);
@@ -903,7 +947,8 @@ static void layout(HWND window, WindowState *state) {
 		{192, 42, 220, 30},
 		{0, 92, 220, 28},
 		{0, 136, 180, 34},
-		{0, 186, 620, 80},
+		{0, 238, 620, 80},
+		{0, 186, 620, 44},
 	};
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		MoveWindow(
@@ -1028,6 +1073,7 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 		{L"BUTTON", L"Generate detailed reports?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
 		{L"BUTTON", L"Simulate fixture", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"STATIC", L"Results are saved beside the fixture, using its filename with .csv.", 0, 0},
+		{L"STATIC", L"", 0, 0},
 	};
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		state->simulation[i] = CreateWindowExW(
@@ -1603,13 +1649,7 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			layout(window, state);
 			return 0;
 		case HARNESS_PROGRESS_MESSAGE:
-			if (state->simulationThread && lParam > 0 && lParam <= INT_MAX && wParam <= (WPARAM)lParam) {
-				state->progressCompleted = (UINT)wParam;
-				state->progressTotal = (UINT)lParam;
-				SendMessageW(state->progress, PBM_SETRANGE32, 0, lParam);
-				SendMessageW(state->progress, PBM_SETPOS, wParam, 0);
-				updateTaskbarProgress(window, state);
-			}
+			updateSimulationProgress(window, state, wParam, lParam);
 			return 0;
 		case WM_CTLCOLORSTATIC:
 		case WM_CTLCOLORBTN: {

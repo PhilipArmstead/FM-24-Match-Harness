@@ -98,7 +98,7 @@ option(FM24_BUILD_TESTS "Build regression checks" OFF)
 if(FM24_BUILD_TESTS)
 	enable_testing()
 	add_executable(fm24_tests
-		tests/main.c
+		tests/test.c
 		tests/job_test.c
 		tests/fixture_data_test.c
 		tests/runner_main_test.c

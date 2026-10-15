@@ -30,5 +30,6 @@ enum { HARNESS_PATH_LENGTH = 1024 };
 // Most worker threads a run job may use.
 enum { HARNESS_MAX_THREADS = 16 };
 
-// Optional run-job notifications to the viewer: completed matches in wParam, total in lParam.
+// Optional run-job snapshots to the x64 viewer (low/high 32 bits):
+// wParam = completed/home wins, lParam = total/draws. Away wins = completed - home wins - draws.
 enum { HARNESS_PROGRESS_MESSAGE = 0x8002 }; // WM_APP + 2

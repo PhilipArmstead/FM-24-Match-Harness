@@ -47,6 +47,8 @@ typedef struct Run {
 	CRITICAL_SECTION lock; // guards results, counters, progress, the CSV and details
 	size_t written;        // rows written so far (always a prefix of the seed list)
 	size_t completed;
+	unsigned homeWins;
+	unsigned draws;
 	uintptr_t progressWindow;
 	FILE *csv;
 	Profiler *profiler;        // samples worker 0 (the job thread)
@@ -262,8 +264,8 @@ static void reportProgress(Run *run) {
 			!PostMessageW(
 				(HWND)run->progressWindow, // NOLINT(performance-no-int-to-ptr): cross-process HWND.
 				HARNESS_PROGRESS_MESSAGE,
-				(WPARAM)run->completed,
-				(LPARAM)run->total
+				(WPARAM)((uint64_t)run->homeWins << 32 | run->completed),
+				(LPARAM)((uint64_t)run->draws << 32 | run->total)
 			)) {
 		log_message("cannot report simulation progress (Windows error %lu)", GetLastError());
 		run->progressWindow = 0;
@@ -298,6 +300,8 @@ static DWORD WINAPI worker(LPVOID parameter) {
 		run->results[index] = result;
 		writeReadyRows(run);
 		run->completed += result.ok;
+		run->homeWins += result.ok && result.match.homeGoals > result.match.awayGoals;
+		run->draws += result.ok && result.match.homeGoals == result.match.awayGoals;
 		reportProgress(run);
 		LeaveCriticalSection(&run->lock);
 		if (!result.ok) {

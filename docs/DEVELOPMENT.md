@@ -19,7 +19,7 @@ src/runner/  main, commands, inject, client, paths, json_reader,
              probe + probe_patterns (generated)
 src/ui/      fixture_window (Win32 controls and GDI pitch drawing),
              fixture_export (portable export filename generation), manifest
-tests/       fixture reader, runner startup and export regression checks
+tests/       custom test runner, fixture reader, job, runner startup and viewer checks
 cmake/       MinGW-w64 toolchain file
 scripts/     build.sh, format.sh, tidy.sh (env.sh: tool locations)
 docs/        PLAN.md: the plan and every finding, phase by phase
@@ -61,8 +61,14 @@ or stripping errors fail the script instead of silently leaving old
 binaries in `bin/`. Close a running runner before rebuilding; for a loaded
 DLL, see the protocol-version instructions below.
 
-Run `bin/fm24_tests.exe` for the application regression checks, or
-`ctest --test-dir build --output-on-failure` for individual results and the
+Run `bin/fm24_tests.exe` for the application regression checks, or pass a
+suite name (`job`, `fixture_data`, `runner_main`, `fixture_export` or
+`fixture_window`) to run only that suite. Each named test prints `[PASS]`
+or `[FAIL]`, followed by a test/failure count; failures return a nonzero
+exit code. Assertions report the source location, expression and expected
+and actual values without stopping the remaining checks.
+
+Use `ctest --test-dir build --output-on-failure` for individual results and the
 Release packaging check. Building does not run the tests. To stage only
 the two distributable files, without the test executable:
 
@@ -103,7 +109,7 @@ on a non-Windows host:
 
 ```sh
 cc -std=c17 -O2 -Isrc/common -Isrc/runner -Isrc/ui \
-  tests/main.c tests/fixture_data_test.c tests/fixture_export_test.c \
+  tests/test.c tests/fixture_data_test.c tests/fixture_export_test.c \
   src/ui/fixture_export.c src/runner/fixture_data.c \
   src/runner/match_config.c src/runner/json_reader.c \
   src/common/buffer.c src/common/tactic_names.c -o /tmp/fm24_tests
@@ -111,6 +117,15 @@ cc -std=c17 -O2 -Isrc/common -Isrc/runner -Isrc/ui \
 # Optional integration check against the local Aston Villa/Bristol City baseline:
 /tmp/fm24_tests fixture_data tools/experiments/baseline.json
 ```
+
+Tests use the same dependency-free framework as the Triple Triad project:
+include `test.h`, define cases with `TEST(describes_the_behaviour)`, and
+use `ASSERT_INT_EQ(actual, expected)` or `ASSERT_BOOL_EQ(actual, expected)`.
+Register each case with a descriptive `test_run` call in its suite's
+`register...Tests` function. Guard failed setup before dereferencing pointers
+or inspecting buffers, since assertions do not abort the test. Keep
+pointer-sized and 64-bit comparisons in `ASSERT_BOOL_EQ` to avoid narrowing
+them to the integer assertion's `int` parameters.
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake

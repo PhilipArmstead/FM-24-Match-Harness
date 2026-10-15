@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "test.h"
 #include "tests.h"
 
-#include <stdlib.h>
 #include <windows.h>
 
 
@@ -18,14 +18,6 @@ static DWORD tempPath(DWORD size, wchar_t *out);
 #undef wmain
 #undef GetTempPathW
 
-#define CHECK(expression)                                                                          \
-	do {                                                                                             \
-		if (!(expression)) {                                                                           \
-			fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expression);                             \
-			exit(EXIT_FAILURE); /* NOLINT(concurrency-mt-unsafe): single-threaded test. */               \
-		}                                                                                              \
-	} while (0)
-
 static wchar_t directory[HARNESS_PATH_LENGTH + 1] = L"C:\\Temp\\";
 static DWORD directoryLength = 8;
 static int exportResult;
@@ -35,7 +27,7 @@ static bool expectTemporary = true;
 static wchar_t exportedPath[HARNESS_PATH_LENGTH];
 
 static DWORD tempPath(DWORD size, wchar_t *out) {
-	CHECK(size == HARNESS_PATH_LENGTH);
+	ASSERT_BOOL_EQ(size == HARNESS_PATH_LENGTH, true);
 	if (directoryLength && directoryLength < size) {
 		wmemcpy(out, directory, directoryLength + 1);
 	}
@@ -44,21 +36,21 @@ static DWORD tempPath(DWORD size, wchar_t *out) {
 
 int commands_getNextFixture(int argc, wchar_t **argv) {
 	++exports;
-	CHECK(argc == 3);
-	CHECK(wcscmp(argv[0], L"fm24ctl.exe") == 0);
-	CHECK(wcscmp(argv[1], L"get-next-fixture") == 0);
-	CHECK(argv[3] == NULL);
-	CHECK(wcslen(argv[2]) == directoryLength + wcslen(L"temp-fixture.json"));
-	CHECK(wcsncmp(argv[2], directory, directoryLength) == 0);
-	CHECK(wcscmp(argv[2] + directoryLength, L"temp-fixture.json") == 0);
+	ASSERT_INT_EQ(argc, 3);
+	ASSERT_INT_EQ(wcscmp(argv[0], L"fm24ctl.exe"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"get-next-fixture"), 0);
+	ASSERT_BOOL_EQ(argv[3] == NULL, true);
+	ASSERT_BOOL_EQ(wcslen(argv[2]) == directoryLength + wcslen(L"temp-fixture.json"), true);
+	ASSERT_INT_EQ(wcsncmp(argv[2], directory, directoryLength), 0);
+	ASSERT_INT_EQ(wcscmp(argv[2] + directoryLength, L"temp-fixture.json"), 0);
 	wcscpy(exportedPath, argv[2]);
 	return exportResult;
 }
 
 int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	++opens;
-	CHECK(wcscmp(path, exportedPath) == 0);
-	CHECK(temporary == expectTemporary);
+	ASSERT_INT_EQ(wcscmp(path, exportedPath), 0);
+	ASSERT_BOOL_EQ(temporary, expectTemporary);
 	return 9;
 }
 
@@ -92,45 +84,49 @@ int commands_probe(int argc, wchar_t **argv) {
 	return 12;
 }
 
-int runner_main_test(int argc, char **argv) {
-	(void)argc;
-	(void)argv;
+TEST(exports_next_fixture_and_dispatches_commands) {
 	wchar_t *arguments[] = {L"fm24ctl.exe", NULL, NULL};
-	CHECK(runnerMain(1, arguments) == 9);
-	CHECK(exports == 1 && opens == 1);
-	CHECK(wcscmp(exportedPath, L"C:\\Temp\\temp-fixture.json") == 0);
+	ASSERT_INT_EQ(runnerMain(1, arguments), 9);
+	ASSERT_BOOL_EQ(exports == 1 && opens == 1, true);
+	ASSERT_INT_EQ(wcscmp(exportedPath, L"C:\\Temp\\temp-fixture.json"), 0);
 
 	exportResult = 7;
-	CHECK(runnerMain(1, arguments) == 7);
-	CHECK(exports == 2 && opens == 1);
+	ASSERT_INT_EQ(runnerMain(1, arguments), 7);
+	ASSERT_BOOL_EQ(exports == 2 && opens == 1, true);
 
 	directoryLength = 0;
-	CHECK(runnerMain(1, arguments) == 1);
+	ASSERT_INT_EQ(runnerMain(1, arguments), 1);
 	directoryLength = HARNESS_PATH_LENGTH;
-	CHECK(runnerMain(1, arguments) == 1);
+	ASSERT_INT_EQ(runnerMain(1, arguments), 1);
 	directoryLength = HARNESS_PATH_LENGTH - (DWORD)wcslen(L"temp-fixture.json");
-	CHECK(runnerMain(1, arguments) == 1);
-	CHECK(exports == 2 && opens == 1);
+	ASSERT_INT_EQ(runnerMain(1, arguments), 1);
+	ASSERT_BOOL_EQ(exports == 2 && opens == 1, true);
 
 	--directoryLength;
 	wmemset(directory, L'x', directoryLength);
 	directory[directoryLength - 1] = L'\\';
 	directory[directoryLength] = 0;
 	exportResult = 0;
-	CHECK(runnerMain(1, arguments) == 9);
-	CHECK(exports == 3 && opens == 2);
+	ASSERT_INT_EQ(runnerMain(1, arguments), 9);
+	ASSERT_BOOL_EQ(exports == 3 && opens == 2, true);
 
 	arguments[1] = L"run";
-	CHECK(runnerMain(2, arguments) == 10);
+	ASSERT_INT_EQ(runnerMain(2, arguments), 10);
 	arguments[1] = L"encode";
-	CHECK(runnerMain(2, arguments) == 11);
+	ASSERT_INT_EQ(runnerMain(2, arguments), 11);
 	arguments[1] = L"probe";
-	CHECK(runnerMain(2, arguments) == 12);
+	ASSERT_INT_EQ(runnerMain(2, arguments), 12);
 	arguments[1] = exportedPath;
 	expectTemporary = false;
-	CHECK(runnerMain(2, arguments) == 9);
-	CHECK(exports == 3 && opens == 3);
+	ASSERT_INT_EQ(runnerMain(2, arguments), 9);
+	ASSERT_BOOL_EQ(exports == 3 && opens == 3, true);
 	arguments[1] = L"unknown";
-	CHECK(runnerMain(2, arguments) == 2);
-	return 0;
+	ASSERT_INT_EQ(runnerMain(2, arguments), 2);
+}
+
+void registerRunnerMainTests(void) {
+	test_run(
+		"runner exports the next fixture and dispatches commands",
+		test_exports_next_fixture_and_dispatches_commands
+	);
 }
