@@ -10,6 +10,7 @@
 // With `threads` > 1 the seeds are shared out between worker threads, each playing whole matches
 // with its own copy of the input and its own game stream. Rows are still written in seed order.
 
+#include "database.h"
 #include "files.h"
 #include "game.h"
 #include "job.h"
@@ -86,8 +87,10 @@ void jobs_run(const Job *job, const wchar_t *directory) {
 	}
 	SeedBuilder seedBuilder;
 	if (!job->keepSeed && !job->keepBuild) {
-		char error[256];
-		if (!seedBuilder_open(&seedBuilder, &input, run.fileSeed, error, sizeof error)) {
+		char error[512] = "";
+		uint8_t *awayTeam = NULL;
+		if ((job->awayTeam[0] && !database_findTeam(job->awayTeam, &awayTeam, error, sizeof error)) ||
+				!seedBuilder_open(&seedBuilder, &input, run.fileSeed, awayTeam, error, sizeof error)) {
 			log_message("cannot rebuild per seed: %s", error);
 			job_writeResult(
 				directory, "error: %s (--keep-build plays the input with only its seed changed)", error

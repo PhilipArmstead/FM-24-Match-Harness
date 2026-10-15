@@ -145,7 +145,10 @@ next to the DLL there.
      until the team is submitted, a build picks the human side's line-up
      itself, differently for each seed. If a seed's build has a different
      structure (another line-up or AI tactic) where the input was edited,
-     that seed fails (see `harness.log`)
+     that seed fails (see `harness.log`). The input and the build are
+     aligned part by part along the serialiser's call chains (`align()` in
+     `seed_build.c`), so a difference only stops edits inside the parts that
+     differ
    - `--keep-build`: play the input as it is, changing only its seed. The
      pre-match values stay those of the seed it was built with, so results
      differ from the game's for other seeds, but it works for any input
@@ -195,6 +198,18 @@ next to the DLL there.
      same `.bin`
 5. `fm24ctl encode <in.json> <out.bin>` converts a config to a `.bin` input
    (no game needed).
+   `fm24ctl replace-away <in.json> <team> <out.json> [--full]` rebuilds a
+   config against another away team (`src/dll/job_replace.c`). `<team>` is a
+   `db::TEAM` unique ID or a club short name (`database_findTeam`). The
+   input's edits are re-applied as in `run`, except those to the old away
+   team, and the output's `away_team` header makes `run` rebuild against the
+   same team. For each build the seed builder swaps the new team into three
+   places and restores them afterwards (`swapAwayTeam` in `seed_build.c`):
+   - the fixture's `+0x10`;
+   - the copies of the fixture among the human's matches
+     (`[fm+0x6374488]+0x130`). Without these the builder doesn't give the human
+     manager control (`sub_143456590`) and picks the human's side itself;
+   - the home team's next-match opponent (`TEAM+0xA0` -> `+0x38`).
 6. `fm24ctl probe [path\to\fm.exe]` reports where another build of `fm.exe`
    (e.g. the Epic Games one) has the code and data the harness uses. It reads
    the file only: nothing is injected, and the game isn't needed (without a
@@ -221,7 +236,9 @@ rng_final, ms`.
 
 `fields` lists every write the game's serialiser makes, in order, so encoding
 is lossless. The encoder reads only `format` and each field's value; every
-other key is an annotation. `site`, `p`, `member` and the header's `paths`
+other key is an annotation, except `away_team` (the unique ID of a team that
+`replace-away` put in place of the fixture's away team), which `run` passes
+to the DLL. `site`, `p`, `member` and the header's `paths`
 and `bytes` are written only with `get-next-fixture --full`. User-facing
 field meanings are in `docs/FIXTURE.md`.
 

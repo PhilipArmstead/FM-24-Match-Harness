@@ -16,6 +16,7 @@ bool output_write(
 	const wchar_t *path,
 	const Serialised *serialised,
 	const char *source,
+	uint32_t awayTeam,
 	bool full
 ) {
 	if (!output_wantsJson(path)) {
@@ -23,7 +24,7 @@ bool output_write(
 	}
 	PeopleIndex people;
 	(void)database_loadPeople(&people); // without it the config just lacks player names
-	bool ok = configWriter_write(path, serialised, source, &people, full);
+	bool ok = configWriter_write(path, serialised, source, &people, awayTeam, full);
 	database_freePeople(&people);
 	return ok;
 }

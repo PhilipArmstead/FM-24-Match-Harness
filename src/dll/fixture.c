@@ -8,13 +8,9 @@
 #include "memory.h"
 
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <windows.h>
 
 
 enum {
-	SCAN_CHUNK = 1 << 20,
 	DAY_MASK = 0x1FF,
 	TIME_SHIFT = 9,
 	TIME_MASK = 0x7F,
@@ -23,25 +19,19 @@ enum {
 };
 
 typedef struct Search {
-	uintptr_t fixtureVtable;
 	const uint8_t *team;
 	uint64_t now;
 	uint8_t *best;
 	uint64_t bestKey;
 } Search;
 
-static const uintptr_t userSpaceEnd = 0x7FFFFFFF0000ULL;
-
 static uint64_t dateKey(uint16_t dayWord, uint16_t year);
-static void considerFixture(Search *search, uint8_t *fixture);
-static void scanRegion(Search *search, uint8_t *base, size_t size, uint8_t *chunk);
-static void scanHeap(Search *search);
+static void considerFixture(void *context, uint8_t *fixture);
 static void describe(NextFixture *next, uint64_t key);
 
 bool fixture_findNext(NextFixture *next, const char **error) {
 	*next = (NextFixture){0};
-	Search search = {
-		.fixtureVtable = (uintptr_t)game_address(RVA_FIXTURE_VTABLE), .bestKey = UINT64_MAX};
+	Search search = {.bestKey = UINT64_MAX};
 	search.team = database_findHumanTeam();
 	if (!search.team) {
 		*error = "no human manager/team found";
@@ -52,7 +42,7 @@ bool fixture_findNext(NextFixture *next, const char **error) {
 	(void)memory_readU16(game_address(RVA_CURRENT_DATE), 0, &dayWord);
 	(void)memory_readU16(game_address(RVA_CURRENT_DATE), 2, &year);
 	search.now = dateKey(dayWord, year);
-	scanHeap(&search);
+	memory_scanForQword((uintptr_t)game_address(RVA_FIXTURE_VTABLE), considerFixture, &search);
 	if (!search.best) {
 		*error = "no upcoming fixture";
 		return false;
@@ -68,7 +58,8 @@ static uint64_t dateKey(uint16_t dayWord, uint16_t year) {
 				 (uint64_t)(dayWord >> TIME_SHIFT);
 }
 
-static void considerFixture(Search *search, uint8_t *fixture) {
+static void considerFixture(void *context, uint8_t *fixture) {
+	Search *search = context;
 	uint8_t *home = NULL;
 	uint8_t *away = NULL;
 	uint16_t dayWord = 0;
@@ -85,42 +76,6 @@ static void considerFixture(Search *search, uint8_t *fixture) {
 		search->bestKey = key;
 		search->best = fixture;
 	}
-}
-
-// Scans one committed region in chunks for qwords equal to the fixture vtable.
-static void scanRegion(Search *search, uint8_t *base, size_t size, uint8_t *chunk) {
-	for (size_t offset = 0; offset < size; offset += SCAN_CHUNK) {
-		size_t length = size - offset < SCAN_CHUNK ? size - offset : SCAN_CHUNK;
-		if (!memory_read(base + offset, chunk, length)) {
-			continue;
-		}
-		for (size_t i = 0; i + sizeof(uintptr_t) <= length; i += sizeof(uintptr_t)) {
-			uintptr_t value = 0;
-			memcpy(&value, chunk + i, sizeof value);
-			if (value == search->fixtureVtable) {
-				considerFixture(search, base + offset + i);
-			}
-		}
-	}
-}
-
-// Walks the process's private read/write memory looking for sicomps::FIXTURE objects.
-static void scanHeap(Search *search) {
-	uint8_t *chunk = malloc(SCAN_CHUNK);
-	if (!chunk) {
-		return;
-	}
-	MEMORY_BASIC_INFORMATION info;
-	for (uint8_t *address = NULL; VirtualQuery(address, &info, sizeof info);
-		address = (uint8_t *)info.BaseAddress + info.RegionSize) {
-		if (info.State == MEM_COMMIT && info.Type == MEM_PRIVATE && info.Protect == PAGE_READWRITE) {
-			scanRegion(search, info.BaseAddress, info.RegionSize, chunk);
-		}
-		if ((uintptr_t)info.BaseAddress + info.RegionSize >= userSpaceEnd) {
-			break;
-		}
-	}
-	free(chunk);
 }
 
 static void describe(NextFixture *next, uint64_t key) {

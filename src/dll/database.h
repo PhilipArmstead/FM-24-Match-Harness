@@ -35,3 +35,11 @@ bool database_personName(const uint8_t *person, char *out, size_t size);
 
 // The short name of a team's club, or "?".
 void database_clubShortName(const uint8_t *team, char *out, size_t size);
+
+// A team (db::TEAM) named by `spec`: its unique ID in decimal, or its club's short name (case is
+// ignored; a part of the name will do if no club's name matches in full), which picks the club's
+// first team. On failure, `error` says why (for an ambiguous name it lists the clubs).
+bool database_findTeam(const char *spec, uint8_t **team, char *error, size_t errorSize);
+
+// A team's unique ID, or 0 if it cannot be read.
+uint32_t database_teamUniqueId(const uint8_t *team);

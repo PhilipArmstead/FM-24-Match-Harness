@@ -17,6 +17,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef enum ConfigValueKind {
 	CONFIG_U8 = 1,
@@ -60,3 +61,7 @@ bool matchConfig_visit(
 	char *error,
 	size_t errorSize
 );
+
+// A config's "away_team": the unique ID of the team that replaced the fixture's away team
+// (`fm24ctl replace-away`), or 0 if there is none. False if the JSON cannot be read.
+bool matchConfig_awayTeam(const char *json, size_t length, uint32_t *awayTeam);

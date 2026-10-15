@@ -56,10 +56,23 @@ static bool workingPath(const wchar_t *name, Path *out);
 static int submitAndReport(const char *job);
 static bool encodeConfig(const Path *json, ByteBuffer *bytes);
 static bool encodeToFile(const Path *json, const Path *output, size_t *size);
+static bool readAwayTeam(const Path *json, uint32_t *awayTeam);
+// A JSON config's "away_team" (0 if it has none).
+static bool readAwayTeam(const Path *json, uint32_t *awayTeam) {
+	ByteBuffer text = {0};
+	bool ok = files_read(json->wide, &text) &&
+						matchConfig_awayTeam(buffer_string(&text), text.length, awayTeam);
+	if (!ok) {
+		fprintf(stderr, "cannot read %s\n", json->utf8);
+	}
+	buffer_free(&text);
+	return ok;
+}
+
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away);
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
 static int printSummary(const Path *csvPath);
-static bool prepareInput(Path *input);
+static bool prepareInput(Path *input, uint32_t *awayTeam);
 static unsigned long defaultThreads(void);
 static bool isSeedList(const wchar_t *text);
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options);
@@ -84,10 +97,11 @@ int commands_run(int argc, wchar_t **argv) {
 	Path output;
 	Path profile = {0};
 	char seeds[256];
+	uint32_t awayTeam = 0;
 	if (!absolutePath(options.input, &input) ||
 			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
 			(options.profile && !absolutePath(options.profile, &profile)) ||
-			!paths_toUtf8(options.seeds, seeds, sizeof seeds) || !prepareInput(&input)) {
+			!paths_toUtf8(options.seeds, seeds, sizeof seeds) || !prepareInput(&input, &awayTeam)) {
 		return EXIT_FAILED;
 	}
 	printf("results: %s\n", output.utf8);
@@ -96,7 +110,7 @@ int commands_run(int argc, wchar_t **argv) {
 		job,
 		sizeof job,
 		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\ndetailed=%d\n"
-		"human_control=%d\nkeep_build=%d\n",
+		"human_control=%d\nkeep_build=%d\naway_team=%.0u\n",
 		input.utf8,
 		seeds,
 		output.utf8,
@@ -104,7 +118,8 @@ int commands_run(int argc, wchar_t **argv) {
 		profile.utf8,
 		options.detailed,
 		options.humanControl,
-		options.keepBuild
+		options.keepBuild,
+		awayTeam
 	);
 	printf("job submitted; waiting...\n");
 	char result[CLIENT_RESULT_LENGTH];
@@ -135,6 +150,42 @@ int commands_getNextFixture(int argc, wchar_t **argv) {
 	char job[JOB_LENGTH];
 	(void)snprintf(
 		job, sizeof job, "command=build_next\noutput=%s\nseed=%s\nfull=%d\n", output.utf8, seed, full
+	);
+	return submitAndReport(job);
+}
+
+int commands_replaceAway(int argc, wchar_t **argv) {
+	bool full = argc == 6 && wcscmp(argv[5], L"--full") == 0;
+	if ((argc != 5 && !full) || !files_hasExtension(argv[2], L".json") ||
+			!files_hasExtension(argv[4], L".json")) {
+		fprintf(
+			stderr,
+			"usage: fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
+		);
+		return EXIT_USAGE;
+	}
+	Path input;
+	Path output;
+	Path bin;
+	char team[256];
+	size_t size = 0;
+	uint32_t awayTeam = 0;
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
+			!paths_toUtf8(argv[3], team, sizeof team) || strpbrk(team, "\r\n") ||
+			!readAwayTeam(&input, &awayTeam) || !workingPath(L"_job_input.bin", &bin) ||
+			!encodeToFile(&input, &bin, &size)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job,
+		sizeof job,
+		"command=replace_away\ninput=%s\nteam=%s\naway_team=%.0u\noutput=%s\nfull=%d\n",
+		bin.utf8,
+		team,
+		awayTeam,
+		output.utf8,
+		full
 	);
 	return submitAndReport(job);
 }
@@ -270,14 +321,17 @@ static int printSummary(const Path *csvPath) {
 	return EXIT_OK;
 }
 
-// Turns a .json config into the .bin the DLL plays; a .bin is played as it is.
-static bool prepareInput(Path *input) {
+// Turns a .json config into the .bin the DLL plays, and reads its "away_team"; a .bin is played
+// as it is.
+static bool prepareInput(Path *input, uint32_t *awayTeam) {
+	*awayTeam = 0;
 	if (!files_hasExtension(input->wide, L".json")) {
 		return true;
 	}
 	Path bin;
 	size_t size = 0;
-	if (!workingPath(L"_job_input.bin", &bin) || !encodeToFile(input, &bin, &size)) {
+	if (!readAwayTeam(input, awayTeam) || !workingPath(L"_job_input.bin", &bin) ||
+			!encodeToFile(input, &bin, &size)) {
 		return false;
 	}
 	*input = bin;

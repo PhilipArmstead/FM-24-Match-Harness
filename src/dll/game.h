@@ -43,9 +43,15 @@ enum GameData {
 	RVA_GAME_MATCH_VTABLE = 0x56083C8,
 	RVA_HUMAN_NON_PLAYER_VTABLE = 0x5A6A388, // db::HUMAN_NON_PLAYER
 	RVA_FIXTURE_VTABLE = 0x5A25F58,          // sicomps::FIXTURE
+	RVA_TEAM_VTABLE = 0x5A78848,             // db::TEAM
 	RVA_PEOPLE_LIST = 0x642ED38,             // [p] + 0x80 -> {start, end}
 	RVA_CURRENT_DATE = 0x631D5BC,            // u16 day | time << 9, u16 year
-	RVA_TLS_INDEX = 0x638EEC0,               // fm.exe's _tls_index
+	// [p] + HUMAN_MATCHES -> {start, end} of the matches the human manager attends: each points to
+	// a copy of its sicomps::FIXTURE. The match builder gives a team's manager human control
+	// (MANAGER_HUMAN_IN_CONTROL, the human's line-up and tactic) only for a fixture whose home and
+	// away teams match one of these.
+	RVA_HUMAN_MATCHES_HOLDER = 0x6374488,
+	RVA_TLS_INDEX = 0x638EEC0, // fm.exe's _tls_index
 };
 
 // GAME_MATCH layout.
@@ -84,12 +90,19 @@ enum DatabaseLayout {
 	PLAYER_FROM_PERSON = -0x278,
 	PLAYER_RATINGS = 0x208, // 15 positions (1-20) + 54 attributes (1-100)
 	CONTRACT_TEAM = 0x10,
+	TEAM_UNIQUE_ID = 0x0C,
 	TEAM_CLUB = 0x30,
+	TEAM_IN_GAME_DATA = 0xA0, // TEAM_IN_GAME_DATA *
+	// TEAM_IN_GAME_DATA: the team's next match (competition +0x28, the team, its opponent, the date
+	// +0x40).
+	NEXT_MATCH_OPPONENT = 0x38,
+	CLUB_TEAMS = 0x18,      // vector<TEAM *> {start, end}: the first team, then B, youth etc.
 	CLUB_NAME_SHORT = 0xC8, // singly indirect string
 	FIXTURE_HOME = 0x08,
 	FIXTURE_AWAY = 0x10,
 	FIXTURE_DATE = 0x4C, // u16 day | time << 9, u16 year
 	PEOPLE_LIST_HOLDER = 0x80,
+	HUMAN_MATCHES = 0x130,
 };
 
 // Thread-local PCG32 the pre-match setup uses when no RNG is passed in.

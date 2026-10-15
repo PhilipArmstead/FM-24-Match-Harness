@@ -73,6 +73,12 @@ int commands_encode(int argc, wchar_t **argv) {
 	return 11;
 }
 
+int commands_replaceAway(int argc, wchar_t **argv) {
+	(void)argc;
+	(void)argv;
+	return 0;
+}
+
 int commands_probe(int argc, wchar_t **argv) {
 	(void)argc;
 	(void)argv;

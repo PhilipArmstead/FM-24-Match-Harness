@@ -68,8 +68,10 @@ The file has a header and a `fields` array:
 }
 ```
 
-Only `format` and the fields' values are needed to play the file; the rest
-of the header is information. `game_build` is the PE timestamp of the
+Only `format` and the fields' values are needed to play the file. The one
+other header key that is read is `away_team`, which only a file made by
+`replace-away` has (see [Changing the opponent](#changing-the-opponent)). The
+rest of the header is information. `game_build` is the PE timestamp of the
 `fm.exe` that wrote it: 1744804480 (Steam) or 1744804949 (Epic Games).
 
 Each field has exactly one value key:
@@ -843,6 +845,48 @@ edited them. If you edit one, your value is used for every seed.
 
 Their fields are mostly unnamed: look in the `official[0..3]`, `referee` and
 `venue` blocks. Names such as the stadium are `str` fields you can edit.
+
+# Changing the opponent
+
+You can't swap teams by editing the file: another squad writes a different
+number of fields. Have the game build the match against another team instead:
+
+```
+fm24ctl replace-away next-fixture.json 677 luton.json
+fm24ctl replace-away next-fixture.json "Luton Town" luton.json
+```
+
+The team is its unique ID in the game's database, or its club's short name as
+the game shows it ("Man City", not "Manchester City"). Case doesn't matter, and
+part of a name will do if no club's name matches in full. A name picks the
+club's first team. If the name fits more than one club, the command lists them
+with their IDs; use an ID then.
+
+The game builds the new side, picking the squad and tactic as it would for a
+real match. Your own side keeps the line-up and tactic you picked in the game.
+Your edits to the rest of the file are kept, as `run` keeps them. Edits to the
+old away team are dropped, because those players aren't in the match any more.
+The result line says how many edits were kept and dropped.
+
+The output has `"away_team": <ID>` in its header. `run` reads it and builds
+the new opponent for every seed, so seeds work as for any other file. Don't
+remove it. Run `replace-away` again on the output to change the opponent again.
+
+Limits:
+
+- The input must still be the human manager's next fixture, as for `run`. Only
+  the away team can be replaced, and only when it is the opponent: if you
+  manage the away side, the command refuses.
+- The match stays a match of the original competition, venue and date. Only
+  the team changes; the game doesn't check that the new team could play in
+  it.
+- Some of your side's tactic depends on the opponent, such as the opposition
+  instructions (`part_4240`), whose records are per opposing player. The game
+  rebuilds these for the new opponent. An edit there that can't be placed in
+  the new build fails the command and names the field in `harness.log`.
+- While building, the harness briefly puts the new team into the game's own
+  fixture and the human's records of the match, then restores them. Run it
+  only while the game is idle, as for every other command.
 
 # Editing with a script
 

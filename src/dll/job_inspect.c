@@ -33,6 +33,7 @@ void jobs_inspect(const Job *job, const wchar_t *directory) {
 			&serialised,
 			"Decoded binary fixture (date annotation unavailable)",
 			&people,
+			0,
 			false
 		);
 		database_freePeople(&people);

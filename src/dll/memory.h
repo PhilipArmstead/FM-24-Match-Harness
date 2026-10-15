@@ -16,6 +16,14 @@ bool memory_readPointer(const void *base, ptrdiff_t offset, uint8_t **out);
 bool memory_readU16(const void *base, ptrdiff_t offset, uint16_t *out);
 bool memory_readU32(const void *base, ptrdiff_t offset, uint32_t *out);
 
+// Calls `visit` with the address of every aligned qword equal to `value` in the process's private
+// read/write memory (where the game's heap objects live): a scan for objects by vtable.
+void memory_scanForQword(
+	uintptr_t value,
+	void (*visit)(void *context, uint8_t *address),
+	void *context
+);
+
 // Unaligned little-endian loads from a byte array.
 uint16_t memory_loadU16(const uint8_t *bytes);
 uint32_t memory_loadU32(const uint8_t *bytes);

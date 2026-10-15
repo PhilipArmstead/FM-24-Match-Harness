@@ -13,11 +13,14 @@
 
 
 typedef enum JobCommand {
-	JOB_NONE,       // no "command=" line: the job is rejected
-	JOB_RUN,        // play an input with a list of seeds, write a CSV
-	JOB_BUILD_NEXT, // build the human manager's next fixture to .bin or .json
-	JOB_INSPECT,    // decode existing binary input to JSON without preparing or playing it
+	JOB_NONE,         // no "command=" line: the job is rejected
+	JOB_RUN,          // play an input with a list of seeds, write a CSV
+	JOB_BUILD_NEXT,   // build the human manager's next fixture to .bin or .json
+	JOB_INSPECT,      // decode existing binary input to JSON without preparing or playing it
+	JOB_REPLACE_AWAY, // rebuild an input against another away team, keeping its other edits
 } JobCommand;
+
+enum { JOB_TEAM_LENGTH = 256 };
 
 typedef struct Job {
 	JobCommand command;
@@ -32,8 +35,10 @@ typedef struct Job {
 	bool humanControl; // run: keep the input's "human in control" flags (no AI in-match changes)
 	bool keepBuild;    // run: patch each seed into the input instead of rebuilding it per seed
 	bool hasSeed;      // build_next: use `seed` instead of a clock value
-	bool full;         // build_next: also write the research keys in a JSON config
+	bool full;         // build_next, replace_away: also write the research keys in a JSON config
 	uint32_t seed;
+	char team[JOB_TEAM_LENGTH];     // replace_away: the new away team (database_findTeam's spec)
+	char awayTeam[JOB_TEAM_LENGTH]; // run, replace_away: the input's "away_team" ("": the fixture's)
 } Job;
 
 // Reads <directory>\job.txt; logs and returns false if it is missing or malformed.
@@ -48,3 +53,4 @@ void job_writeResult(const wchar_t *directory, const char *format, ...)
 void jobs_run(const Job *job, const wchar_t *directory);
 void jobs_buildNext(const Job *job, const wchar_t *directory);
 void jobs_inspect(const Job *job, const wchar_t *directory);
+void jobs_replaceAway(const Job *job, const wchar_t *directory);

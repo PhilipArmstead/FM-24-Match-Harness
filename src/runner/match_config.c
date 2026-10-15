@@ -295,3 +295,27 @@ static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 	}
 	return ok;
 }
+
+bool matchConfig_awayTeam(const char *json, size_t length, uint32_t *awayTeam) {
+	*awayTeam = 0;
+	JsonReader reader;
+	jsonReader_init(&reader, json, length);
+	ByteBuffer key = {0};
+	bool ok = jsonReader_consume(&reader, '{');
+	if (ok && !jsonReader_consume(&reader, '}')) {
+		do {
+			ok = jsonReader_readString(&reader, &key) && jsonReader_consume(&reader, ':');
+			if (ok && strcmp(buffer_string(&key), "away_team") == 0) {
+				unsigned long long value = 0;
+				bool isUnsigned = false;
+				ok =
+					jsonReader_readNumber(&reader, &value, &isUnsigned) && isUnsigned && value <= UINT32_MAX;
+				*awayTeam = (uint32_t)value;
+			} else if (ok) {
+				ok = jsonReader_skipValue(&reader);
+			}
+		} while (ok && jsonReader_consume(&reader, ','));
+	}
+	buffer_free(&key);
+	return ok;
+}

@@ -22,6 +22,7 @@ static bool parseNumber(const char *text, char **end, unsigned long long *value)
 static bool parseRange(const char *part, unsigned long long *first, unsigned long long *last);
 static bool parseSeeds(Job *job, char *spec);
 static bool parseCommand(Job *job, const char *value);
+static bool copyText(const char *value, char *out, size_t size);
 static bool parseLine(Job *job, char *key, char *value);
 static bool isComplete(const Job *job);
 
@@ -140,7 +141,12 @@ static bool parseCommand(Job *job, const char *value) {
 	static const struct {
 		const char *name;
 		JobCommand command;
-	} commands[] = {{"run", JOB_RUN}, {"build_next", JOB_BUILD_NEXT}, {"inspect", JOB_INSPECT}};
+	} commands[] = {
+		{"run", JOB_RUN},
+		{"build_next", JOB_BUILD_NEXT},
+		{"inspect", JOB_INSPECT},
+		{"replace_away", JOB_REPLACE_AWAY},
+	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
 			job->command = commands[i].command;
@@ -150,9 +156,24 @@ static bool parseCommand(Job *job, const char *value) {
 	return false;
 }
 
+static bool copyText(const char *value, char *out, size_t size) {
+	size_t length = strlen(value);
+	if (length >= size) {
+		return false;
+	}
+	memcpy(out, value, length + 1);
+	return true;
+}
+
 static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "command") == 0) {
 		return parseCommand(job, value);
+	}
+	if (strcmp(key, "team") == 0) {
+		return copyText(value, job->team, sizeof job->team);
+	}
+	if (strcmp(key, "away_team") == 0) {
+		return copyText(value, job->awayTeam, sizeof job->awayTeam);
 	}
 	if (strcmp(key, "input") == 0) {
 		return widen(value, job->input, HARNESS_PATH_LENGTH);
@@ -209,6 +230,7 @@ static bool isComplete(const Job *job) {
 		case JOB_RUN: return hasInput && hasOutput && (job->keepSeed || job->seedCount > 0);
 		case JOB_BUILD_NEXT: return hasOutput;
 		case JOB_INSPECT: return hasInput && hasOutput;
+		case JOB_REPLACE_AWAY: return hasInput && hasOutput && job->team[0] != 0;
 	}
 	return false;
 }

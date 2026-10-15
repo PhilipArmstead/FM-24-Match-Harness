@@ -10,7 +10,10 @@
 //              ["member": game object member,] ["player": name,] ["flags": [...],] <value>
 //              [, "role": "seed"]}
 //
-// Only "format" and each field's <value> are read back by the encoder. The research keys (bytes,
+// "away_team" (written when `awayTeam` is not 0) is the unique ID of a team that replaced the
+// fixture's away team (job_replace.c); `run` rebuilds the input against it.
+//
+// Only "format", "away_team" and each field's <value> are read back. The research keys (bytes,
 // paths, site, p, member) are written only with `full`.
 //
 // <value> is one of u8 / u16 / u32 / u64 (unsigned integers), str (a u32 byte length followed by
@@ -30,5 +33,6 @@ bool configWriter_write(
 	const Serialised *serialised,
 	const char *source,
 	const PeopleIndex *people,
+	uint32_t awayTeam,
 	bool full
 );

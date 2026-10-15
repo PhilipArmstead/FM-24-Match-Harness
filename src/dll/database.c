@@ -11,12 +11,30 @@
 #include <string.h>
 
 
-enum { MAX_NAME_LENGTH = 200 };
+enum { MAX_NAME_LENGTH = 200, MAX_CLUBS_LISTED = 8 };
+
+// Teams found by a heap scan for the db::TEAM vtable (freed pool entries lose their vtable).
+typedef struct TeamSearch {
+	bool byId;
+	uint32_t uniqueId;
+	const char *name;
+	uint8_t *team;                    // byId: the match
+	uint8_t *exact[MAX_CLUBS_LISTED]; // by name: distinct clubs whose name matches in full
+	size_t exactCount;
+	uint8_t *partial[MAX_CLUBS_LISTED]; // ... or contains the name
+	size_t partialCount;
+} TeamSearch;
 
 static bool readString(const uint8_t *object, char *out, size_t size);
 static bool readPersonString(const uint8_t *person, ptrdiff_t offset, char *out, size_t size);
 static bool peopleRange(uint8_t ***start, uint8_t ***end);
 static int comparePeople(const void *a, const void *b);
+static bool parseUniqueId(const char *spec, uint32_t *uniqueId);
+static bool containsIgnoringCase(const char *text, const char *part);
+static void addClub(uint8_t **clubs, size_t *count, uint8_t *club);
+static void considerTeam(void *context, uint8_t *team);
+static bool firstTeam(const uint8_t *club, uint8_t **team);
+static void listClubs(uint8_t *const *clubs, size_t count, char *error, size_t errorSize);
 
 bool database_loadPeople(PeopleIndex *index) {
 	*index = (PeopleIndex){0};
@@ -92,6 +110,42 @@ void database_clubShortName(const uint8_t *team, char *out, size_t size) {
 	}
 }
 
+bool database_findTeam(const char *spec, uint8_t **team, char *error, size_t errorSize) {
+	*team = NULL;
+	TeamSearch search = {.name = spec};
+	search.byId = parseUniqueId(spec, &search.uniqueId);
+	memory_scanForQword((uintptr_t)game_address(RVA_TEAM_VTABLE), considerTeam, &search);
+	if (search.byId) {
+		*team = search.team;
+		if (!*team) {
+			(void)snprintf(error, errorSize, "no team with unique ID %u", search.uniqueId);
+		}
+		return *team != NULL;
+	}
+	bool exact = search.exactCount > 0;
+	uint8_t **clubs = exact ? search.exact : search.partial;
+	size_t count = exact ? search.exactCount : search.partialCount;
+	if (count == 0) {
+		(void)snprintf(error, errorSize, "no club is called \"%s\"", spec);
+		return false;
+	}
+	if (count > 1) {
+		listClubs(clubs, count, error, errorSize);
+		return false;
+	}
+	if (!firstTeam(clubs[0], team)) {
+		(void)snprintf(error, errorSize, "cannot read the club's first team");
+		return false;
+	}
+	return true;
+}
+
+uint32_t database_teamUniqueId(const uint8_t *team) {
+	uint32_t uniqueId = 0;
+	(void)memory_readU32(team, TEAM_UNIQUE_ID, &uniqueId);
+	return uniqueId;
+}
+
 // A game string object: u32 byte length followed by UTF-8 bytes.
 static bool readString(const uint8_t *object, char *out, size_t size) {
 	uint32_t length = 0;
@@ -132,4 +186,94 @@ static int comparePeople(const void *a, const void *b) {
 	uint32_t left = ((const Person *)a)->uniqueId;
 	uint32_t right = ((const Person *)b)->uniqueId;
 	return (left > right) - (left < right);
+}
+
+// A decimal unique ID (digits only).
+static bool parseUniqueId(const char *spec, uint32_t *uniqueId) {
+	if (!*spec || strspn(spec, "0123456789") != strlen(spec)) {
+		return false;
+	}
+	unsigned long long value = strtoull(spec, NULL, 10);
+	*uniqueId = (uint32_t)value;
+	return value <= UINT32_MAX;
+}
+
+// ASCII case-insensitive substring test (other UTF-8 bytes must match exactly).
+static bool containsIgnoringCase(const char *text, const char *part) {
+	size_t length = strlen(part);
+	for (const char *start = text; *start; ++start) {
+		if (_strnicmp(start, part, length) == 0) {
+			return true;
+		}
+	}
+	return length == 0;
+}
+
+static void addClub(uint8_t **clubs, size_t *count, uint8_t *club) {
+	for (size_t i = 0; i < *count && i < MAX_CLUBS_LISTED; ++i) {
+		if (clubs[i] == club) {
+			return;
+		}
+	}
+	if (*count < MAX_CLUBS_LISTED) {
+		clubs[*count] = club;
+	}
+	++*count;
+}
+
+static void considerTeam(void *context, uint8_t *team) {
+	TeamSearch *search = context;
+	uint8_t *club = NULL;
+	if (!memory_readPointer(team, TEAM_CLUB, &club)) {
+		return;
+	}
+	if (search->byId) {
+		if (!search->team && database_teamUniqueId(team) == search->uniqueId) {
+			search->team = team;
+		}
+		return;
+	}
+	char name[MAX_NAME_LENGTH + 1];
+	database_clubShortName(team, name, sizeof name);
+	if (_stricmp(name, search->name) == 0) {
+		addClub(search->exact, &search->exactCount, club);
+	} else if (containsIgnoringCase(name, search->name)) {
+		addClub(search->partial, &search->partialCount, club);
+	}
+}
+
+// The first of a club's teams (the senior side), checked to be a db::TEAM.
+static bool firstTeam(const uint8_t *club, uint8_t **team) {
+	uint8_t *teams = NULL;
+	uint8_t *vtable = NULL;
+	return memory_readPointer(club, CLUB_TEAMS, &teams) && memory_readPointer(teams, 0, team) &&
+				 memory_readPointer(*team, 0, &vtable) &&
+				 (uintptr_t)vtable == (uintptr_t)game_address(RVA_TEAM_VTABLE);
+}
+
+// "N clubs match: Name (ID), ...", for an ambiguous name.
+static void listClubs(uint8_t *const *clubs, size_t count, char *error, size_t errorSize) {
+	int written = snprintf(error, errorSize, "%zu clubs match; give a team ID:", count);
+	size_t length = written > 0 ? (size_t)written : 0;
+	size_t listed = count < MAX_CLUBS_LISTED ? count : MAX_CLUBS_LISTED;
+	for (size_t i = 0; i < listed && length < errorSize; ++i) {
+		uint8_t *team = NULL;
+		char name[MAX_NAME_LENGTH + 1];
+		if (!firstTeam(clubs[i], &team)) {
+			continue;
+		}
+		database_clubShortName(team, name, sizeof name);
+		written = snprintf(
+			error + length,
+			errorSize - length,
+			"%s %s (%u)",
+			i ? "," : "",
+			name,
+			database_teamUniqueId(team)
+		);
+		length += written > 0 ? (size_t)written : 0;
+	}
+	if (count > listed && length < errorSize) {
+		(void)snprintf(error + length, errorSize - length, ", ...");
+	}
 }
