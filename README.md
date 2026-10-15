@@ -13,7 +13,7 @@ Written in C17.
 
 # How does it work?
 
-There are two artifacts produced by this build:
+There are two files shipped in this bundle:
 
 - **`fm24-harness-<version>.dll`** (`src/dll/`): injected into `fm.exe`. It checks
   the game build, then runs jobs: play matches, build the next fixture,

@@ -41,10 +41,15 @@ see `scripts/env.sh`), clang-format 22+ and the MinGW clang-tidy
 (`pacman -S mingw-w64-x86_64-clang-tools-extra`).
 
 ```sh
-scripts/build.sh     # build into build/, copy DLL + fm24ctl.exe to bin/
+scripts/build.sh     # build into build/, copy DLL + fm24ctl.exe + fm24_tests.exe to bin/
 scripts/format.sh    # apply .clang-format (--check to only verify)
 scripts/tidy.sh      # clang-tidy with .clang-tidy (warnings are errors)
 ```
+
+The build script always configures Release mode with `-O2 -DNDEBUG` and C17,
+including all regression checks in `fm24_tests.exe`. Run `bin/fm24_tests.exe`
+to execute every test, or `ctest --test-dir build --output-on-failure` for
+individual test results. Building does not run the tests.
 
 The build uses `-Wall -Wextra -Wpedantic -Wshadow -Wconversion` and friends
 and is warning-free; `format.sh --check` and `tidy.sh` are clean.
@@ -72,18 +77,19 @@ clamped to 1-16). Seed patterns are limited to 255 characters, checked for
 job-safe characters before submission, and fully parsed by the DLL. Outputs
 follow the CLI's fixture-based naming, using the saved copy after export.
 
-To build the optional regression executables on Windows, configure with
-`-DFM24_BUILD_TESTS=ON`, build, then run `ctest --test-dir build
---output-on-failure`. The reader can also be checked on a non-Windows host:
+When configuring CMake directly, use `-DFM24_BUILD_TESTS=ON` to include the
+test executable. Its portable reader and filename checks can also be built
+on a non-Windows host:
 
 ```sh
-cc -std=c17 -O2 -Isrc/common -Isrc/runner \
-  tests/fixture_data_test.c src/runner/fixture_data.c \
+cc -std=c17 -O2 -Isrc/common -Isrc/runner -Isrc/ui \
+  tests/main.c tests/fixture_data_test.c tests/fixture_export_test.c \
+  src/ui/fixture_export.c src/runner/fixture_data.c \
   src/runner/match_config.c src/runner/json_reader.c \
-  src/common/buffer.c src/common/tactic_names.c -o /tmp/fixture_data_test
-/tmp/fixture_data_test
+  src/common/buffer.c src/common/tactic_names.c -o /tmp/fm24_tests
+/tmp/fm24_tests
 # Optional integration check against the local Aston Villa/Bristol City baseline:
-/tmp/fixture_data_test tools/experiments/baseline.json
+/tmp/fm24_tests fixture_data tools/experiments/baseline.json
 ```
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its

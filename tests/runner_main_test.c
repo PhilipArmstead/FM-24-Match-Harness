@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "tests.h"
+
 #include <stdlib.h>
 #include <windows.h>
 
@@ -8,6 +10,8 @@ static DWORD tempPath(DWORD size, wchar_t *out);
 
 #define GetTempPathW tempPath
 #define wmain runnerMain
+#define fixtureWindow_open runnerTest_open
+#define files_hasExtension runnerTest_hasExtension
 #include "../src/runner/main.c" // NOLINT(bugprone-suspicious-include): test startup with stubs.
 
 
@@ -88,7 +92,9 @@ int commands_probe(int argc, wchar_t **argv) {
 	return 12;
 }
 
-int main(void) {
+int runner_main_test(int argc, char **argv) {
+	(void)argc;
+	(void)argv;
 	wchar_t *arguments[] = {L"fm24ctl.exe", NULL, NULL};
 	CHECK(runnerMain(1, arguments) == 9);
 	CHECK(exports == 1 && opens == 1);

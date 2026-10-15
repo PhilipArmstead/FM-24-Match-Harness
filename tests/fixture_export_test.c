@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fixture_export.h"
+#include "tests.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +16,9 @@
 		}                                                                                              \
 	} while (0)
 
-int main(void) {
+int fixture_export_test(int argc, char **argv) {
+	(void)argc;
+	(void)argv;
 	FixtureData *data = calloc(1, sizeof *data);
 	CHECK(data != NULL);
 	wchar_t filename[FIXTURE_EXPORT_FILENAME_LENGTH];

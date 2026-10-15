@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "tests.h"
+
 #include "../src/dll/job.c" // NOLINT(bugprone-suspicious-include): test internal job parsing.
 
 
@@ -18,7 +20,9 @@ void log_message(const char *format, ...) {
 	va_end(arguments);
 }
 
-int main(void) {
+int job_test(int argc, char **argv) {
+	(void)argc;
+	(void)argv;
 	Job job = {0};
 	CHECK(job.progressWindow == 0);
 	CHECK(parseLine(&job, "progress_window", "0"));

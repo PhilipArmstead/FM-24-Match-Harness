@@ -3,6 +3,7 @@
 #include "files.h"
 #include "paths.h"
 #include "protocol.h"
+#include "tests.h"
 
 #include <time.h>
 #include <windows.h>
@@ -601,7 +602,9 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	}
 }
 
-int main(void) {
+int fixture_window_test(int argc, char **argv) {
+	(void)argc;
+	(void)argv;
 	wchar_t original[HARNESS_PATH_LENGTH];
 	wchar_t temporary[HARNESS_PATH_LENGTH];
 	wchar_t directory[HARNESS_PATH_LENGTH];

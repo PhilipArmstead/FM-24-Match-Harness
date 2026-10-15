@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fixture_data.h"
 #include "match_config.h"
+#include "tests.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -223,26 +224,26 @@ static bool checkDates(void) {
 		{"2024 day 366 19:30, seed 42", "2024-12-31 19:30"},
 		{"2000 day 60 08:00", "2000-02-29 08:00"},
 		{"2100 day 60 08:00", "2100-03-01 08:00"},
-		{"2023 day 366 08:00", "Invalid export date / time"},
-		{"2024 day 0 08:00", "Invalid export date / time"},
-		{"0000 day 1 08:00", "Invalid export date / time"},
-		{"2024 day 133 24:00", "Invalid export date / time"},
-		{"2024 day 133 08:60", "Invalid export date / time"},
-		{"2024 day 133 08:00 trailing", "Invalid export date / time"},
-		{"2024 day 133 no time", "Invalid export date / time"},
-		{"12345 day 133 08:00", "Invalid export date / time"},
+		{"2023 day 366 08:00", "Invalid export date/time"},
+		{"2024 day 0 08:00", "Invalid export date/time"},
+		{"0000 day 1 08:00", "Invalid export date/time"},
+		{"2024 day 133 24:00", "Invalid export date/time"},
+		{"2024 day 133 08:60", "Invalid export date/time"},
+		{"2024 day 133 08:00 trailing", "Invalid export date/time"},
+		{"2024 day 133 no time", "Invalid export date/time"},
+		{"12345 day 133 08:00", "Invalid export date/time"},
 		{"2024 day 1 0:0", "2024-01-01 00:00"},
-		{"2024 day 999 08:00", "Invalid export date / time"},
-		{"2024 day 1000 08:00", "Invalid export date / time"},
-		{"2024 day -1 08:00", "Invalid export date / time"},
-		{"2024 day +1 08:00", "Invalid export date / time"},
-		{"2024 day 1 +1:00", "Invalid export date / time"},
-		{"2024 day 1 08:-0", "Invalid export date / time"},
-		{"2024 day 1 008:00", "Invalid export date / time"},
-		{"2024 day 1 08:000", "Invalid export date / time"},
-		{"2024 day 1 08:", "Invalid export date / time"},
-		{"2024 day 1 ", "Invalid export date / time"},
-		{"2024 day ", "Invalid export date / time"},
+		{"2024 day 999 08:00", "Invalid export date/time"},
+		{"2024 day 1000 08:00", "Invalid export date/time"},
+		{"2024 day -1 08:00", "Invalid export date/time"},
+		{"2024 day +1 08:00", "Invalid export date/time"},
+		{"2024 day 1 +1:00", "Invalid export date/time"},
+		{"2024 day 1 08:-0", "Invalid export date/time"},
+		{"2024 day 1 008:00", "Invalid export date/time"},
+		{"2024 day 1 08:000", "Invalid export date/time"},
+		{"2024 day 1 08:", "Invalid export date/time"},
+		{"2024 day 1 ", "Invalid export date/time"},
+		{"2024 day ", "Invalid export date/time"},
 		{"Decoded binary fixture (date annotation unavailable)", ""},
 		{NULL, ""},
 	};
@@ -425,7 +426,7 @@ static bool checkBaseline(const char *path) {
 	return true;
 }
 
-int main(int argc, char **argv) {
+int fixture_data_test(int argc, char **argv) {
 	if (!checkConfig(false, false) || !checkConfig(true, false) || !checkConfig(true, true) ||
 			!checkDates() || !checkMasks() || !checkInvalid() || !checkEncoder() ||
 			(argc > 1 && !checkBaseline(argv[1]))) {
