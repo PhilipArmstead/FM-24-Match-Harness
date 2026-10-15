@@ -352,6 +352,63 @@ static void checkAwayLayout(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(error.top < cancel.bottom, true);
 }
 
+static void checkAwayHeading(HWND window, WindowState *state, const wchar_t *expected) {
+	HDC dc = GetDC(window);
+	ASSERT_BOOL_EQ(dc != NULL, true);
+	HGDIOBJ old = SelectObject(dc, state->headingFont);
+	SIZE extent = {0};
+	ASSERT_BOOL_EQ(GetTextExtentPoint32W(dc, expected, (int)wcslen(expected), &extent), true);
+	SelectObject(dc, old);
+	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
+	RECT heading = controlBounds(window, state->headings[1]);
+	RECT note = controlBounds(window, state->notes[1]);
+	int width = extent.cx + scaled(state, 4);
+	int maximum = note.right - note.left - scaled(state, 27);
+	ASSERT_INT_EQ(heading.right - heading.left, width < maximum ? width : maximum);
+	if (width <= maximum) {
+		wchar_t text[2 * FIXTURE_TEXT + 128] = {0};
+		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2 * FIXTURE_TEXT + 128) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, expected), 0);
+	}
+	checkAwayLayout(window, state);
+}
+
+static void checkHeadingResize(HWND window, WindowState *state) {
+	char tactic[FIXTURE_TEXT];
+	strcpy(tactic, state->data->teams[1].tactic);
+	memset(state->data->teams[1].tactic, 'W', 120);
+	state->data->teams[1].tactic[120] = 0;
+	ASSERT_BOOL_EQ(setHeadings(state), true);
+	wchar_t expected[2 * FIXTURE_TEXT + 128];
+	wchar_t wideTactic[FIXTURE_TEXT];
+	ASSERT_BOOL_EQ(widen(state->data->teams[1].tactic, wideTactic, FIXTURE_TEXT), true);
+	ASSERT_BOOL_EQ(
+		swprintf(
+			expected, 2 * FIXTURE_TEXT + 128, L"Away: Bristol City - %ls [Formation unknown]", wideTactic
+		) > 0,
+		true
+	);
+	static const UINT resolutions[] = {96, 144};
+	for (unsigned i = 0; i < sizeof resolutions / sizeof resolutions[0]; ++i) {
+		state->dpi = resolutions[i];
+		ASSERT_BOOL_EQ(setFonts(state), true);
+		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 900, SWP_NOMOVE | SWP_NOZORDER), true);
+		layout(window, state);
+		checkAwayHeading(window, state, expected);
+		// Simulate text altered by the ellipsis control before expanding it.
+		ASSERT_BOOL_EQ(SetWindowTextW(state->headings[1], L"Away..."), true);
+		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 4000, 900, SWP_NOMOVE | SWP_NOZORDER), true);
+		layout(window, state);
+		checkAwayHeading(window, state, expected);
+	}
+	strcpy(state->data->teams[1].tactic, tactic);
+	state->dpi = 96;
+	ASSERT_BOOL_EQ(setFonts(state), true);
+	ASSERT_BOOL_EQ(setHeadings(state), true);
+	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
+	layout(window, state);
+}
+
 static void checkAwayIcon(HWND window, WindowState *state) {
 	HDC dc = GetDC(window);
 	HDC memory = CreateCompatibleDC(dc);
@@ -379,11 +436,13 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	wchar_t heading[2048] = {0};
 	wchar_t text[2048] = {0};
 	changeTab(window, state, 0);
+	checkHeadingResize(window, state);
 	layout(window, state);
 	checkAwayLayout(window, state);
 	checkAwayIcon(window, state);
 	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], heading, 2048) > 0, true);
 	ASSERT_BOOL_EQ(wcsstr(heading, L"Bristol City") != NULL, true);
+	checkAwayHeading(window, state, heading);
 	ASSERT_BOOL_EQ(files_write(state->savedFilename, "original saved fixture", 22), true);
 	wchar_t saved[FIXTURE_EXPORT_FILENAME_LENGTH];
 	wcscpy(saved, state->savedFilename);
@@ -392,6 +451,7 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(state->editingAway, true);
 	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) == 6, true);
 	ASSERT_INT_EQ(wcscmp(text, L"Away: "), 0);
+	checkAwayHeading(window, state, L"Away: ");
 	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_TEAM], text, 2048) > 0, true);
 	ASSERT_INT_EQ(wcscmp(text, L"Bristol City"), 0);
 	ASSERT_BOOL_EQ(SendMessageW(state->away[AWAY_TEAM], EM_GETLIMITTEXT, 0, 0) == 255, true);
@@ -401,6 +461,7 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(setFonts(state), true);
 	layout(window, state);
 	checkAwayLayout(window, state);
+	checkAwayHeading(window, state, L"Away: ");
 	state->dpi = 96;
 	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
 	ASSERT_BOOL_EQ(setFonts(state), true);
@@ -414,6 +475,7 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(
 		GetWindowTextW(state->headings[1], text, 2048) > 0 && wcscmp(text, heading) == 0, true
 	);
+	checkAwayHeading(window, state, heading);
 	ASSERT_INT_EQ(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath, true);
 	clickAway(window, state, AWAY_ICON);
 	key.wParam = VK_RETURN;
@@ -492,7 +554,9 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 		wcscpy(previous, state->replacementPath);
 		clickAway(window, state, AWAY_CONFIRM);
 		ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
-		changeTab(window, state, 1);
+		if (i) {
+			changeTab(window, state, 1);
+		}
 		ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
 		checkReplacement(window, state);
 		ASSERT_BOOL_EQ(!state->replacementThread && !state->editingAway && state->temporary, true);
@@ -507,6 +571,7 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 		changeTab(window, state, 0);
 		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) > 0, true);
 		ASSERT_INT_EQ(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]"), 0);
+		checkAwayHeading(window, state, L"Away: Luton Town - New tactic [4-2-3-1]");
 		ASSERT_BOOL_EQ(ListView_GetItemCount(state->lists[1]) == FIXTURE_SLOTS + 1, true);
 		ASSERT_BOOL_EQ(
 			GetWindowLongPtrW(state->pitches[1], GWLP_USERDATA) == (LONG_PTR)&state->data->teams[1], true
@@ -516,6 +581,7 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 		clickAway(window, state, AWAY_CANCEL);
 		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) > 0, true);
 		ASSERT_INT_EQ(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]"), 0);
+		checkAwayHeading(window, state, L"Away: Luton Town - New tactic [4-2-3-1]");
 		if (!i) {
 			clickAway(window, state, AWAY_ICON);
 		}

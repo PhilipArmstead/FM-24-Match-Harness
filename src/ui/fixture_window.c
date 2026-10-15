@@ -67,6 +67,7 @@ typedef struct WindowState {
 	HWND tabs;
 	HWND progress;
 	HWND headings[2];
+	wchar_t headingText[2][2 * FIXTURE_TEXT + 128];
 	HWND notes[2];
 	HWND pitches[2];
 	HWND lists[2];
@@ -542,7 +543,7 @@ static bool setHeadings(WindowState *state) {
 		if (side == 1 && state->editingAway) {
 			(void)snprintf(text, sizeof text, "Away: ");
 		}
-		if (!setText(state->headings[side], text)) {
+		if (!widen(text, state->headingText[side], sizeof state->headingText[side] / sizeof(wchar_t))) {
 			return false;
 		}
 		if (!setText(
@@ -967,12 +968,10 @@ static void layout(HWND window, WindowState *state) {
 		int note = scaled(state, 22);
 		int headingWidth = width;
 		if (i == 1) {
-			wchar_t text[2 * FIXTURE_TEXT + 128];
-			int length = GetWindowTextW(state->headings[i], text, 2 * FIXTURE_TEXT + 128);
 			HDC dc = GetDC(window);
 			HGDIOBJ oldFont = SelectObject(dc, state->headingFont);
 			SIZE extent = {0};
-			GetTextExtentPoint32W(dc, text, length, &extent);
+			GetTextExtentPoint32W(dc, state->headingText[i], (int)wcslen(state->headingText[i]), &extent);
 			SelectObject(dc, oldFont);
 			headingWidth = extent.cx + scaled(state, 4);
 			if (headingWidth > width - header) {
@@ -993,6 +992,7 @@ static void layout(HWND window, WindowState *state) {
 				int errorWidth = left + width - x;
 				int errorHeight = header - scaled(state, 4);
 				SelectObject(dc, state->font);
+				wchar_t text[2 * FIXTURE_TEXT + 128];
 				GetWindowTextW(state->away[AWAY_ERROR], text, 2 * FIXTURE_TEXT + 128);
 				RECT errorBounds = {0, 0, errorWidth - GetSystemMetricsForDpi(SM_CXVSCROLL, state->dpi), 0};
 				DrawTextW(dc, text, -1, &errorBounds, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
@@ -1010,6 +1010,13 @@ static void layout(HWND window, WindowState *state) {
 			ReleaseDC(window, dc);
 		}
 		MoveWindow(state->headings[i], left, y, headingWidth, scaled(state, 27), TRUE);
+		// Ellipsis controls can alter their text; restore the full heading after resizing.
+		if (!SetWindowTextW(state->headings[i], state->headingText[i])) {
+			showError(window, L"Cannot update team headings.");
+			state->failed = true;
+			DestroyWindow(window);
+			return;
+		}
 		MoveWindow(state->notes[i], left, y + header, width, note, TRUE);
 		int height = panelHeight - header - note;
 		int pitchWidth = scaled(state, 220);
