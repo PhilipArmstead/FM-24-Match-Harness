@@ -41,15 +41,34 @@ see `scripts/env.sh`), clang-format 22+ and the MinGW clang-tidy
 (`pacman -S mingw-w64-x86_64-clang-tools-extra`).
 
 ```sh
-scripts/build.sh     # build into build/, copy DLL + fm24ctl.exe + fm24_tests.exe to bin/
+scripts/build.sh     # build into build/, install stripped DLL + runner + tests into bin/
 scripts/format.sh    # apply .clang-format (--check to only verify)
 scripts/tidy.sh      # clang-tidy with .clang-tidy (warnings are errors)
 ```
 
-The build script always configures Release mode with `-O2 -DNDEBUG` and C17,
-including all regression checks in `fm24_tests.exe`. Run `bin/fm24_tests.exe`
-to execute every test, or `ctest --test-dir build --output-on-failure` for
-individual test results. Building does not run the tests.
+The build script always configures Release mode and C17, including all
+regression checks in `fm24_tests.exe`. CMake defaults Release builds to
+`-O2 -DNDEBUG`, with link-time optimisation across the shared code, DLL,
+runner and tests. Configuration fails if the compiler does not support LTO.
+Release links discard unused sections and do not export the DLL's internal
+symbols. Debug builds retain their normal flags and exports without LTO.
+Fast-math and build-machine-specific CPU instructions are not enabled.
+
+Unstripped binaries stay in `build/` for diagnosis. The script installs
+copies into `bin/` and strips them with CMake's selected toolchain utility,
+preserving Windows unwind metadata and application resources. Installation
+or stripping errors fail the script instead of silently leaving old
+binaries in `bin/`. Close a running runner before rebuilding; for a loaded
+DLL, see the protocol-version instructions below.
+
+Run `bin/fm24_tests.exe` for the application regression checks, or
+`ctest --test-dir build --output-on-failure` for individual results and the
+Release packaging check. Building does not run the tests. To stage only
+the two distributable files, without the test executable:
+
+```sh
+cmake --install build --config Release --prefix dist --component Runtime --strip
+```
 
 The build uses `-Wall -Wextra -Wpedantic -Wshadow -Wconversion` and friends
 and is warning-free; `format.sh --check` and `tidy.sh` are clean.

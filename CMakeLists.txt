@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
+set(CMAKE_C_FLAGS_RELEASE "-O2 -DNDEBUG" CACHE STRING "C compiler flags for Release builds")
 project(fm24_harness C RC)
 
 set(CMAKE_C_STANDARD 17)
@@ -6,9 +7,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release" OR "Release" IN_LIST CMAKE_CONFIGURATION_TYPES)
+	include(CheckIPOSupported)
+	check_ipo_supported(LANGUAGES C)
+	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+endif()
+add_link_options("$<$<CONFIG:Release>:-Wl,--gc-sections>")
 
 # The protocol version is part of the DLL's file name (see src/common/protocol.h). Changing it
 # re-runs the configure step, so the DLL is renamed without touching this file.
@@ -58,7 +66,9 @@ add_library(harness SHARED
 set_target_properties(harness PROPERTIES PREFIX "" OUTPUT_NAME "fm24-harness-${HARNESS_PROTOCOL}")
 target_link_libraries(harness PRIVATE common)
 target_compile_options(harness PRIVATE ${warnings})
-target_link_options(harness PRIVATE -static -static-libgcc)
+target_link_options(harness PRIVATE -static -static-libgcc
+	"$<$<CONFIG:Release>:-Wl,--exclude-all-symbols>"
+)
 
 add_executable(fm24ctl
 	src/runner/client.c
@@ -82,6 +92,8 @@ target_compile_definitions(fm24ctl PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32
 target_compile_options(fm24ctl PRIVATE ${warnings})
 target_link_options(fm24ctl PRIVATE -municode -static -static-libgcc)
 
+install(TARGETS harness fm24ctl RUNTIME DESTINATION . COMPONENT Runtime)
+
 option(FM24_BUILD_TESTS "Build regression checks" OFF)
 if(FM24_BUILD_TESTS)
 	enable_testing()
@@ -103,7 +115,25 @@ if(FM24_BUILD_TESTS)
 	target_compile_definitions(fm24_tests PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 	target_compile_options(fm24_tests PRIVATE ${warnings})
 	target_link_options(fm24_tests PRIVATE -static -static-libgcc)
+	install(TARGETS fm24_tests RUNTIME DESTINATION . COMPONENT Tests)
 	foreach(test job fixture_data runner_main fixture_export fixture_window)
 		add_test(NAME ${test} COMMAND fm24_tests ${test})
 	endforeach()
+	if(CMAKE_BUILD_TYPE STREQUAL "Release" OR "Release" IN_LIST CMAKE_CONFIGURATION_TYPES)
+		set(release_configurations)
+		if(CMAKE_CONFIGURATION_TYPES)
+			set(release_configurations CONFIGURATIONS Release)
+		endif()
+		add_test(NAME release
+			COMMAND "${CMAKE_COMMAND}"
+				"-DBUILD_DIR=${CMAKE_BINARY_DIR}"
+				"-DCONFIG=$<CONFIG>"
+				"-DDLL=$<TARGET_FILE:harness>"
+				"-DRUNNER=$<TARGET_FILE:fm24ctl>"
+				"-DSTRIP=${CMAKE_STRIP}"
+				"-DOBJDUMP=${CMAKE_OBJDUMP}"
+				-P "${CMAKE_CURRENT_SOURCE_DIR}/tests/release_test.cmake"
+			${release_configurations}
+		)
+	endif()
 endif()
