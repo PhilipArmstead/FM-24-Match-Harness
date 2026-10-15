@@ -73,7 +73,6 @@ static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned awa
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
 static int printSummary(const Path *csvPath);
 static bool prepareInput(Path *input, uint32_t *awayTeam);
-static unsigned long defaultThreads(void);
 static bool isSeedList(const wchar_t *text);
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options);
 static bool placeRunArgument(const wchar_t *argument, RunOptions *options);
@@ -339,7 +338,7 @@ static bool prepareInput(Path *input, uint32_t *awayTeam) {
 }
 
 // One worker per logical processor, less one left for the game itself.
-static unsigned long defaultThreads(void) {
+unsigned long commands_defaultThreads(void) {
 	unsigned long processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
 	unsigned long threads = processors > 1 ? processors - 1 : 1;
 	return threads < HARNESS_MAX_THREADS ? threads : HARNESS_MAX_THREADS;
@@ -396,7 +395,7 @@ static bool placeRunArgument(const wchar_t *argument, RunOptions *options) {
 
 // Everything after `run`; false (with a message) if something is missing or invalid.
 static bool parseRunArguments(int argc, wchar_t **argv, RunOptions *options) {
-	*options = (RunOptions){.threads = defaultThreads()};
+	*options = (RunOptions){.threads = commands_defaultThreads()};
 	for (int i = 2; i < argc; ++i) {
 		bool ok = wcsncmp(argv[i], L"--", 2) == 0 ? parseRunOption(argc, argv, &i, options)
 																							: placeRunArgument(argv[i], options);

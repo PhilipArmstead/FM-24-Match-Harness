@@ -7,6 +7,7 @@
 #include <wchar.h>
 
 
+unsigned long commands_defaultThreads(void);
 int commands_run(int argc, wchar_t **argv);
 int commands_getNextFixture(int argc, wchar_t **argv);
 int commands_encode(int argc, wchar_t **argv);

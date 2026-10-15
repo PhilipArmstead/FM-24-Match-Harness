@@ -678,7 +678,6 @@ static void labelRecord(Walk *walk, size_t i) {
 		appendTacticPart(walk, i, record);
 	}
 	FieldLabel *label = &walk->labels[i];
-	memcpy(label->block, walk->block, sizeof label->block);
 	label->member = siteMembers_find(record->site);
 	labelMemberField(walk, label);
 	labelPersonField(walk, label, record);

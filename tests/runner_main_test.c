@@ -3,11 +3,14 @@
 #include <stdlib.h>
 #include <windows.h>
 
+
 static DWORD tempPath(DWORD size, wchar_t *out);
 
 #define GetTempPathW tempPath
 #define wmain runnerMain
 #include "../src/runner/main.c" // NOLINT(bugprone-suspicious-include): test startup with stubs.
+
+
 #undef wmain
 #undef GetTempPathW
 

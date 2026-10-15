@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
 enum { FIXTURE_TEXT = 512, FIXTURE_PLAYERS = 256, FIXTURE_SLOTS = 11 };
 
 typedef struct FixtureNumber {
@@ -32,7 +33,6 @@ typedef struct FixtureTeam {
 	char tactic[FIXTURE_TEXT];
 	char formation[64];
 	FixtureNumber managerFlags;
-	FixtureNumber mentality;
 	FixtureNumber playerCount;
 	FixtureSlot slots[FIXTURE_SLOTS];
 	FixturePlayer players[FIXTURE_PLAYERS];

@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+
 const char *tactic_roleName(unsigned bit) {
 	static const char *const names[] = {
 		"goalkeeper",

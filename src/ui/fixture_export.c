@@ -4,6 +4,7 @@
 
 #include <string.h>
 
+
 static void teamFilename(const char *name, wchar_t *out) {
 	for (; *name; ++name) {
 		unsigned char c = (unsigned char)*name;

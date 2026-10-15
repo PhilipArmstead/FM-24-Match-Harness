@@ -8,6 +8,7 @@
 #include "match.h"
 #include "trace.h"
 
+
 void jobs_inspect(const Job *job, const wchar_t *directory) {
 	ByteBuffer input = {0};
 	size_t seedOffset = 0;

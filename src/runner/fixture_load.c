@@ -11,6 +11,7 @@
 #include <string.h>
 #include <windows.h>
 
+
 static bool decodeBinary(const wchar_t *path, ByteBuffer *text, char *error, size_t errorSize) {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t directory[HARNESS_PATH_LENGTH];

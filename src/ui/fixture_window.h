@@ -5,4 +5,5 @@
 #include <stdbool.h>
 #include <wchar.h>
 
+
 int fixtureWindow_open(const wchar_t *path, bool temporary);

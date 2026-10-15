@@ -119,11 +119,25 @@ Pass the fixture path as the first and only argument, without `run`:
 > Note: you can also accomplish this by dragging the file on to the
 > application in Explorer.
 
-This opens a read-only window, with both teams' pitch diagrams, stored tactic
+This opens a fixture window, with both teams' pitch diagrams, stored tactic
 names, formation shapes, positions, roles and duties. Player tables include
-morale, condition, sharpness and signed fatigue. The single **Starting XI**
+morale, condition, sharpness and signed fatigue. The **Squads**
 tab lists substitutes beneath the known starters, with `Sub` in the Position
 column and blank Slot, Role and Duty cells.
+
+The **Simulation** tab runs the viewed fixture using the existing match job:
+choose a thread count, enter a seed pattern such as `1`, `42`, `1-1000`,
+`1,3,5` or `1,4,7-70`, optionally select **Generate detailed reports?**, then
+click **Simulate fixture**. Threads default to the logical CPU count minus
+one, with a minimum of 1 and the existing harness cap of 16; that default is
+also the field's maximum. The seed pattern defaults to `keep` (the fixture's
+own seed). The window remains responsive while running, but another simulation
+cannot be started from this window and it cannot be closed until the run finishes.
+Completion or failure appears in the tab, with results and errors also
+printed to the console.
+
+Results use the fixture's path with a `.csv` extension; detailed reports
+add `-players.csv` and `-teams.csv`. Running again replaces the previous result files.
 
 JSON viewing does not need FM24. Binary viewing requires the supported game
 running and idle: the harness decodes and re-exports the input, without

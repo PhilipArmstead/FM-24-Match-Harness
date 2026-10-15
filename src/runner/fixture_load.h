@@ -6,5 +6,6 @@
 
 #include <wchar.h>
 
+
 // JSON is read locally. Binary input is decoded by the running game's harness, never played.
 bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t errorSize);

@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+
 typedef enum ConfigValueKind {
 	CONFIG_U8 = 1,
 	CONFIG_U16 = 2,

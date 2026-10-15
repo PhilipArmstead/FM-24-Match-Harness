@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fixture_window.h"
 
+#include "commands.h"
 #include "fixture_data.h"
 #include "fixture_export.h"
 #include "fixture_load.h"
+#include "paths.h"
+#include "protocol.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +21,27 @@
 #include <commctrl.h>
 #include <richedit.h>
 
-enum { WM_FIXTURE_LAYOUT = WM_APP + 1 };
+
+enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1 };
+
+enum {
+	SIM_THREADS_LABEL,
+	SIM_THREADS,
+	SIM_SPINNER,
+	SIM_SEEDS_LABEL,
+	SIM_SEEDS,
+	SIM_DETAILED,
+	SIM_SUBMIT,
+	SIM_STATUS,
+	SIM_CONTROL_COUNT,
+};
+
+typedef struct SimulationJob {
+	wchar_t input[HARNESS_PATH_LENGTH];
+	wchar_t seeds[256];
+	wchar_t threads[16];
+	bool detailed;
+} SimulationJob;
 
 typedef struct WindowState {
 	FixtureData *data;
@@ -30,6 +54,10 @@ typedef struct WindowState {
 	HWND notes[2];
 	HWND pitches[2];
 	HWND lists[2];
+	HWND simulation[SIM_CONTROL_COUNT];
+	HANDLE simulationThread;
+	SimulationJob simulationJob;
+	unsigned long threadLimit;
 	HFONT font;
 	HFONT headingFont;
 	UINT dpi;
@@ -68,6 +96,120 @@ static bool widen(const char *text, wchar_t *out, size_t size) {
 
 static void showError(HWND window, const wchar_t *message) {
 	MessageBoxW(window, message, L"FM24 Match Harness", MB_OK | MB_ICONERROR);
+}
+
+static DWORD WINAPI simulateFixture(LPVOID parameter) {
+	SimulationJob *job = parameter;
+	wchar_t *arguments[] = {
+		L"fm24ctl.exe", L"run", job->input, job->seeds, L"--threads", job->threads, NULL, NULL};
+	int count = 6;
+	if (job->detailed) {
+		arguments[count++] = L"--detailed";
+	}
+	return (DWORD)commands_run(count, arguments);
+}
+
+static void startSimulation(HWND window, WindowState *state) {
+	if (state->simulationThread) {
+		return;
+	}
+	SimulationJob *job = &state->simulationJob;
+	wchar_t *end = NULL;
+	errno = 0;
+	int length = GetWindowTextW(state->simulation[SIM_THREADS], job->threads, 16);
+	unsigned long threads = wcstoul(job->threads, &end, 10);
+	if (length == 0 || GetWindowTextLengthW(state->simulation[SIM_THREADS]) >= 16 || errno || *end ||
+			wcsspn(job->threads, L"0123456789") != (size_t)length || threads < 1 ||
+			threads > state->threadLimit) {
+		wchar_t message[128];
+		(void)swprintf(
+			message, 128, L"Number of threads must be between 1 and %lu.", state->threadLimit
+		);
+		showError(window, message);
+		SetFocus(state->simulation[SIM_THREADS]);
+		return;
+	}
+	length = GetWindowTextW(state->simulation[SIM_SEEDS], job->seeds, 256);
+	if (length == 0 || GetWindowTextLengthW(state->simulation[SIM_SEEDS]) >= 256 ||
+			(wcscmp(job->seeds, L"keep") != 0 && wcsspn(job->seeds, L"0123456789,-") != (size_t)length)) {
+		showError(
+			window,
+			L"Enter a seed pattern such as 1, 42, 1-1000, 1,3,5 or 1,4,7-70; "
+			L"or keep to use the fixture's seed."
+		);
+		SetFocus(state->simulation[SIM_SEEDS]);
+		return;
+	}
+	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
+	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
+		showError(window, L"Cannot resolve the fixture path.");
+		return;
+	}
+	job->detailed = SendMessageW(state->simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_CHECKED;
+	if (!SetTimer(window, SIMULATION_TIMER, 200, NULL)) {
+		showError(window, L"Cannot monitor the simulation.");
+		return;
+	}
+	state->simulationThread = CreateThread(NULL, 0, simulateFixture, job, 0, NULL);
+	if (!state->simulationThread) {
+		KillTimer(window, SIMULATION_TIMER);
+		showError(window, L"Cannot start the simulation worker.");
+		return;
+	}
+	for (unsigned i = 0; i < SIM_STATUS; ++i) {
+		EnableWindow(state->simulation[i], FALSE);
+	}
+	SetFocus(state->tabs);
+	SetWindowTextW(
+		state->simulation[SIM_STATUS],
+		L"Simulating fixture... Please wait before closing "
+		L"the window. Progress is printed to the console."
+	);
+}
+
+static void checkSimulation(HWND window, WindowState *state) {
+	if (!state->simulationThread) {
+		return;
+	}
+	DWORD wait = WaitForSingleObject(state->simulationThread, 0);
+	if (wait == WAIT_TIMEOUT) {
+		return;
+	}
+	DWORD result = 1;
+	if (wait != WAIT_OBJECT_0 || !GetExitCodeThread(state->simulationThread, &result)) {
+		KillTimer(window, SIMULATION_TIMER);
+		showError(window, L"Cannot read the simulation result.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	KillTimer(window, SIMULATION_TIMER);
+	CloseHandle(state->simulationThread);
+	state->simulationThread = NULL;
+	for (unsigned i = 0; i < SIM_STATUS; ++i) {
+		EnableWindow(state->simulation[i], TRUE);
+	}
+	const wchar_t *message =
+		result == 0
+			? L"Simulation complete. Results were saved beside the fixture; see the console for paths."
+			: L"Simulation failed. Check the console and harness.log for details.";
+	SetWindowTextW(state->simulation[SIM_STATUS], message);
+	if (result != 0) {
+		showError(window, message);
+	}
+}
+
+static void selectTab(WindowState *state) {
+	bool simulation = TabCtrl_GetCurSel(state->tabs) == 1;
+	for (unsigned i = 0; i < 2; ++i) {
+		ShowWindow(state->headings[i], simulation ? SW_HIDE : SW_SHOW);
+		ShowWindow(state->notes[i], simulation ? SW_HIDE : SW_SHOW);
+		ShowWindow(state->pitches[i], simulation ? SW_HIDE : SW_SHOW);
+		ShowWindow(state->lists[i], simulation ? SW_HIDE : SW_SHOW);
+	}
+	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
+		ShowWindow(state->simulation[i], simulation ? SW_SHOW : SW_HIDE);
+	}
 }
 
 static bool setText(HWND window, const char *text) {
@@ -397,6 +539,9 @@ static bool setFonts(WindowState *state) {
 	}
 	SendMessageW(state->metadata, WM_SETFONT, (WPARAM)font, TRUE);
 	SendMessageW(state->tabs, WM_SETFONT, (WPARAM)font, TRUE);
+	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
+		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
 	for (unsigned i = 0; i < 2; ++i) {
 		SendMessageW(state->headings[i], WM_SETFONT, (WPARAM)heading, TRUE);
 		SendMessageW(state->notes[i], WM_SETFONT, (WPARAM)font, TRUE);
@@ -427,6 +572,28 @@ static void layout(HWND window, WindowState *state) {
 	int top = margin + state->metadataHeight + margin;
 	MoveWindow(state->tabs, margin, top, width, tabHeight, TRUE);
 	top += tabHeight + margin;
+	static const struct {
+		int x, y, width, height;
+	} positions[SIM_CONTROL_COUNT] = {
+		{0, 0, 480, 24},
+		{0, 28, 100, 28},
+		{100, 28, 20, 28},
+		{0, 74, 480, 24},
+		{0, 102, 480, 30},
+		{0, 150, 480, 28},
+		{0, 194, 180, 34},
+		{0, 244, 700, 80},
+	};
+	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
+		MoveWindow(
+			state->simulation[i],
+			margin + scaled(state, positions[i].x),
+			top + scaled(state, positions[i].y),
+			scaled(state, positions[i].width),
+			scaled(state, positions[i].height),
+			TRUE
+		);
+	}
 	int panelHeight = (bounds.bottom - top - 2 * margin) / 2;
 	for (unsigned i = 0; i < 2; ++i) {
 		int y = top + (int)i * (panelHeight + margin);
@@ -440,6 +607,57 @@ static void layout(HWND window, WindowState *state) {
 		int offset = pitchWidth + margin;
 		MoveWindow(state->lists[i], margin + offset, y + header + note, width - offset, height, TRUE);
 	}
+}
+
+static bool createSimulationControls(HWND window, WindowState *state) {
+	static const struct {
+		const wchar_t *className;
+		const wchar_t *text;
+		DWORD style;
+		DWORD extended;
+	} controls[SIM_CONTROL_COUNT] = {
+		{L"STATIC", L"Number of threads:", 0, 0},
+		{L"EDIT", L"", WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0},
+		{L"STATIC", L"Seed pattern (e.g. 1,4,7-70; keep = fixture seed):", 0, 0},
+		{L"EDIT", L"keep", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{L"BUTTON", L"Generate detailed reports?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
+		{L"BUTTON", L"Simulate fixture", WS_TABSTOP | BS_PUSHBUTTON, 0},
+		{L"STATIC", L"Results are saved beside the fixture, using its filename with .csv.", 0, 0},
+	};
+	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
+		state->simulation[i] = CreateWindowExW(
+			controls[i].extended,
+			controls[i].className,
+			controls[i].text,
+			WS_CHILD | controls[i].style,
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			GetModuleHandleW(NULL),
+			NULL
+		);
+		if (!state->simulation[i]) {
+			return false;
+		}
+	}
+	state->threadLimit = commands_defaultThreads();
+	wchar_t label[64];
+	(void)swprintf(label, 64, L"Number of threads (1-%lu):", state->threadLimit);
+	if (!SetWindowTextW(state->simulation[SIM_THREADS_LABEL], label)) {
+		return false;
+	}
+	SendMessageW(state->simulation[SIM_THREADS], EM_SETLIMITTEXT, 15, 0);
+	SendMessageW(state->simulation[SIM_SEEDS], EM_SETLIMITTEXT, 255, 0);
+	SendMessageW(
+		state->simulation[SIM_SPINNER], UDM_SETBUDDY, (WPARAM)state->simulation[SIM_THREADS], 0
+	);
+	SendMessageW(state->simulation[SIM_SPINNER], UDM_SETRANGE32, 1, (LPARAM)state->threadLimit);
+	SendMessageW(state->simulation[SIM_SPINNER], UDM_SETPOS32, 0, (LPARAM)state->threadLimit);
+	return true;
 }
 
 static bool createControls(HWND window, WindowState *state) {
@@ -479,6 +697,10 @@ static bool createControls(HWND window, WindowState *state) {
 	SendMessageW(state->metadata, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE | ENM_LINK);
 	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = L"Squads"};
 	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 0, (LPARAM)&tab) == -1) {
+		return false;
+	}
+	tab.pszText = L"Simulation";
+	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 1, (LPARAM)&tab) == -1) {
 		return false;
 	}
 	for (unsigned i = 0; i < 2; ++i) {
@@ -554,8 +776,8 @@ static bool createControls(HWND window, WindowState *state) {
 			}
 		}
 	}
-	return setFonts(state) && setMetadata(state) && setHeadings(state) && fillList(state, 0) &&
-				 fillList(state, 1);
+	return createSimulationControls(window, state) && setFonts(state) && setMetadata(state) &&
+				 setHeadings(state) && fillList(state, 0) && fillList(state, 1);
 }
 
 static void pitchPoint(uint64_t mask, int *x, int *y) {
@@ -748,10 +970,36 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			);
 			return 0;
 		}
-		case WM_NOTIFY: return metadataNotification(window, state, (const NMHDR *)lParam);
+		case WM_COMMAND:
+			if ((HWND)lParam == state->simulation[SIM_SUBMIT] && HIWORD(wParam) == BN_CLICKED) {
+				startSimulation(window, state);
+				return 0;
+			}
+			break;
+		case WM_TIMER:
+			if (wParam == SIMULATION_TIMER) {
+				checkSimulation(window, state);
+				return 0;
+			}
+			break;
+		case WM_NOTIFY: {
+			const NMHDR *notification = (const NMHDR *)lParam;
+			if (notification->hwndFrom == state->tabs && notification->code == (UINT)TCN_SELCHANGE) {
+				selectTab(state);
+				return 0;
+			}
+			return metadataNotification(window, state, notification);
+		}
+		case WM_CLOSE:
+			if (state->simulationThread) {
+				showError(window, L"A simulation is running. Please wait for it to finish before closing.");
+				return 0;
+			}
+			break;
 		case WM_DESTROY: PostQuitMessage(state->failed ? 1 : 0); return 0;
-		default: return DefWindowProcW(window, message, wParam, lParam);
+		default: break;
 	}
+	return DefWindowProcW(window, message, wParam, lParam);
 }
 // NOLINTEND(performance-no-int-to-ptr)
 
@@ -760,6 +1008,11 @@ static int runMessageLoop(HWND window, WindowState *state) {
 	MSG message;
 	BOOL status;
 	while ((status = GetMessageW(&message, NULL, 0, 0)) > 0) {
+		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN &&
+				message.hwnd == state->simulation[SIM_SUBMIT]) {
+			SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);
+			continue;
+		}
 		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN &&
 				message.hwnd == state->metadata && state->temporary && !state->missing) {
 			exportFixture(window, state);
@@ -802,7 +1055,7 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	(void)SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 	HMODULE richEdit = LoadLibraryExW(L"Msftedit.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
 	INITCOMMONCONTROLSEX controls = {
-		.dwSize = sizeof controls, .dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES};
+		.dwSize = sizeof controls, .dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS};
 	HINSTANCE instance = GetModuleHandleW(NULL);
 	WNDCLASSW definition = {.lpfnWndProc = windowProcedure,
 		.hInstance = instance,
@@ -863,6 +1116,10 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 		showError(NULL, message);
 	} else {
 		result = runMessageLoop(window, &state);
+	}
+	if (state.simulationThread) {
+		WaitForSingleObject(state.simulationThread, INFINITE);
+		CloseHandle(state.simulationThread);
 	}
 	if (state.font) {
 		DeleteObject(state.font);

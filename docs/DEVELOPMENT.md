@@ -51,8 +51,8 @@ and is warning-free; `format.sh --check` and `tidy.sh` are clean.
 
 The viewer uses only Windows system libraries (`user32`, `gdi32`,
 `comctl32` and `msftedit`), with no third-party UI or parsing dependencies.
-It is read-only; `fm24ctl <fixture.json|fixture.bin>` leaves the existing CLI commands
-unchanged. With no arguments, it exports the next fixture to
+Fixture inspection is read-only; `fm24ctl <fixture.json|fixture.bin>` leaves
+the existing CLI commands unchanged. With no arguments, it exports the next fixture to
 `temp-fixture.json` in the OS temp directory and opens it only if the export
 succeeds; failures are printed to the console before exiting. Viewing an
 unsaved fixture shows a red warning and an export link in the summary;
@@ -63,6 +63,14 @@ existing JSON file does not connect to the game. Binary inspection uses an
 `inspect` job and a temporary JSON file removed after reading. Inspection
 deserialises and traces the existing match without running preparation,
 building another fixture or invoking the engine's match runner.
+
+The adjacent Simulation tab calls the existing `commands_run` on a worker
+thread, with a timer collecting its exit code on the UI thread. Only one
+simulation can run per window; controls are disabled and closing is blocked until it
+finishes. Thread bounds reuse the CLI default (logical CPUs minus one,
+clamped to 1-16). Seed patterns are limited to 255 characters, checked for
+job-safe characters before submission, and fully parsed by the DLL. Outputs
+follow the CLI's fixture-based naming, using the saved copy after export.
 
 To build the optional regression executables on Windows, configure with
 `-DFM24_BUILD_TESTS=ON`, build, then run `ctest --test-dir build
@@ -93,7 +101,10 @@ Unicode/control/Windows-invalid characters and the 255-character filename
 limit.
 The Windows summary checks exercise RichEdit warning/link styles, link
 notifications, copying into the working directory, refusing overwrite and
-the missing-file message.
+the missing-file message. They also cover tab visibility, simulation form
+defaults and bounds, input rejection, seed-pattern forwarding, detailed
+report flags, duplicate-submission prevention and completion/failure handling
+with a stubbed simulation command.
 
 **Rebuilding while the game runs:** Windows identifies a loaded DLL by its
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake

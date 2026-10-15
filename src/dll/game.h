@@ -87,8 +87,6 @@ enum DatabaseLayout {
 	PERSON_FORENAME = 0x58, // doubly indirect string
 	PERSON_SURNAME = 0x60,  // doubly indirect string
 	PERSON_CONTRACT = 0xC8,
-	PLAYER_FROM_PERSON = -0x278,
-	PLAYER_RATINGS = 0x208, // 15 positions (1-20) + 54 attributes (1-100)
 	CONTRACT_TEAM = 0x10,
 	TEAM_UNIQUE_ID = 0x0C,
 	TEAM_CLUB = 0x30,

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+
 typedef enum Section {
 	SECTION_NONE,
 	SECTION_TEAM,
@@ -96,9 +97,7 @@ static void teamField(Reader *reader, const ConfigField *field, const char *name
 	} else if (strcmp(name, "manager.tactic.plan[0]") == 0) {
 		setSection(reader, SECTION_PLAN);
 	} else if (strncmp(name, planPrefix, prefixLength) == 0) {
-		if (strcmp(name + prefixLength, "mentality") == 0) {
-			(void)scalar(field, CONFIG_U8, &team->mentality);
-		} else if (indexed(name + prefixLength, "slot[", &index, &suffix) && index < FIXTURE_SLOTS) {
+		if (indexed(name + prefixLength, "slot[", &index, &suffix) && index < FIXTURE_SLOTS) {
 			if (strcmp(suffix, ".position") == 0) {
 				(void)scalar(field, CONFIG_U32, &team->slots[index].position);
 			} else if (strcmp(suffix, ".role") == 0) {
