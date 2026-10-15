@@ -5,6 +5,7 @@
 #include "protocol.h"
 #include "tests.h"
 
+#include <shobjidl.h>
 #include <time.h>
 #include <windows.h>
 
@@ -12,14 +13,23 @@
 static int errorMessages;
 static time_t testTime(time_t *out);
 static int testMessageBox(HWND window, const wchar_t *text, const wchar_t *caption, UINT type);
+static HRESULT WINAPI testCoCreateInstance(
+	REFCLSID classId,
+	IUnknown *outer,
+	DWORD context,
+	REFIID interfaceId,
+	void **out
+);
 
 #define time testTime
 #define MessageBoxW testMessageBox
+#define CoCreateInstance testCoCreateInstance
 #include "../src/ui/fixture_window.c" // NOLINT(bugprone-suspicious-include): test internal UI callbacks.
 
 
 #undef time
 #undef MessageBoxW
+#undef CoCreateInstance
 
 #define CHECK(expression)                                                                          \
 	do {                                                                                             \
@@ -60,6 +70,68 @@ static int replacementResult;
 static bool replacementLoadFailure;
 static const wchar_t *expectedTeam;
 static wchar_t replacementOutput[HARNESS_PATH_LENGTH];
+static unsigned taskbarCreates;
+static unsigned taskbarInitializations;
+static unsigned taskbarReleases;
+static unsigned taskbarStateCalls;
+static unsigned taskbarValueCalls;
+static TBPFLAG taskbarState;
+static ULONGLONG taskbarCompleted;
+static ULONGLONG taskbarTotal;
+static HRESULT taskbarCreateResult = S_OK;
+static HRESULT taskbarInitResult = S_OK;
+static HRESULT taskbarStateResult = S_OK;
+static HRESULT taskbarValueResult = S_OK;
+
+static HRESULT STDMETHODCALLTYPE testTaskbarInit(ITaskbarList3 *taskbar) {
+	CHECK(taskbar != NULL);
+	++taskbarInitializations;
+	return taskbarInitResult;
+}
+
+static ULONG STDMETHODCALLTYPE testTaskbarRelease(ITaskbarList3 *taskbar) {
+	CHECK(taskbar != NULL);
+	++taskbarReleases;
+	return 0;
+}
+
+static HRESULT STDMETHODCALLTYPE
+testTaskbarState(ITaskbarList3 *taskbar, HWND window, TBPFLAG progress) {
+	CHECK(taskbar != NULL && window == expectedProgressWindow);
+	++taskbarStateCalls;
+	taskbarState = progress;
+	return taskbarStateResult;
+}
+
+static HRESULT STDMETHODCALLTYPE
+testTaskbarValue(ITaskbarList3 *taskbar, HWND window, ULONGLONG completed, ULONGLONG total) {
+	CHECK(taskbar != NULL && window == expectedProgressWindow);
+	CHECK(taskbarState == TBPF_NORMAL && completed <= total && total > 0);
+	++taskbarValueCalls;
+	taskbarCompleted = completed;
+	taskbarTotal = total;
+	return taskbarValueResult;
+}
+
+static HRESULT WINAPI testCoCreateInstance(
+	REFCLSID classId,
+	IUnknown *outer,
+	DWORD context,
+	REFIID interfaceId,
+	void **out
+) {
+	static ITaskbarList3Vtbl methods = {.Release = testTaskbarRelease,
+		.HrInit = testTaskbarInit,
+		.SetProgressState = testTaskbarState,
+		.SetProgressValue = testTaskbarValue};
+	static ITaskbarList3 taskbar = {.lpVtbl = &methods};
+	CHECK(IsEqualGUID(classId, &CLSID_TaskbarList));
+	CHECK(IsEqualGUID(interfaceId, &IID_ITaskbarList3));
+	CHECK(outer == NULL && context == CLSCTX_INPROC_SERVER);
+	++taskbarCreates;
+	*out = SUCCEEDED(taskbarCreateResult) ? &taskbar : NULL;
+	return taskbarCreateResult;
+}
 
 unsigned long commands_defaultThreads(void) {
 	return threadLimit;
@@ -460,6 +532,8 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	WindowState state = {.data = data, .path = path, .filename = L"temp-fixture.json", .dpi = 96};
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
 	CHECK(createControls(window, &state));
+	state.taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
+	CHECK(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0);
 	CHECK(TabCtrl_GetItemCount(state.tabs) == 2);
 	wchar_t text[256];
 	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = text, .cchTextMax = 256};
@@ -535,17 +609,44 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		CHECK(ResetEvent(simulationRelease));
 		clickSimulate(window, &state);
 		CHECK(state.simulationThread != NULL);
+		if (i == 0) {
+			CHECK(taskbarStateCalls == 0 && state.taskbar == NULL);
+			CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+		}
+		CHECK(state.taskbar != NULL && taskbarState == TBPF_INDETERMINATE);
 		HANDLE worker = state.simulationThread;
 		CHECK(controlVisible(state.progress));
 		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 0);
 		checkPageLayout(window, &state);
 		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, 1000) == 0);
 		CHECK(SendMessageW(state.progress, PBM_GETRANGE, FALSE, 0) == 1000);
+		CHECK(taskbarState == TBPF_NORMAL && taskbarCompleted == 0 && taskbarTotal == 1000);
 		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 250, 1000) == 0);
 		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 250);
+		CHECK(taskbarState == TBPF_NORMAL && taskbarCompleted == 250 && taskbarTotal == 1000);
+		unsigned stateCalls = taskbarStateCalls;
+		unsigned valueCalls = taskbarValueCalls;
 		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1001, 1000) == 0);
 		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, 0) == 0);
+		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, -1) == 0);
+		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 0, (LPARAM)INT_MAX + 1) == 0);
 		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 250);
+		CHECK(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls);
+		unsigned creates = taskbarCreates;
+		unsigned releases = taskbarReleases;
+		CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+		CHECK(taskbarCreates == creates + 1 && taskbarReleases == releases + 1);
+		CHECK(taskbarInitializations == taskbarCreates);
+		CHECK(taskbarState == TBPF_NORMAL && taskbarCompleted == 250 && taskbarTotal == 1000);
+		if (i == 0) {
+			taskbarValueResult = E_FAIL;
+			CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 500, 1000) == 0);
+			CHECK(state.taskbar == NULL && state.simulationThread == worker);
+			CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 500);
+			taskbarValueResult = S_OK;
+			CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+			CHECK(taskbarCompleted == 500 && taskbarTotal == 1000);
+		}
 		CHECK(!IsWindowEnabled(state.simulation[SIM_SUBMIT]));
 		CHECK(WaitForSingleObject(worker, 0) == WAIT_TIMEOUT);
 		clickSimulate(window, &state);
@@ -561,14 +662,19 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		checkPageLayout(window, &state);
 		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1000, 1000) == 0);
 		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 1000);
+		CHECK(taskbarCompleted == 1000 && taskbarTotal == 1000);
 		CHECK(SetEvent(simulationRelease));
 		CHECK(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0);
 		CHECK(windowProcedure(window, WM_TIMER, SIMULATION_TIMER, 0) == 0);
 		CHECK(state.simulationThread == NULL);
+		CHECK(taskbarState == TBPF_NOPROGRESS);
 		CHECK(!controlVisible(state.progress));
 		checkPageLayout(window, &state);
+		stateCalls = taskbarStateCalls;
+		valueCalls = taskbarValueCalls;
 		CHECK(windowProcedure(window, HARNESS_PROGRESS_MESSAGE, 1, 10) == 0);
 		CHECK(SendMessageW(state.progress, PBM_GETPOS, 0, 0) == 1000);
+		CHECK(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls);
 		CHECK(IsWindowEnabled(state.simulation[SIM_SUBMIT]));
 		CHECK(simulationCalls == i + 1);
 		CHECK(GetWindowTextW(state.simulation[SIM_STATUS], text, 256) > 0);
@@ -580,7 +686,23 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		CHECK(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) > 0);
 		CHECK(wcscmp(text, expectedSeeds) == 0);
 	}
+	taskbarCreateResult = E_FAIL;
+	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+	CHECK(state.taskbar == NULL);
+	taskbarCreateResult = S_OK;
+	taskbarInitResult = E_FAIL;
+	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+	CHECK(state.taskbar == NULL);
+	taskbarInitResult = S_OK;
+	taskbarStateResult = E_FAIL;
+	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+	CHECK(state.taskbar == NULL);
+	taskbarStateResult = S_OK;
 	checkAwayEditor(window, &state);
+	CHECK(windowProcedure(window, state.taskbarCreated, 0, 0) == 0);
+	CHECK(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS);
+	releaseTaskbar(&state);
+	CHECK(state.taskbar == NULL && taskbarReleases == taskbarInitializations);
 	CHECK(CloseHandle(simulationRelease));
 	CHECK(DestroyWindow(window));
 	CHECK(DeleteObject(state.font));

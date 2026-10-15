@@ -77,7 +77,7 @@ add_executable(fm24ctl
 	src/ui/viewer.rc
 )
 target_include_directories(fm24ctl PRIVATE src/runner src/ui)
-target_link_libraries(fm24ctl PRIVATE common comctl32 user32 gdi32)
+target_link_libraries(fm24ctl PRIVATE common comctl32 user32 gdi32 ole32 uuid)
 target_compile_definitions(fm24ctl PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_compile_options(fm24ctl PRIVATE ${warnings})
 target_link_options(fm24ctl PRIVATE -municode -static -static-libgcc)
@@ -99,7 +99,7 @@ if(FM24_BUILD_TESTS)
 		src/runner/paths.c
 	)
 	target_include_directories(fm24_tests PRIVATE src/runner src/ui)
-	target_link_libraries(fm24_tests PRIVATE common comctl32 user32 gdi32)
+	target_link_libraries(fm24_tests PRIVATE common comctl32 user32 gdi32 ole32 uuid)
 	target_compile_definitions(fm24_tests PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 	target_compile_options(fm24_tests PRIVATE ${warnings})
 	target_link_options(fm24_tests PRIVATE -static -static-libgcc)

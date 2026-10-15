@@ -55,7 +55,8 @@ The build uses `-Wall -Wextra -Wpedantic -Wshadow -Wconversion` and friends
 and is warning-free; `format.sh --check` and `tidy.sh` are clean.
 
 The viewer uses only Windows system libraries (`user32`, `gdi32`,
-`comctl32` and `msftedit`), with no third-party UI or parsing dependencies.
+`comctl32`, `msftedit` and `ole32`, with COM identifiers from `uuid`),
+with no third-party UI or parsing dependencies.
 Fixture inspection is read-only; `fm24ctl <fixture.json|fixture.bin>` leaves
 the existing CLI commands unchanged. With no arguments, it exports the next fixture to
 `temp-fixture.json` in the OS temp directory and opens it only if the export

@@ -22,6 +22,7 @@
 // Common controls require the Win32 types above.
 #include <commctrl.h>
 #include <richedit.h>
+#include <shobjidl.h>
 
 
 enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1, REPLACE_TIMER = 2 };
@@ -72,6 +73,10 @@ typedef struct WindowState {
 	HWND away[AWAY_CONTROL_COUNT];
 	HANDLE simulationThread;
 	HANDLE replacementThread;
+	ITaskbarList3 *taskbar;
+	UINT taskbarCreated;
+	UINT progressCompleted;
+	UINT progressTotal;
 	SimulationJob simulationJob;
 	ReplaceAwayJob replacementJob;
 	wchar_t replacementPath[HARNESS_PATH_LENGTH];
@@ -118,6 +123,78 @@ static void showError(HWND window, const wchar_t *message) {
 }
 
 static void layout(HWND window, WindowState *state);
+
+static void releaseTaskbar(WindowState *state) {
+	if (state->taskbar) {
+		state->taskbar->lpVtbl->Release(state->taskbar);
+		state->taskbar = NULL;
+	}
+}
+
+static void updateTaskbarProgress(HWND window, WindowState *state) {
+	if (!state->taskbar) {
+		return;
+	}
+	TBPFLAG progress = !state->simulationThread ? TBPF_NOPROGRESS
+										 : state->progressTotal   ? TBPF_NORMAL
+																							: TBPF_INDETERMINATE;
+	HRESULT result = state->taskbar->lpVtbl->SetProgressState(state->taskbar, window, progress);
+	if (SUCCEEDED(result) && progress == TBPF_NORMAL) {
+		result = state->taskbar->lpVtbl->SetProgressValue(
+			state->taskbar, window, state->progressCompleted, state->progressTotal
+		);
+	}
+	if (FAILED(result)) {
+		fprintf(
+			stderr,
+			"fixture viewer: cannot update taskbar progress (HRESULT 0x%08lx)\n",
+			(unsigned long)result
+		);
+		releaseTaskbar(state);
+	}
+}
+
+static HRESULT initializeTaskbar(WindowState *state) {
+	HRESULT result = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	if (FAILED(result)) {
+		fprintf(
+			stderr,
+			"fixture viewer: cannot initialise COM for taskbar progress (HRESULT 0x%08lx)\n",
+			(unsigned long)result
+		);
+		return result;
+	}
+	state->taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
+	if (!state->taskbarCreated) {
+		fprintf(
+			stderr,
+			"fixture viewer: cannot register taskbar notification (Windows error %lu)\n",
+			GetLastError()
+		);
+	}
+	return result;
+}
+
+static void createTaskbar(HWND window, WindowState *state) {
+	releaseTaskbar(state);
+	void *taskbar = NULL;
+	HRESULT result =
+		CoCreateInstance(&CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER, &IID_ITaskbarList3, &taskbar);
+	if (SUCCEEDED(result)) {
+		state->taskbar = taskbar;
+		result = state->taskbar->lpVtbl->HrInit(state->taskbar);
+	}
+	if (FAILED(result)) {
+		fprintf(
+			stderr,
+			"fixture viewer: cannot initialise taskbar progress (HRESULT 0x%08lx)\n",
+			(unsigned long)result
+		);
+		releaseTaskbar(state);
+		return;
+	}
+	updateTaskbarProgress(window, state);
+}
 
 static DWORD WINAPI simulateFixture(LPVOID parameter) {
 	SimulationJob *job = parameter;
@@ -178,6 +255,9 @@ static void startSimulation(HWND window, WindowState *state) {
 		showError(window, L"Cannot start the simulation worker.");
 		return;
 	}
+	state->progressCompleted = 0;
+	state->progressTotal = 0;
+	updateTaskbarProgress(window, state);
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
 		EnableWindow(state->simulation[i], FALSE);
 	}
@@ -214,6 +294,7 @@ static void checkSimulation(HWND window, WindowState *state) {
 	KillTimer(window, SIMULATION_TIMER);
 	CloseHandle(state->simulationThread);
 	state->simulationThread = NULL;
+	updateTaskbarProgress(window, state);
 	ShowWindow(state->progress, SW_HIDE);
 	layout(window, state);
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
@@ -1500,6 +1581,10 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 	if (!state) {
 		return DefWindowProcW(window, message, wParam, lParam);
 	}
+	if (state->taskbarCreated && message == state->taskbarCreated) {
+		createTaskbar(window, state);
+		return 0;
+	}
 	switch (message) {
 		case WM_CREATE:
 			state->dpi = GetDpiForWindow(window);
@@ -1519,8 +1604,11 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			return 0;
 		case HARNESS_PROGRESS_MESSAGE:
 			if (state->simulationThread && lParam > 0 && lParam <= INT_MAX && wParam <= (WPARAM)lParam) {
+				state->progressCompleted = (UINT)wParam;
+				state->progressTotal = (UINT)lParam;
 				SendMessageW(state->progress, PBM_SETRANGE32, 0, lParam);
 				SendMessageW(state->progress, PBM_SETPOS, wParam, 0);
+				updateTaskbarProgress(window, state);
 			}
 			return 0;
 		case WM_CTLCOLORSTATIC:
@@ -1688,8 +1776,10 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 		.filename = filename,
 		.dpi = GetDpiForSystem(),
 		.temporary = temporary};
+	HRESULT comResult = E_FAIL;
 	HWND window = NULL;
 	if (ok) {
+		comResult = initializeTaskbar(&state);
 		RECT workArea;
 		int width = scaled(&state, 1480);
 		int height = scaled(&state, 980);
@@ -1729,6 +1819,10 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	}
 	joinThread(state.simulationThread);
 	joinThread(state.replacementThread);
+	releaseTaskbar(&state);
+	if (SUCCEEDED(comResult)) {
+		CoUninitialize();
+	}
 	free(state.replacementJob.data);
 	removeReplacement(state.replacementJob.output);
 	removeReplacement(state.replacementPath);
