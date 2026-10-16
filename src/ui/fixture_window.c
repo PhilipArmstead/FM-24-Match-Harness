@@ -860,7 +860,7 @@ fontFound(const LOGFONTW *font, const TEXTMETRICW *metrics, DWORD type, LPARAM f
 	(void)font;
 	(void)metrics;
 	(void)type;
-	*(bool *)found = true;
+	*(bool *)found = true; // NOLINT(performance-no-int-to-ptr): LPARAM carries the caller's pointer.
 	return 0;
 }
 
@@ -1727,6 +1727,39 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 	return DefWindowProcW(window, message, wParam, lParam);
 }
 
+// Draws the owner-drawn edit icon; returns false when the item is not ours.
+static bool drawItem(HWND window, WindowState *state, const DRAWITEMSTRUCT *draw) {
+	if (draw->hwndItem != state->away[AWAY_ICON]) {
+		return false;
+	}
+	if (!drawEditIcon(state, draw)) {
+		fprintf(stderr, "fixture viewer: cannot render edit icon\n");
+		showError(window, L"Cannot render edit icon.");
+		state->failed = true;
+		DestroyWindow(window);
+	}
+	return true;
+}
+
+static void dpiChanged(HWND window, WindowState *state, UINT dpi, const RECT *bounds) {
+	state->dpi = dpi;
+	if (!setFonts(state) || !setMetadata(state)) {
+		showError(window, L"Cannot update window fonts or summary.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	SetWindowPos(
+		window,
+		NULL,
+		bounds->left,
+		bounds->top,
+		bounds->right - bounds->left,
+		bounds->bottom - bounds->top,
+		SWP_NOZORDER | SWP_NOACTIVATE
+	);
+}
+
 static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
 	WindowState *state = (WindowState *)GetWindowLongPtrW(window, GWLP_USERDATA);
 	if (message == WM_NCCREATE) {
@@ -1771,19 +1804,11 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			SetBkColor(dc, GetSysColor(COLOR_WINDOW));
 			return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
 		}
-		case WM_DRAWITEM: {
-			const DRAWITEMSTRUCT *draw = (const DRAWITEMSTRUCT *)lParam;
-			if (draw->hwndItem == state->away[AWAY_ICON]) {
-				if (!drawEditIcon(state, draw)) {
-					fprintf(stderr, "fixture viewer: cannot render edit icon\n");
-					showError(window, L"Cannot render edit icon.");
-					state->failed = true;
-					DestroyWindow(window);
-				}
+		case WM_DRAWITEM:
+			if (drawItem(window, state, (const DRAWITEMSTRUCT *)lParam)) {
 				return TRUE;
 			}
 			break;
-		}
 		case WM_SYSCOLORCHANGE:
 			if (state->away[AWAY_ICON]) {
 				InvalidateRect(state->away[AWAY_ICON], NULL, TRUE);
@@ -1801,26 +1826,7 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			limits->ptMinTrackSize.y = scaled(state, 600);
 			return 0;
 		}
-		case WM_DPICHANGED: {
-			state->dpi = HIWORD(wParam);
-			if (!setFonts(state) || !setMetadata(state)) {
-				showError(window, L"Cannot update window fonts or summary.");
-				state->failed = true;
-				DestroyWindow(window);
-				return 0;
-			}
-			const RECT *bounds = (const RECT *)lParam;
-			SetWindowPos(
-				window,
-				NULL,
-				bounds->left,
-				bounds->top,
-				bounds->right - bounds->left,
-				bounds->bottom - bounds->top,
-				SWP_NOZORDER | SWP_NOACTIVATE
-			);
-			return 0;
-		}
+		case WM_DPICHANGED: dpiChanged(window, state, HIWORD(wParam), (const RECT *)lParam); return 0;
 		case WM_COMMAND:
 		case WM_TIMER:
 		case WM_NOTIFY:

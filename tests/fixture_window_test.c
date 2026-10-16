@@ -483,7 +483,8 @@ static void checkAwayIcon(HWND window, WindowState *state) {
 				blended += pixel != RGB_BLUE && pixel != background && pixel != CLR_INVALID;
 			}
 		}
-		ASSERT_BOOL_EQ(blue > 50 && blended > 20, true);
+		// Small sizes are mostly anti-aliased edges, so scale the coverage check with the icon.
+		ASSERT_BOOL_EQ(blue > 0 && blended > 0 && blue + blended > (unsigned)(side * side / 10), true);
 		ASSERT_BOOL_EQ(GetPixel(memory, 0, 0) == background, true);
 		ASSERT_INT_EQ(state->editIconSize, side - 2 * scaled(state, 3));
 		ASSERT_BOOL_EQ(state->editIconColor == RGB_BLUE, true);
@@ -519,15 +520,17 @@ static void checkAwayIcon(HWND window, WindowState *state) {
 		ASSERT_BOOL_EQ(state->editIcon != cached, true);
 		ASSERT_BOOL_EQ(state->editIconColor == GetSysColor(COLOR_GRAYTEXT), true);
 		unsigned gray = 0;
+		unsigned drawn = 0;
 		blue = 0;
 		for (int y = 0; y < side; ++y) {
 			for (int x = 0; x < side; ++x) {
 				COLORREF pixel = GetPixel(memory, x, y);
 				gray += pixel == GetSysColor(COLOR_GRAYTEXT);
 				blue += pixel == RGB_BLUE;
+				drawn += pixel != background && pixel != CLR_INVALID;
 			}
 		}
-		ASSERT_BOOL_EQ(gray > 50 && blue == 0, true);
+		ASSERT_BOOL_EQ(gray > 0 && blue == 0 && drawn > (unsigned)(side * side / 10), true);
 		cached = state->editIcon;
 		draw.itemState = 0;
 		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
@@ -1020,8 +1023,12 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(state.editIcon == NULL, true);
 	BITMAP image;
 	ASSERT_INT_EQ(GetObjectW(cached, sizeof image, &image), 0);
-	MSG quit;
-	ASSERT_BOOL_EQ(PeekMessageW(&quit, NULL, WM_QUIT, WM_QUIT, PM_REMOVE), true);
+	// WM_QUIT is only retrieved once no other posted messages are queued, and the system posts
+	// some of its own (e.g. WM_DWMNCRENDERINGCHANGED) to the test's windows, so drain those first.
+	MSG quit = {0};
+	while (PeekMessageW(&quit, NULL, 0, 0, PM_REMOVE) && quit.message != WM_QUIT) {
+	}
+	ASSERT_BOOL_EQ(quit.message == WM_QUIT, true);
 	ASSERT_BOOL_EQ(DestroyWindow(window), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.font), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.headingFont), true);
