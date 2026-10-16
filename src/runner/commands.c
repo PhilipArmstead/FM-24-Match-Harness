@@ -220,6 +220,34 @@ int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
+int commands_listTeams(int argc, wchar_t **argv) {
+	char result[CLIENT_RESULT_LENGTH];
+	return commands_listTeamsWithResult(argc, argv, result, sizeof result);
+}
+
+int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	if (argc != 3) {
+		(void)snprintf(result, resultSize, "List teams requires an output file.");
+		fprintf(stderr, "usage: fm24ctl list-teams <output.txt>\n");
+		return EXIT_USAGE;
+	}
+	Path output;
+	if (!absolutePath(argv[2], &output)) {
+		(void)snprintf(result, resultSize, "Cannot resolve the team list path.");
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(job, sizeof job, "command=list_teams\noutput=%s\n", output.utf8);
+	(void)snprintf(
+		result, resultSize, "Cannot list teams; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
 int commands_encode(int argc, wchar_t **argv) {
 	if (argc != 4) {
 		fprintf(stderr, "usage: fm24ctl encode <input.json> <output.bin>\n");

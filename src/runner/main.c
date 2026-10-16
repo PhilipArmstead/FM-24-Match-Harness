@@ -39,6 +39,7 @@ static const char usage[] =
 	"  fm24ctl encode <input.json> <output.bin>\n"
 	"  fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
 	"  fm24ctl replace-home <input.json> <team ID or club name> <output.json> [--full]\n"
+	"  fm24ctl list-teams <output.txt>\n"
 	"  fm24ctl probe [path to fm.exe]\n";
 
 int wmain(int argc, wchar_t **argv);
@@ -76,6 +77,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"encode", commands_encode},
 		{L"replace-away", commands_replaceTeam},
 		{L"replace-home", commands_replaceTeam},
+		{L"list-teams", commands_listTeams},
 		{L"probe", commands_probe},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {

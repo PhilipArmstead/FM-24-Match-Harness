@@ -19,6 +19,7 @@ typedef enum JobCommand {
 	JOB_INSPECT,      // decode existing binary input to JSON without preparing or playing it
 	JOB_REPLACE_AWAY, // rebuild an input against another away team, keeping its other edits
 	JOB_REPLACE_HOME, // rebuild an input with another home team, keeping its other edits
+	JOB_LIST_TEAMS,   // write every club's first team (unique ID and short name) to a text file
 } JobCommand;
 
 enum { JOB_TEAM_LENGTH = 256 };
@@ -57,3 +58,4 @@ void jobs_run(const Job *job);
 void jobs_buildNext(const Job *job);
 void jobs_inspect(const Job *job);
 void jobs_replaceTeam(const Job *job);
+void jobs_listTeams(const Job *job);

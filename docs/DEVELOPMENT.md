@@ -263,6 +263,11 @@ but does not cancel DLL work; later jobs still wait for it.
      same `.bin`
 5. `fm24ctl encode <in.json> <out.bin>` converts a config to a `.bin` input
    (no game needed).
+   `fm24ctl list-teams <out.txt>` writes `uniqueId<TAB>short name` lines for
+   every club's first team, the teams `database_findTeam` resolves names to
+   (`database_listTeams`, ~1 s). The viewer loads it in the background the
+   first time either team is edited, to fill its filterable picker; a
+   picked team is submitted by ID, so clubs that share a short name resolve.
    `fm24ctl replace-home|replace-away <in.json> <team> <out.json> [--full]`
    rebuilds either side (`src/dll/job_replace.c`). `<team>` is a
    `db::TEAM` unique ID or a club short name (`database_findTeam`). The

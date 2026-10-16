@@ -164,6 +164,7 @@ static bool parseCommand(Job *job, const char *value) {
 		{"inspect", JOB_INSPECT},
 		{"replace_away", JOB_REPLACE_AWAY},
 		{"replace_home", JOB_REPLACE_HOME},
+		{"list_teams", JOB_LIST_TEAMS},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -269,6 +270,7 @@ static bool isComplete(const Job *job) {
 		case JOB_INSPECT: return hasInput && hasOutput;
 		case JOB_REPLACE_AWAY:
 		case JOB_REPLACE_HOME: return hasInput && hasOutput && job->team[0] != 0;
+		case JOB_LIST_TEAMS: return hasOutput;
 	}
 	return false;
 }

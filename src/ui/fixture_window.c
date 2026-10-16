@@ -29,7 +29,15 @@
 #include <shobjidl.h>
 
 
-enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1, REPLACE_TIMER = 2, FILE_TIMER = 3 };
+enum {
+	WM_FIXTURE_LAYOUT = WM_APP + 1,
+	SIMULATION_TIMER = 1,
+	REPLACE_TIMER = 2,
+	FILE_TIMER = 3,
+	TEAMS_TIMER = 4,
+};
+
+enum { TEAMS_SHOWN = 200, TEAM_LABEL_LENGTH = 256 }; // the team pickers' lists
 
 enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
@@ -65,6 +73,18 @@ typedef struct ReplaceTeamJob {
 	unsigned side;
 } ReplaceTeamJob;
 
+// A team the team pickers offer (fm24ctl list-teams).
+typedef struct Team {
+	wchar_t *label;  // "Short name (ID)", as listed
+	wchar_t *folded; // the label in lower case, for matching what is typed
+} Team;
+
+typedef struct TeamListJob {
+	char error[CLIENT_RESULT_LENGTH];
+	Team *teams; // sorted by label
+	size_t count;
+} TeamListJob;
+
 typedef struct FileJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t output[HARNESS_PATH_LENGTH];
@@ -92,6 +112,7 @@ typedef struct WindowState {
 	HANDLE simulationThread;
 	HANDLE replacementThread;
 	HANDLE fileThread;
+	HANDLE teamsThread;
 	ITaskbarList3 *taskbar;
 	UINT taskbarCreated;
 	UINT progressCompleted;
@@ -99,6 +120,9 @@ typedef struct WindowState {
 	SimulationJob simulationJob;
 	ReplaceTeamJob replacementJob;
 	FileJob fileJob;
+	TeamListJob teamsJob;
+	Team *teams; // loaded once per viewer; NULL until then (free text still works)
+	size_t teamCount;
 	wchar_t replacementPath[HARNESS_PATH_LENGTH];
 	unsigned long threadLimit;
 	HFONT font;
@@ -114,6 +138,7 @@ typedef struct WindowState {
 	bool temporary;
 	bool missing;
 	bool editingTeam[2];
+	bool filteringTeams; // a picker's list is being refilled (ignore its own edit notifications)
 } WindowState;
 
 static const wchar_t windowClass[] = L"FM24MatchHarness";
@@ -727,6 +752,219 @@ static void teamError(HWND window, WindowState *state, unsigned side, const char
 	layout(window, state);
 }
 
+static void freeTeams(Team *teams, size_t count) {
+	for (size_t i = 0; i < count; ++i) {
+		free(teams[i].label);
+		free(teams[i].folded);
+	}
+	free(teams);
+}
+
+static int compareTeams(const void *a, const void *b) {
+	const Team *left = a;
+	const Team *right = b;
+	return CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORECASE, left->label, -1, right->label, -1) -
+				 CSTR_EQUAL;
+}
+
+// Adds "name (id)"; a name that is not valid UTF-8 is skipped.
+static bool addTeam(TeamListJob *job, size_t *capacity, unsigned long id, const char *name) {
+	wchar_t wide[TEAM_LABEL_LENGTH];
+	wchar_t label[TEAM_LABEL_LENGTH + 16];
+	if (!widen(name, wide, TEAM_LABEL_LENGTH)) {
+		return true;
+	}
+	(void)swprintf(label, sizeof label / sizeof label[0], L"%ls (%lu)", wide, id);
+	if (job->count == *capacity) {
+		size_t grown = *capacity ? *capacity * 2 : 1024;
+		Team *teams = realloc(job->teams, grown * sizeof *teams);
+		if (!teams) {
+			return false;
+		}
+		job->teams = teams;
+		*capacity = grown;
+	}
+	Team team = {.label = _wcsdup(label), .folded = _wcsdup(label)};
+	if (!team.label || !team.folded) {
+		free(team.label);
+		free(team.folded);
+		return false;
+	}
+	CharLowerW(team.folded);
+	job->teams[job->count++] = team;
+	return true;
+}
+
+// "id<TAB>short name" lines (fm24ctl list-teams).
+static bool parseTeams(const ByteBuffer *text, TeamListJob *job) {
+	size_t capacity = 0;
+	for (const char *line = buffer_string(text); *line;) {
+		size_t length = strcspn(line, "\n");
+		char *tab = NULL;
+		unsigned long id = strtoul(line, &tab, 10);
+		size_t nameLength = length - (size_t)(tab - line) - 1;
+		if (tab > line && *tab == '\t' && tab < line + length && nameLength < TEAM_LABEL_LENGTH) {
+			char name[TEAM_LABEL_LENGTH];
+			memcpy(name, tab + 1, nameLength);
+			name[nameLength] = 0;
+			name[strcspn(name, "\r")] = 0;
+			if (!addTeam(job, &capacity, id, name)) {
+				(void)snprintf(job->error, sizeof job->error, "out of memory listing teams");
+				return false;
+			}
+		}
+		line += line[length] ? length + 1 : length;
+	}
+	if (!job->count) {
+		(void)snprintf(job->error, sizeof job->error, "the team list is empty");
+		return false;
+	}
+	qsort(job->teams, job->count, sizeof *job->teams, compareTeams);
+	return true;
+}
+
+static DWORD WINAPI loadTeams(LPVOID parameter) {
+	TeamListJob *job = parameter;
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	wchar_t path[HARNESS_PATH_LENGTH];
+	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
+	if (!length || length >= HARNESS_PATH_LENGTH || !GetTempFileNameW(directory, L"fmt", 0, path)) {
+		(void)snprintf(
+			job->error,
+			sizeof job->error,
+			"cannot create a team list file (Windows error %lu)",
+			GetLastError()
+		);
+		return 1;
+	}
+	wchar_t *arguments[] = {L"fm24ctl.exe", L"list-teams", path, NULL};
+	ByteBuffer text = {0};
+	int result = commands_listTeamsWithResult(3, arguments, job->error, sizeof job->error);
+	if (result == 0 && !files_read(path, &text)) {
+		(void)snprintf(job->error, sizeof job->error, "cannot read the team list");
+		result = 1;
+	}
+	if (result == 0 && !parseTeams(&text, job)) {
+		result = 1;
+	}
+	buffer_free(&text);
+	(void)DeleteFileW(path);
+	return (DWORD)result;
+}
+
+// Fetches the team list in the background the first time either team is edited (FM must be
+// running for the replacement anyway). A failure is retried on the next edit.
+static void startTeamLoad(HWND window, WindowState *state) {
+	if (state->teams || state->teamsThread) {
+		return;
+	}
+	TeamListJob *job = &state->teamsJob;
+	freeTeams(job->teams, job->count);
+	*job = (TeamListJob){0};
+	if (!SetTimer(window, TEAMS_TIMER, 200, NULL)) {
+		return;
+	}
+	state->teamsThread = CreateThread(NULL, 0, loadTeams, job, 0, NULL);
+	if (!state->teamsThread) {
+		KillTimer(window, TEAMS_TIMER);
+	}
+}
+
+// The side whose team picker `control` is (or is the edit field of), or 2 for neither.
+static unsigned pickerSide(const WindowState *state, HWND control) {
+	for (unsigned side = 0; side < 2; ++side) {
+		HWND picker = state->teamControls[side][TEAM_INPUT];
+		if (control && (control == picker || GetParent(control) == picker)) {
+			return side;
+		}
+	}
+	return 2;
+}
+
+// Lists the teams whose label contains the typed text (those starting with it first), and drops
+// the list down if asked and the picker has the focus.
+static void filterTeams(WindowState *state, unsigned side, bool drop) {
+	HWND picker = state->teamControls[side][TEAM_INPUT];
+	wchar_t text[TEAM_LABEL_LENGTH] = L"";
+	wchar_t folded[TEAM_LABEL_LENGTH];
+	DWORD start = 0;
+	DWORD end = 0;
+	GetWindowTextW(picker, text, TEAM_LABEL_LENGTH);
+	SendMessageW(picker, CB_GETEDITSEL, (WPARAM)&start, (LPARAM)&end);
+	wcscpy(folded, text);
+	CharLowerW(folded);
+	size_t length = wcslen(folded);
+	state->filteringTeams = true;
+	// Closing first lets the list resize to its new contents when it is dropped again.
+	SendMessageW(picker, CB_SHOWDROPDOWN, FALSE, 0);
+	SendMessageW(picker, WM_SETREDRAW, FALSE, 0);
+	SendMessageW(picker, CB_RESETCONTENT, 0, 0);
+	size_t shown = 0;
+	for (int pass = 0; pass < 2; ++pass) {
+		for (size_t i = 0; i < state->teamCount && shown < TEAMS_SHOWN; ++i) {
+			const wchar_t *found = wcsstr(state->teams[i].folded, folded);
+			if (found && (found == state->teams[i].folded) == (pass == 0)) {
+				SendMessageW(picker, CB_ADDSTRING, 0, (LPARAM)state->teams[i].label);
+				++shown;
+			}
+		}
+	}
+	SendMessageW(picker, WM_SETREDRAW, TRUE, 0);
+	if (drop && shown && length && pickerSide(state, GetFocus()) == side) {
+		SendMessageW(picker, CB_SHOWDROPDOWN, TRUE, 0);
+		// The drop-down hides the mouse pointer and may complete the text to its first match.
+		SetCursor(LoadCursorW(NULL, IDC_ARROW));
+	}
+	SetWindowTextW(picker, text);
+	SendMessageW(picker, CB_SETEDITSEL, 0, MAKELPARAM(start, end));
+	state->filteringTeams = false;
+}
+
+static void checkTeams(HWND window, WindowState *state) {
+	if (!state->teamsThread || WaitForSingleObject(state->teamsThread, 0) == WAIT_TIMEOUT) {
+		return;
+	}
+	KillTimer(window, TEAMS_TIMER);
+	DWORD result = 1;
+	if (!GetExitCodeThread(state->teamsThread, &result)) {
+		result = 1;
+	}
+	CloseHandle(state->teamsThread);
+	state->teamsThread = NULL;
+	TeamListJob *job = &state->teamsJob;
+	if (result != 0) {
+		fprintf(stderr, "fixture viewer: cannot list teams: %s\n", job->error);
+		freeTeams(job->teams, job->count);
+		*job = (TeamListJob){0};
+		return;
+	}
+	state->teams = job->teams;
+	state->teamCount = job->count;
+	*job = (TeamListJob){0};
+	for (unsigned side = 0; side < 2; ++side) {
+		if (state->editingTeam[side]) {
+			filterTeams(state, side, false);
+		}
+	}
+}
+
+// The ID for a label picked from the list, so that a club whose name is shared still resolves.
+static bool pickedTeamId(const WindowState *state, const wchar_t *text, wchar_t *id, size_t size) {
+	for (size_t i = 0; i < state->teamCount; ++i) {
+		if (wcscmp(state->teams[i].label, text) == 0) {
+			const wchar_t *open = wcsrchr(text, L'(');
+			size_t length = open ? wcscspn(open + 1, L")") : 0;
+			if (!length || length >= size) {
+				return false;
+			}
+			wmemcpy(id, open + 1, length);
+			id[length] = 0;
+			return true;
+		}
+	}
+	return false;
+}
+
 static void editTeam(HWND window, WindowState *state, unsigned side, bool editing) {
 	if (state->fileThread || state->replacementThread || (editing && state->simulationThread)) {
 		return;
@@ -734,6 +972,10 @@ static void editTeam(HWND window, WindowState *state, unsigned side, bool editin
 	if (editing && !setText(state->teamControls[side][TEAM_INPUT], state->data->teams[side].name)) {
 		showError(window, L"Cannot display the team name.");
 		return;
+	}
+	if (editing) {
+		startTeamLoad(window, state);
+		filterTeams(state, side, false);
 	}
 	state->editingTeam[side] = editing;
 	if (editing) {
@@ -750,7 +992,7 @@ static void editTeam(HWND window, WindowState *state, unsigned side, bool editin
 	layout(window, state);
 	SetFocus(state->teamControls[side][editing ? TEAM_INPUT : TEAM_ICON]);
 	if (editing) {
-		SendMessageW(state->teamControls[side][TEAM_INPUT], EM_SETSEL, 0, -1);
+		SendMessageW(state->teamControls[side][TEAM_INPUT], CB_SETEDITSEL, 0, MAKELPARAM(0, -1));
 	}
 }
 
@@ -815,6 +1057,10 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 		teamError(window, state, side, "Enter a team ID or club short name (up to 255 UTF-8 bytes).");
 		SetFocus(state->teamControls[side][TEAM_INPUT]);
 		return;
+	}
+	wchar_t id[16];
+	if (pickedTeamId(state, job->team, id, sizeof id / sizeof id[0])) {
+		wcscpy(job->team, id);
 	}
 	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
@@ -1288,6 +1534,22 @@ static bool setFonts(WindowState *state) {
 	return true;
 }
 
+// A combo box's height includes its list; its own field is sized by its item height, which is set
+// to make the field `height` tall like the buttons beside it.
+static void
+placeTeamPicker(const WindowState *state, unsigned side, int x, int y, int width, int height) {
+	HWND picker = state->teamControls[side][TEAM_INPUT];
+	MoveWindow(picker, x, y, width, height + scaled(state, 300), TRUE);
+	RECT field = {0};
+	GetWindowRect(picker, &field);
+	int itemHeight = (int)SendMessageW(picker, CB_GETITEMHEIGHT, (WPARAM)-1, 0);
+	int adjust = height - (int)(field.bottom - field.top);
+	if (adjust && itemHeight + adjust > 0) {
+		SendMessageW(picker, CB_SETITEMHEIGHT, (WPARAM)-1, itemHeight + adjust);
+	}
+	SendMessageW(picker, CB_SETDROPPEDWIDTH, (WPARAM)scaled(state, 320), 0);
+}
+
 static void layout(HWND window, WindowState *state) {
 	RECT bounds;
 	GetClientRect(window, &bounds);
@@ -1372,7 +1634,7 @@ static void layout(HWND window, WindowState *state) {
 			int gap = scaled(state, 6);
 			int inputWidth = scaled(state, 190);
 			int buttonWidth = scaled(state, 70);
-			MoveWindow(state->teamControls[i][TEAM_INPUT], x, y, inputWidth, header, TRUE);
+			placeTeamPicker(state, i, x, y, inputWidth, header);
 			x += inputWidth + gap;
 			MoveWindow(state->teamControls[i][TEAM_CONFIRM], x, y, buttonWidth, header, TRUE);
 			x += buttonWidth + gap;
@@ -1423,7 +1685,7 @@ static bool createTeamControls(HWND window, WindowState *state, unsigned side) {
 		DWORD extended;
 	} controls[TEAM_CONTROL_COUNT] = {
 		{L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 0},
-		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{L"COMBOBOX", L"", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 0},
 		{L"BUTTON", L"Confirm", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 0},
@@ -1447,13 +1709,10 @@ static bool createTeamControls(HWND window, WindowState *state, unsigned side) {
 			return false;
 		}
 	}
-	SendMessageW(state->teamControls[side][TEAM_INPUT], EM_SETLIMITTEXT, 255, 0);
-	SendMessageW(
-		state->teamControls[side][TEAM_INPUT],
-		EM_SETCUEBANNER,
-		TRUE,
-		(LPARAM)L"Team ID or club short name"
-	);
+	HWND picker = state->teamControls[side][TEAM_INPUT];
+	SendMessageW(picker, CB_LIMITTEXT, 255, 0);
+	SendMessageW(picker, CB_SETMINVISIBLE, 15, 0);
+	SendMessageW(picker, CB_SETCUEBANNER, 0, (LPARAM)L"Team ID or club short name");
 	return true;
 }
 
@@ -2073,6 +2332,15 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 			if (HIWORD(wParam) == BN_CLICKED && clickFixtureButton(window, state, (HWND)lParam)) {
 				return 0;
 			}
+			if (HIWORD(wParam) == CBN_EDITCHANGE) {
+				unsigned side = pickerSide(state, (HWND)lParam);
+				if (side < 2) {
+					if (!state->filteringTeams) {
+						filterTeams(state, side, true);
+					}
+					return 0;
+				}
+			}
 			break;
 		case WM_TIMER:
 			if (wParam == FILE_TIMER) {
@@ -2081,6 +2349,10 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 			}
 			if (wParam == REPLACE_TIMER) {
 				checkReplacement(window, state);
+				return 0;
+			}
+			if (wParam == TEAMS_TIMER) {
+				checkTeams(window, state);
 				return 0;
 			}
 			if (wParam == SIMULATION_TIMER) {
@@ -2241,47 +2513,62 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 }
 // NOLINTEND(performance-no-int-to-ptr)
 
+// Enter on a button presses it, and in a team picker confirms the replacement.
+static bool handleReturn(HWND window, WindowState *state, HWND control, unsigned picker) {
+	if (control == state->fileButtons[FILE_OPEN_BUTTON] ||
+			control == state->fileButtons[FILE_SAVE_BUTTON]) {
+		SendMessageW(control, BM_CLICK, 0, 0);
+		return true;
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		if (control == state->teamControls[side][TEAM_ICON] ||
+				control == state->teamControls[side][TEAM_CANCEL]) {
+			SendMessageW(control, BM_CLICK, 0, 0);
+			return true;
+		}
+		if (picker == side || control == state->teamControls[side][TEAM_CONFIRM]) {
+			startReplacement(window, state, side);
+			return true;
+		}
+	}
+	if (control == state->simulation[SIM_SUBMIT]) {
+		SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);
+		return true;
+	}
+	if (control == state->metadata && state->temporary && !state->missing) {
+		exportFixture(window, state);
+		return true;
+	}
+	return false;
+}
+
 static bool handleKey(HWND window, WindowState *state, const MSG *message) {
 	if (message->message != WM_KEYDOWN) {
 		return false;
 	}
+	// Typing goes to a picker's own edit field.
+	unsigned side = pickerSide(state, message->hwnd);
+	if (side < 2 && (message->wParam == VK_RETURN || message->wParam == VK_ESCAPE) &&
+			SendMessageW(state->teamControls[side][TEAM_INPUT], CB_GETDROPPEDSTATE, 0, 0)) {
+		return false; // the open list takes Enter (pick) and Escape (close)
+	}
 	if (message->wParam == VK_ESCAPE && TabCtrl_GetCurSel(state->tabs) == 0) {
-		for (unsigned side = 0; side < 2; ++side) {
-			if (state->editingTeam[side]) {
-				editTeam(window, state, side, false);
+		for (unsigned editing = 0; editing < 2; ++editing) {
+			if (state->editingTeam[editing]) {
+				editTeam(window, state, editing, false);
 				return true;
 			}
 		}
 	}
-	if (message->wParam == VK_RETURN) {
-		if (message->hwnd == state->fileButtons[FILE_OPEN_BUTTON] ||
-				message->hwnd == state->fileButtons[FILE_SAVE_BUTTON]) {
-			SendMessageW(message->hwnd, BM_CLICK, 0, 0);
-			return true;
-		}
-		for (unsigned side = 0; side < 2; ++side) {
-			if (message->hwnd == state->teamControls[side][TEAM_ICON] ||
-					message->hwnd == state->teamControls[side][TEAM_CANCEL]) {
-				SendMessageW(message->hwnd, BM_CLICK, 0, 0);
-				return true;
-			}
-			if (message->hwnd == state->teamControls[side][TEAM_INPUT] ||
-					message->hwnd == state->teamControls[side][TEAM_CONFIRM]) {
-				startReplacement(window, state, side);
-				return true;
-			}
-		}
-		if (message->hwnd == state->simulation[SIM_SUBMIT]) {
-			SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);
-			return true;
-		}
-		if (message->hwnd == state->metadata && state->temporary && !state->missing) {
-			exportFixture(window, state);
-			return true;
-		}
+	if (message->wParam == VK_RETURN && handleReturn(window, state, message->hwnd, side)) {
+		return true;
 	}
 	if (message->wParam == VK_TAB) {
 		HWND focus = GetFocus();
+		unsigned focusSide = pickerSide(state, focus);
+		if (focusSide < 2) {
+			focus = state->teamControls[focusSide][TEAM_INPUT];
+		}
 		HWND next =
 			GetNextDlgTabItem(window, focus == window ? NULL : focus, GetKeyState(VK_SHIFT) < 0);
 		if (next) {
@@ -2403,6 +2690,9 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	joinThread(state.simulationThread);
 	joinThread(state.replacementThread);
 	joinThread(state.fileThread);
+	joinThread(state.teamsThread);
+	freeTeams(state.teamsJob.teams, state.teamsJob.count);
+	freeTeams(state.teams, state.teamCount);
 	releaseTaskbar(&state);
 	if (SUCCEEDED(comResult)) {
 		CoUninitialize();

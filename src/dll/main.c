@@ -55,6 +55,7 @@ static void runJob(char *text) {
 		case JOB_INSPECT: jobs_inspect(&job); break;
 		case JOB_REPLACE_AWAY:
 		case JOB_REPLACE_HOME: jobs_replaceTeam(&job); break;
+		case JOB_LIST_TEAMS: jobs_listTeams(&job); break;
 	}
 	job_free(&job);
 }

@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 ATTRIBUTE_COUNT = 52
 SCALE_20_COUNT = 27  # the first 27 are on the 1-20 scale, the rest on 1-100
-ATTRIBUTE = re.compile(r"(home\.[^.]+)\.attributes\.(\w+)")
+ATTRIBUTE = re.compile(r"((?:home|away)\.[^.]+)\.attributes\.(\w+)")
 
 
 def find_staff(fields):
@@ -85,10 +85,10 @@ def write_variant(original, label, attributes):
     return variant
 
 
-def run_fixture(fixture, seeds, count, fm24ctl):
+def run_fixture(fixture, seeds, count, fm24ctl, extra=()):
     output = fixture.with_suffix(".csv")
     subprocess.run(
-        [str(fm24ctl), "run", str(fixture), seeds, str(output)],
+        [str(fm24ctl), "run", str(fixture), seeds, str(output), *extra],
         cwd=fm24ctl.parent,
         check=True,
         stdout=subprocess.DEVNULL,
@@ -157,7 +157,7 @@ def main():
         check=True,
     )
     with original.open(encoding="utf-8") as f:
-        staff = find_staff(json.load(f)["fields"])
+        staff = {b: i for b, i in find_staff(json.load(f)["fields"]).items() if b.startswith("home.")}
     if not staff:
         raise ValueError("The exported fixture has no labelled home staff attributes")
     print(f"{len(staff)} home staff blocks with attributes", flush=True)

@@ -17,4 +17,7 @@ int commands_encode(int argc, wchar_t **argv);
 int commands_replaceTeam(int argc, wchar_t **argv);
 // As above, also returning a failure message for the viewer.
 int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_t resultSize);
+int commands_listTeams(int argc, wchar_t **argv);
+// As above, also returning the outcome line for the viewer.
+int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t resultSize);
 int commands_probe(int argc, wchar_t **argv); // probe.c

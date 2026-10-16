@@ -96,6 +96,8 @@ static unsigned expectedSide = 1;
 static const FixtureData *replacementInput;
 static const wchar_t *expectedTeam;
 static wchar_t replacementOutput[HARNESS_PATH_LENGTH];
+static unsigned teamLists;
+static bool teamListFailure;
 static unsigned taskbarCreates;
 static unsigned taskbarInitializations;
 static unsigned taskbarReleases;
@@ -356,6 +358,21 @@ int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_
 		ASSERT_BOOL_EQ(files_write(argv[4], "{\"replacement\":true}", 20), true);
 	}
 	return replacementResult;
+}
+
+int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	ASSERT_BOOL_EQ(argc == 3 && argv[argc] == NULL, true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"list-teams"), 0);
+	++teamLists;
+	if (teamListFailure) {
+		(void)snprintf(result, resultSize, "error: FM24 is not running");
+		return 1;
+	}
+	static const char list[] =
+		"677\tLuton Town\n12\tAston Villa\r\n99\tUnited\n691\tNorwich City\n98\tUnited\nbad\n";
+	ASSERT_BOOL_EQ(files_write(argv[2], list, sizeof list - 1), true);
+	(void)snprintf(result, resultSize, "ok: 5 teams");
+	return 0;
 }
 
 bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t errorSize) {
@@ -830,10 +847,64 @@ static void checkTeamIcon(HWND window, WindowState *state, unsigned teamSide) {
 	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
 }
 
+static void finishTeamLoad(HWND window, WindowState *state) {
+	ASSERT_BOOL_EQ(state->teamsThread != NULL, true);
+	ASSERT_BOOL_EQ(WaitForSingleObject(state->teamsThread, 5000) == WAIT_OBJECT_0, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, TEAMS_TIMER, 0) == 0, true);
+	ASSERT_BOOL_EQ(state->teamsThread == NULL, true);
+}
+
+// Types `text` into the side's picker and checks the listed labels, in order.
+static void checkTeamFilter(
+	HWND window,
+	WindowState *state,
+	unsigned side,
+	const wchar_t *text,
+	const wchar_t *const *expected,
+	unsigned count
+) {
+	HWND picker = state->teamControls[side][TEAM_INPUT];
+	wchar_t label[64];
+	ASSERT_BOOL_EQ(SetWindowTextW(picker, text), true);
+	ASSERT_BOOL_EQ(
+		windowProcedure(window, WM_COMMAND, MAKEWPARAM(0, CBN_EDITCHANGE), (LPARAM)picker) == 0, true
+	);
+	ASSERT_BOOL_EQ(SendMessageW(picker, CB_GETCOUNT, 0, 0) == (LRESULT)count, true);
+	for (unsigned i = 0; i < count; ++i) {
+		ASSERT_BOOL_EQ(SendMessageW(picker, CB_GETLBTEXT, i, (LPARAM)label) > 0, true);
+		ASSERT_INT_EQ(wcscmp(label, expected[i]), 0);
+	}
+	ASSERT_BOOL_EQ(GetWindowTextW(picker, label, 64) >= 0 && wcscmp(label, text) == 0, true);
+}
+
+static void checkTeamPicker(HWND window, WindowState *state, unsigned side) {
+	ASSERT_BOOL_EQ(state->teamCount == 5 && !state->filteringTeams, true);
+	// The list loads filtered by the current name: the home team (Aston Villa) is listed.
+	HWND picker = state->teamControls[side][TEAM_INPUT];
+	ASSERT_BOOL_EQ(SendMessageW(picker, CB_GETCOUNT, 0, 0) == (side ? 0 : 1), true);
+	static const wchar_t *const all[] = {L"Aston Villa (12)",
+		L"Luton Town (677)",
+		L"Norwich City (691)",
+		L"United (98)",
+		L"United (99)"};
+	checkTeamFilter(window, state, side, L"", all, 5);
+	// Names starting with the text come first; IDs match too.
+	static const wchar_t *const u[] = {L"United (98)", L"United (99)", L"Luton Town (677)"};
+	checkTeamFilter(window, state, side, L"U", u, 3);
+	static const wchar_t *const id[] = {L"Luton Town (677)"};
+	checkTeamFilter(window, state, side, L"67", id, 1);
+	checkTeamFilter(window, state, side, L"Bristol", NULL, 0);
+	wchar_t picked[16];
+	ASSERT_BOOL_EQ(pickedTeamId(state, L"United (99)", picked, 16), true);
+	ASSERT_INT_EQ(wcscmp(picked, L"99"), 0);
+	ASSERT_BOOL_EQ(pickedTeamId(state, L"United", picked, 16), false);
+}
+
 static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	expectedSide = side;
 	replacementInput = state->data;
 	unsigned calls = replacementCalls;
+	unsigned lists = teamLists;
 	wchar_t originalTeam[FIXTURE_TEXT];
 	wchar_t opponent[FIXTURE_TEXT];
 	ASSERT_BOOL_EQ(widen(state->data->teams[side].name, originalTeam, FIXTURE_TEXT), true);
@@ -856,18 +927,21 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	wchar_t saved[FIXTURE_EXPORT_FILENAME_LENGTH];
 	wcscpy(saved, state->savedFilename);
 	const wchar_t *originalPath = state->path;
+	teamListFailure = true;
 	clickTeam(window, state, 1 - side, TEAM_ICON);
 	ASSERT_BOOL_EQ(state->editingTeam[1 - side], true);
 	clickTeam(window, state, side, TEAM_ICON);
 	ASSERT_BOOL_EQ(state->editingTeam[side] && !state->editingTeam[1 - side], true);
+	finishTeamLoad(window, state);
+	ASSERT_BOOL_EQ(teamLists == lists + 1 && !state->teams && state->teamCount == 0, true);
+	teamListFailure = false;
 	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[side], text, 2048) == 6, true);
 	ASSERT_INT_EQ(wcscmp(text, prefix), 0);
 	checkTeamHeading(window, state, side, prefix);
 	ASSERT_BOOL_EQ(GetWindowTextW(state->teamControls[side][TEAM_INPUT], text, 2048) > 0, true);
 	ASSERT_INT_EQ(wcscmp(text, originalTeam), 0);
-	ASSERT_BOOL_EQ(
-		SendMessageW(state->teamControls[side][TEAM_INPUT], EM_GETLIMITTEXT, 0, 0) == 255, true
-	);
+	HWND teamEdit = FindWindowExW(state->teamControls[side][TEAM_INPUT], NULL, L"Edit", NULL);
+	ASSERT_BOOL_EQ(SendMessageW(teamEdit, EM_GETLIMITTEXT, 0, 0) == 255, true);
 	checkTeamLayout(window, state, side);
 	state->dpi = 144;
 	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1350, 900, SWP_NOMOVE | SWP_NOZORDER), true);
@@ -892,6 +966,9 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	checkTeamHeading(window, state, side, heading);
 	ASSERT_INT_EQ(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath, true);
 	clickTeam(window, state, side, TEAM_ICON);
+	finishTeamLoad(window, state);
+	ASSERT_BOOL_EQ(teamLists == lists + 2, true);
+	checkTeamPicker(window, state, side);
 	key.wParam = VK_RETURN;
 	static const wchar_t *const invalid[] = {L"", L" \t", L"1\nteam=2"};
 	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
@@ -974,8 +1051,10 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	ASSERT_BOOL_EQ(fileMissing(replacementOutput), true);
 	replacementLoadFailure = false;
 	for (unsigned i = 0; i < 2; ++i) {
+		// The second is picked from the list: its ID is submitted.
 		expectedTeam = i ? (side ? L"677" : L"691") : newTeam;
-		ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], expectedTeam), true);
+		const wchar_t *typed = i ? (side ? L"Luton Town (677)" : L"Norwich City (691)") : expectedTeam;
+		ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], typed), true);
 		if (i) {
 			ASSERT_BOOL_EQ(paths_absolute(state->path, expectedInput, HARNESS_PATH_LENGTH), true);
 		}
@@ -1020,7 +1099,9 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 			clickTeam(window, state, side, TEAM_ICON);
 		}
 	}
-	ASSERT_BOOL_EQ(replacementCalls == calls + 4, true);
+	ASSERT_BOOL_EQ(
+		replacementCalls == calls + 4 && teamLists == lists + 2 && !state->teamsThread, true
+	);
 	for (unsigned exported = 0; exported < 2; ++exported) {
 		if (exported) {
 			exportFixture(window, state);
@@ -1058,6 +1139,9 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	ASSERT_BOOL_EQ(DeleteFileW(state->replacementPath), true);
 	state->replacementPath[0] = 0;
 	replacementInput = NULL;
+	freeTeams(state->teams, state->teamCount);
+	state->teams = NULL;
+	state->teamCount = 0;
 }
 
 static void checkFonts(HWND window, WindowState *state) {

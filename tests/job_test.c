@@ -100,6 +100,13 @@ TEST(parses_job_messages) {
 	job_free(&job);
 	char missingTeam[] = "command=replace_home\ninput=C:/in.bin\noutput=C:/out.json\n";
 	ASSERT_BOOL_EQ(job_parse(missingTeam, &job), false);
+	char teams[] = "command=list_teams\noutput=C:/teams.txt\n";
+	ASSERT_BOOL_EQ(job_parse(teams, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_LIST_TEAMS, true);
+	ASSERT_INT_EQ(wcscmp(job.output, L"C:/teams.txt"), 0);
+	job_free(&job);
+	char noTeamsOutput[] = "command=list_teams\n";
+	ASSERT_BOOL_EQ(job_parse(noTeamsOutput, &job), false);
 	char incomplete[] = "command=run\ninput=C:/in.bin\nseeds=1\n";
 	ASSERT_BOOL_EQ(job_parse(incomplete, &job), false);
 	char bad[] = "command=inspect\ninput=C:/in.bin\noutput=C:/out.json\nseeds=x\n";

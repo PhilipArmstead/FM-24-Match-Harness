@@ -5,6 +5,8 @@
 // game.h. All reads are fault-tolerant (see memory.h).
 #pragma once
 
+#include "buffer.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -40,6 +42,10 @@ void database_clubShortName(const uint8_t *team, char *out, size_t size);
 // ignored; a part of the name will do if no club's name matches in full), which picks the club's
 // first team. On failure, `error` says why (for an ambiguous name it lists the clubs).
 bool database_findTeam(const char *spec, uint8_t **team, char *error, size_t errorSize);
+
+// Every club's first team as "uniqueId<TAB>short name" lines (the specs database_findTeam
+// accepts); `count` is the number of lines. Returns false if memory runs out.
+bool database_listTeams(ByteBuffer *out, size_t *count);
 
 // A team's unique ID, or 0 if it cannot be read.
 uint32_t database_teamUniqueId(const uint8_t *team);

@@ -25,6 +25,14 @@ typedef struct TeamSearch {
 	size_t partialCount;
 } TeamSearch;
 
+// The distinct clubs of every team found by the scan (unsorted, with repeats until deduplicated).
+typedef struct ClubList {
+	uint8_t **clubs;
+	size_t count;
+	size_t capacity;
+	bool failed; // out of memory
+} ClubList;
+
 static bool readString(const uint8_t *object, char *out, size_t size);
 static bool readPersonString(const uint8_t *person, ptrdiff_t offset, char *out, size_t size);
 static bool peopleRange(uint8_t ***start, uint8_t ***end);
@@ -35,6 +43,9 @@ static void addClub(uint8_t **clubs, size_t *count, uint8_t *club);
 static void considerTeam(void *context, uint8_t *team);
 static bool firstTeam(const uint8_t *club, uint8_t **team);
 static void listClubs(uint8_t *const *clubs, size_t count, char *error, size_t errorSize);
+static void collectClub(void *context, uint8_t *team);
+static int comparePointers(const void *a, const void *b);
+static bool appendTeam(ByteBuffer *out, const uint8_t *team);
 
 bool database_loadPeople(PeopleIndex *index) {
 	*index = (PeopleIndex){0};
@@ -138,6 +149,26 @@ bool database_findTeam(const char *spec, uint8_t **team, char *error, size_t err
 		return false;
 	}
 	return true;
+}
+
+bool database_listTeams(ByteBuffer *out, size_t *count) {
+	*count = 0;
+	ClubList list = {0};
+	memory_scanForQword((uintptr_t)game_address(RVA_TEAM_VTABLE), collectClub, &list);
+	if (list.count) {
+		qsort(list.clubs, list.count, sizeof list.clubs[0], comparePointers);
+	}
+	bool ok = !list.failed;
+	for (size_t i = 0; ok && i < list.count; ++i) {
+		uint8_t *team = NULL;
+		if ((i && list.clubs[i] == list.clubs[i - 1]) || !firstTeam(list.clubs[i], &team)) {
+			continue;
+		}
+		ok = appendTeam(out, team);
+		*count += ok;
+	}
+	free(list.clubs);
+	return ok;
 }
 
 uint32_t database_teamUniqueId(const uint8_t *team) {
@@ -276,4 +307,43 @@ static void listClubs(uint8_t *const *clubs, size_t count, char *error, size_t e
 	if (count > listed && length < errorSize) {
 		(void)snprintf(error + length, errorSize - length, ", ...");
 	}
+}
+
+static void collectClub(void *context, uint8_t *team) {
+	ClubList *list = context;
+	uint8_t *club = NULL;
+	if (list->failed || !memory_readPointer(team, TEAM_CLUB, &club) || !club) {
+		return;
+	}
+	if (list->count == list->capacity) {
+		size_t grown = list->capacity ? list->capacity * 2 : 4096;
+		uint8_t **clubs = realloc(list->clubs, grown * sizeof *clubs);
+		if (!clubs) {
+			list->failed = true;
+			return;
+		}
+		list->clubs = clubs;
+		list->capacity = grown;
+	}
+	list->clubs[list->count++] = club;
+}
+
+static int comparePointers(const void *a, const void *b) {
+	uintptr_t left = (uintptr_t)*(uint8_t *const *)a;
+	uintptr_t right = (uintptr_t)*(uint8_t *const *)b;
+	return (left > right) - (left < right);
+}
+
+// One "uniqueId<TAB>name" line; control characters in the name become spaces.
+static bool appendTeam(ByteBuffer *out, const uint8_t *team) {
+	char name[MAX_NAME_LENGTH + 1];
+	database_clubShortName(team, name, sizeof name);
+	for (char *c = name; *c; ++c) {
+		if ((unsigned char)*c < ' ') {
+			*c = ' ';
+		}
+	}
+	char line[MAX_NAME_LENGTH + 32];
+	int length = snprintf(line, sizeof line, "%u\t%s\n", database_teamUniqueId(team), name);
+	return length > 0 && buffer_append(out, line, (size_t)length);
 }
