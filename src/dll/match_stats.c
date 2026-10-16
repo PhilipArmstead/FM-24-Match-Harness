@@ -6,11 +6,12 @@
 #include "database.h"
 #include "game.h"
 #include "memory.h"
+#include "protocol.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <windows.h>
 
 
 enum {
@@ -208,34 +209,48 @@ static const uint8_t *playerStats(const uint8_t *team, int index);
 static int squadSize(const uint8_t *team);
 static unsigned completedPasses(const uint8_t *team);
 static double possession(unsigned own, unsigned other);
-static void addTeam(
+static PlayerTotals *findPlayer(TeamTotals *team, uint32_t uniqueId);
+static bool addTeam(
 	TeamTotals *totals,
 	const uint8_t *team,
-	const uint8_t *opponent,
 	int matchLength,
+	double possessionPercent,
 	bool first
 );
-static void siblingPath(const wchar_t *runOutput, const wchar_t *suffix, wchar_t *out, size_t size);
+static bool siblingPath(const wchar_t *runOutput, const wchar_t *suffix, wchar_t *out, size_t size);
 static void writeQuoted(FILE *file, const char *text);
 static void writePlayers(FILE *file, const MatchStatsTotals *totals, const PeopleIndex *people);
 static void writeTeams(FILE *file, const MatchStatsTotals *totals);
 
-void matchStats_add(MatchStatsTotals *totals, const uint8_t *match) {
+bool matchStats_add(MatchStatsTotals *totals, const uint8_t *match) {
 	const uint8_t *home = *(const uint8_t *const *)(match + MATCH_TEAM_HOME);
 	const uint8_t *away = *(const uint8_t *const *)(match + MATCH_TEAM_AWAY);
 	const uint8_t *result = *(const uint8_t *const *)(match + MATCH_RESULT);
 	int matchLength = memory_loadU16(result + RESULT_MATCH_LENGTH);
 	bool first = totals->matches == 0;
-	addTeam(&totals->teams[0], home, away, matchLength, first);
-	addTeam(&totals->teams[1], away, home, matchLength, first);
+	unsigned homePasses = completedPasses(home);
+	unsigned awayPasses = completedPasses(away);
+	if (!addTeam(&totals->teams[0], home, matchLength, possession(homePasses, awayPasses), first) ||
+			!addTeam(&totals->teams[1], away, matchLength, possession(awayPasses, homePasses), first)) {
+		return false;
+	}
 	++totals->matches;
+	return true;
+}
+
+void matchStats_free(MatchStatsTotals *totals) {
+	free(totals->teams[0].players);
+	free(totals->teams[1].players);
+	*totals = (MatchStatsTotals){0};
 }
 
 bool matchStats_write(const MatchStatsTotals *totals, const wchar_t *runOutput) {
-	wchar_t playersPath[MAX_PATH];
-	wchar_t teamsPath[MAX_PATH];
-	siblingPath(runOutput, L"-players.csv", playersPath, MAX_PATH);
-	siblingPath(runOutput, L"-teams.csv", teamsPath, MAX_PATH);
+	wchar_t playersPath[HARNESS_PATH_LENGTH];
+	wchar_t teamsPath[HARNESS_PATH_LENGTH];
+	if (!siblingPath(runOutput, L"-players.csv", playersPath, HARNESS_PATH_LENGTH) ||
+			!siblingPath(runOutput, L"-teams.csv", teamsPath, HARNESS_PATH_LENGTH)) {
+		return false;
+	}
 	FILE *players = _wfopen(playersPath, L"wb");
 	FILE *teams = _wfopen(teamsPath, L"wb");
 	bool ok = players && teams;
@@ -244,6 +259,7 @@ bool matchStats_write(const MatchStatsTotals *totals, const wchar_t *runOutput) 
 		(void)database_loadPeople(&people); // without it the players have no names
 		writePlayers(players, totals, &people);
 		writeTeams(teams, totals);
+		ok = !ferror(players) && !ferror(teams);
 		database_freePeople(&people);
 	}
 	if (players) {
@@ -325,26 +341,63 @@ static double possession(unsigned own, unsigned other) {
 	return floor(100.0 * own / (own + other) + 0.5);
 }
 
-static void addTeam(
+static PlayerTotals *findPlayer(TeamTotals *team, uint32_t uniqueId) {
+	size_t low = 0;
+	size_t high = team->playerCount;
+	while (low < high) {
+		size_t middle = low + (high - low) / 2;
+		if (team->players[middle].uniqueId < uniqueId) {
+			low = middle + 1;
+		} else {
+			high = middle;
+		}
+	}
+	if (low < team->playerCount && team->players[low].uniqueId == uniqueId) {
+		return &team->players[low];
+	}
+	if (team->playerCount == team->playerCapacity) {
+		size_t capacity = team->playerCapacity ? team->playerCapacity * 2 : MATCH_STATS_MAX_PLAYERS;
+		if (capacity < team->playerCapacity || capacity > SIZE_MAX / sizeof *team->players) {
+			return NULL;
+		}
+		PlayerTotals *players = realloc(team->players, capacity * sizeof *players);
+		if (!players) {
+			return NULL;
+		}
+		team->players = players;
+		team->playerCapacity = capacity;
+	}
+	memmove(
+		team->players + low + 1, team->players + low, (team->playerCount - low) * sizeof *team->players
+	);
+	++team->playerCount;
+	PlayerTotals *player = &team->players[low];
+	*player = (PlayerTotals){.uniqueId = uniqueId};
+	return player;
+}
+
+static bool addTeam(
 	TeamTotals *totals,
 	const uint8_t *team,
-	const uint8_t *opponent,
 	int matchLength,
+	double possessionPercent,
 	bool first
 ) {
 	if (first) {
 		const uint8_t *databaseTeam = *(const uint8_t *const *)(team + TEAM_DATABASE_TEAM);
 		database_clubShortName(databaseTeam, totals->name, sizeof totals->name);
-		totals->playerCount = (unsigned)squadSize(team);
 	}
 	double sums[MATCH_STATS_PLAYER_VALUES] = {0};
 	long long ratingMinutes = 0; // rating x 100 x minutes
 	long long teamMinutes = 0;
-	for (int i = 0; i < (int)totals->playerCount && i < squadSize(team); ++i) {
-		const uint8_t *stats = playerStats(team, i);
-		PlayerTotals *player = &totals->players[i];
+	int count = squadSize(team);
+	for (int i = 0; i < count; ++i) {
 		const uint8_t *matchPlayer = *(const uint8_t *const *)(team + TEAM_PLAYERS + 8 * (size_t)i);
-		player->uniqueId = memory_loadU32(matchPlayer + PLAYER_UNIQUE_ID);
+		const uint8_t *stats = *(const uint8_t *const *)(matchPlayer + PLAYER_STATS);
+		PlayerTotals *player = findPlayer(totals, memory_loadU32(matchPlayer + PLAYER_UNIQUE_ID));
+		if (!player) {
+			return false;
+		}
 		int minutes = minutesPlayed(stats, matchLength);
 		if (!appeared(stats, minutes)) {
 			continue;
@@ -367,7 +420,7 @@ static void addTeam(
 		if (source == TEAM_GOALS) {
 			totals->values[v] += team[MATCH_TEAM_GOALS];
 		} else if (source == TEAM_POSSESSION) {
-			totals->values[v] += possession(completedPasses(team), completedPasses(opponent));
+			totals->values[v] += possessionPercent;
 		} else if (source == TEAM_RATING) {
 			// Minutes-weighted, truncated to hundredths as the match statistics screen shows it.
 			long long hundredths = teamMinutes ? ratingMinutes / teamMinutes : 0;
@@ -378,15 +431,16 @@ static void addTeam(
 			totals->values[v] += sums[source];
 		}
 	}
+	return true;
 }
 
 // The run output's path without ".csv", plus `suffix`.
-static void
+static bool
 siblingPath(const wchar_t *runOutput, const wchar_t *suffix, wchar_t *out, size_t size) {
 	size_t length = wcslen(runOutput);
 	size_t stem = length > 4 && _wcsicmp(runOutput + length - 4, L".csv") == 0 ? length - 4 : length;
-	(void)_snwprintf(out, size, L"%.*ls%ls", (int)stem, runOutput, suffix);
-	out[size - 1] = 0;
+	int written = swprintf(out, size, L"%.*ls%ls", (int)stem, runOutput, suffix);
+	return written >= 0 && (size_t)written < size;
 }
 
 static void writeQuoted(FILE *file, const char *text) {
@@ -409,7 +463,7 @@ static void writePlayers(FILE *file, const MatchStatsTotals *totals, const Peopl
 	double matches = totals->matches ? totals->matches : 1;
 	for (int side = 0; side < 2; ++side) {
 		const TeamTotals *team = &totals->teams[side];
-		for (unsigned i = 0; i < team->playerCount; ++i) {
+		for (size_t i = 0; i < team->playerCount; ++i) {
 			const PlayerTotals *player = &team->players[i];
 			char name[MATCH_STATS_NAME_LENGTH] = "?";
 			const uint8_t *person = database_findPerson(people, player->uniqueId);

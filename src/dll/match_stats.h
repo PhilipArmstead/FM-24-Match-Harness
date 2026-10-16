@@ -7,6 +7,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <wchar.h>
 
@@ -29,8 +30,9 @@ typedef struct PlayerTotals {
 
 typedef struct TeamTotals {
 	char name[MATCH_STATS_NAME_LENGTH];
-	unsigned playerCount;
-	PlayerTotals players[MATCH_STATS_MAX_PLAYERS];
+	size_t playerCount;
+	size_t playerCapacity;
+	PlayerTotals *players;
 	double values[MATCH_STATS_TEAM_VALUES];
 } TeamTotals;
 
@@ -39,9 +41,10 @@ typedef struct MatchStatsTotals {
 	TeamTotals teams[2]; // home, away
 } MatchStatsTotals;
 
-// Adds the statistics of a played match. Every match of a run must come from the same input, so
-// players line up by their place in the team.
-void matchStats_add(MatchStatsTotals *totals, const uint8_t *match);
+// Adds the statistics of a played match, matching players by unique ID across rebuilt line-ups.
+bool matchStats_add(MatchStatsTotals *totals, const uint8_t *match);
+
+void matchStats_free(MatchStatsTotals *totals);
 
 // Writes the averages per match next to the run's CSV: "<run output without .csv>-players.csv" and
 // "-teams.csv". Returns false if a file cannot be written.

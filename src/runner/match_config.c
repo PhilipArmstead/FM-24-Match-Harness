@@ -6,7 +6,6 @@
 #include "json_reader.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 
@@ -18,6 +17,7 @@ typedef struct Encoder {
 	ByteBuffer name;
 	ByteBuffer player;
 	const ConfigVisitor *visitor;
+	uint32_t awayTeam;
 	size_t field; // index of the field being read, for messages
 } Encoder;
 
@@ -30,7 +30,8 @@ static bool
 parseConfig(Encoder *encoder, const char *json, size_t length, char *error, size_t errorSize);
 static bool failField(Encoder *encoder, const char *message);
 static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t width);
-static bool emitHex(Encoder *encoder, const char *hex, size_t length);
+static bool emitHex(Encoder *encoder, uint8_t *hex, size_t length);
+static bool readText(Encoder *encoder, ByteBuffer *out);
 static bool readUnsignedValue(Encoder *encoder, size_t width);
 static bool readU8Map(Encoder *encoder);
 static bool readStringValue(Encoder *encoder, bool isHex);
@@ -44,11 +45,16 @@ bool matchConfig_encode(
 	const char *json,
 	size_t length,
 	ByteBuffer *out,
+	uint32_t *awayTeam,
 	char *error,
 	size_t errorSize
 ) {
 	Encoder encoder = {.out = out};
-	return parseConfig(&encoder, json, length, error, errorSize);
+	bool ok = parseConfig(&encoder, json, length, error, errorSize);
+	if (awayTeam) {
+		*awayTeam = ok ? encoder.awayTeam : 0;
+	}
+	return ok;
 }
 
 bool matchConfig_visit(
@@ -107,20 +113,27 @@ static bool emitUnsigned(Encoder *encoder, unsigned long long value, size_t widt
 	return buffer_append(encoder->out, bytes, width);
 }
 
-static bool emitHex(Encoder *encoder, const char *hex, size_t length) {
+static bool emitHex(Encoder *encoder, uint8_t *hex, size_t length) {
 	if (length % 2) {
 		return failField(encoder, "hex value has odd length");
 	}
 	for (size_t i = 0; i < length; i += 2) {
-		char pair[3] = {hex[i], hex[i + 1], 0};
-		char *stop = NULL;
-		unsigned long byte = strtoul(pair, &stop, 16);
-		uint8_t value = (uint8_t)byte;
-		if (*stop || !buffer_append(encoder->out, &value, 1)) {
+		int high = jsonReader_hexDigit(hex[i]);
+		int low = jsonReader_hexDigit(hex[i + 1]);
+		if (high < 0 || low < 0) {
 			return failField(encoder, "bad hex digit");
 		}
+		hex[i / 2] = (uint8_t)((unsigned)high * 16 + (unsigned)low);
 	}
-	return true;
+	return buffer_append(encoder->out, hex, length / 2);
+}
+
+static bool readText(Encoder *encoder, ByteBuffer *out) {
+	if (!jsonReader_readString(&encoder->reader, out)) {
+		return false;
+	}
+	return !memchr(buffer_string(out), 0, out->length) ||
+				 jsonReader_fail(&encoder->reader, "NUL in annotation or key");
 }
 
 static bool readUnsignedValue(Encoder *encoder, size_t width) {
@@ -142,7 +155,7 @@ static bool readU8Map(Encoder *encoder) {
 		return true;
 	}
 	do {
-		if (!jsonReader_readString(reader, &encoder->scratch) || !jsonReader_consume(reader, ':') ||
+		if (!jsonReader_readString(reader, NULL) || !jsonReader_consume(reader, ':') ||
 				!readUnsignedValue(encoder, 1)) {
 			return failField(encoder, "bad u8map entry");
 		}
@@ -157,7 +170,7 @@ static bool readStringValue(Encoder *encoder, bool isHex) {
 	const char *text = buffer_string(&encoder->scratch);
 	size_t length = encoder->scratch.length;
 	if (isHex) {
-		return emitHex(encoder, text, length);
+		return emitHex(encoder, encoder->scratch.data, length);
 	}
 	return emitUnsigned(encoder, length, 4) && buffer_append(encoder->out, text, length);
 }
@@ -182,9 +195,7 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 		width || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 || strcmp(key, "hex") == 0;
 	if (!isValue) {
 		if (encoder->visitor && (strcmp(key, "name") == 0 || strcmp(key, "player") == 0)) {
-			return jsonReader_readString(
-				&encoder->reader, strcmp(key, "name") == 0 ? &encoder->name : &encoder->player
-			);
+			return readText(encoder, strcmp(key, "name") == 0 ? &encoder->name : &encoder->player);
 		}
 		return jsonReader_skipValue(&encoder->reader);
 	}
@@ -204,13 +215,16 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 static bool readField(Encoder *encoder) {
 	JsonReader *reader = &encoder->reader;
 	FieldState field = {0};
+	if (encoder->visitor) {
+		buffer_clear(encoder->out);
+	}
 	size_t start = encoder->out->length;
 	buffer_clear(&encoder->name);
 	buffer_clear(&encoder->player);
 	bool ok = jsonReader_consume(reader, '{') || failField(encoder, "expected a field object");
 	if (ok && !jsonReader_consume(reader, '}')) {
 		do {
-			ok = jsonReader_readString(reader, &encoder->key) &&
+			ok = readText(encoder, &encoder->key) &&
 					 (jsonReader_consume(reader, ':') || failField(encoder, "expected :")) &&
 					 readMember(encoder, buffer_string(&encoder->key), &field);
 		} while (ok && jsonReader_consume(reader, ','));
@@ -252,19 +266,34 @@ static bool readFields(Encoder *encoder) {
 static bool readTopMember(Encoder *encoder, const char *key, bool *formatOk, bool *haveFields) {
 	JsonReader *reader = &encoder->reader;
 	if (strcmp(key, "format") == 0) {
-		bool ok = jsonReader_readString(reader, &encoder->scratch);
+		bool ok = readText(encoder, &encoder->scratch);
 		*formatOk = ok && strcmp(buffer_string(&encoder->scratch), "fm24-match-config/1") == 0;
 		return ok;
 	}
 	if (strcmp(key, "fields") == 0) {
+		if (*haveFields) {
+			return jsonReader_fail(reader, "duplicate fields");
+		}
 		*haveFields = readFields(encoder);
 		return *haveFields;
 	}
 	if (encoder->visitor && encoder->visitor->source && strcmp(key, "source") == 0) {
-		if (!jsonReader_readString(reader, &encoder->scratch)) {
+		if (!readText(encoder, &encoder->scratch)) {
 			return false;
 		}
 		encoder->visitor->source(encoder->visitor->context, buffer_string(&encoder->scratch));
+		return true;
+	}
+	if (strcmp(key, "away_team") == 0) {
+		unsigned long long value = 0;
+		bool isUnsigned = false;
+		if (!jsonReader_readNumber(reader, &value, &isUnsigned)) {
+			return false;
+		}
+		if (!isUnsigned || value > UINT32_MAX) {
+			return jsonReader_fail(reader, "away_team must be an unsigned 32-bit integer");
+		}
+		encoder->awayTeam = (uint32_t)value;
 		return true;
 	}
 	return jsonReader_skipValue(reader);
@@ -278,7 +307,7 @@ static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 		jsonReader_consume(reader, '{') || jsonReader_fail(reader, "config must be a JSON object");
 	if (ok && !jsonReader_consume(reader, '}')) {
 		do {
-			ok = jsonReader_readString(reader, &key) &&
+			ok = readText(encoder, &key) &&
 					 (jsonReader_consume(reader, ':') || jsonReader_fail(reader, "expected :")) &&
 					 readTopMember(encoder, buffer_string(&key), formatOk, haveFields);
 		} while (ok && jsonReader_consume(reader, ','));
@@ -293,29 +322,5 @@ static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 		}
 		ok = reader->position == reader->end || jsonReader_fail(reader, "trailing data");
 	}
-	return ok;
-}
-
-bool matchConfig_awayTeam(const char *json, size_t length, uint32_t *awayTeam) {
-	*awayTeam = 0;
-	JsonReader reader;
-	jsonReader_init(&reader, json, length);
-	ByteBuffer key = {0};
-	bool ok = jsonReader_consume(&reader, '{');
-	if (ok && !jsonReader_consume(&reader, '}')) {
-		do {
-			ok = jsonReader_readString(&reader, &key) && jsonReader_consume(&reader, ':');
-			if (ok && strcmp(buffer_string(&key), "away_team") == 0) {
-				unsigned long long value = 0;
-				bool isUnsigned = false;
-				ok =
-					jsonReader_readNumber(&reader, &value, &isUnsigned) && isUnsigned && value <= UINT32_MAX;
-				*awayTeam = (uint32_t)value;
-			} else if (ok) {
-				ok = jsonReader_skipValue(&reader);
-			}
-		} while (ok && jsonReader_consume(&reader, ','));
-	}
-	buffer_free(&key);
 	return ok;
 }

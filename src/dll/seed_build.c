@@ -46,7 +46,8 @@ typedef struct Alignment {
 static void addSwap(Swap *swaps, size_t *count, uint8_t *slot, const uint8_t *expected);
 static size_t swapAwayTeam(const SeedBuilder *builder, Swap *swaps);
 static void restoreSwaps(const Swap *swaps, size_t count);
-static bool buildTraced(const SeedBuilder *builder, uint32_t seed, Serialised *out);
+static bool
+buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced);
 static bool roundTrip(const ByteBuffer *bytes, Serialised *out);
 static bool sameLayout(const Serialised *a, const Serialised *b);
 static bool sameRecord(const Serialised *a, const Serialised *b, size_t i);
@@ -59,6 +60,7 @@ static size_t runEnd(const Side *side, size_t from, size_t to, size_t depth, uin
 static bool sameRuns(const Alignment *a, size_t i0, size_t i1, size_t j0, size_t j1, size_t depth);
 static void alignEnds(const Alignment *a, size_t i0, size_t i1, size_t j0, size_t j1);
 static void align(const Alignment *a, size_t i0, size_t i1, size_t j0, size_t j1, size_t depth);
+static bool alignEdits(Alignment *alignment, const bool *edited, uint32_t seed);
 static bool
 mergeEdits(const SeedBuilder *builder, const Serialised *built, uint32_t seed, ByteBuffer *out);
 
@@ -80,8 +82,8 @@ bool seedBuilder_open(
 	// serialiser's own differences (a header flag the deserialiser sets) cancel out.
 	Serialised built = {0};
 	Serialised reference = {0};
-	bool ok = buildTraced(builder, inputSeed, &built) && roundTrip(&built.bytes, &reference) &&
-						roundTrip(input, &builder->input);
+	bool ok = buildSerialised(builder, inputSeed, &built, false) &&
+						roundTrip(&built.bytes, &reference) && roundTrip(input, &builder->input);
 	trace_free(&built);
 	if (!ok) {
 		(void)snprintf(error, errorSize, "building or loading the match failed; see harness.log");
@@ -96,12 +98,15 @@ bool seedBuilder_open(
 		ok = false;
 	}
 	if (ok) {
-		builder->editedCount = builder->input.recordCount;
-		builder->edited = calloc(builder->editedCount, sizeof *builder->edited);
+		builder->edited = calloc(builder->input.recordCount, sizeof *builder->edited);
 		ok = builder->edited != NULL;
+		if (!ok) {
+			(void)snprintf(error, errorSize, "out of memory recording the input's edits");
+		}
 	}
-	for (size_t i = 0; ok && i < builder->editedCount; ++i) {
+	for (size_t i = 0; ok && i < builder->input.recordCount; ++i) {
 		builder->edited[i] = !sameRecord(&reference, &builder->input, i);
+		builder->editCount += builder->edited[i];
 	}
 	trace_free(&reference);
 	if (!ok) {
@@ -118,36 +123,44 @@ bool seedBuilder_open(
 	return true;
 }
 
-size_t seedBuilder_dropAwayEdits(SeedBuilder *builder) {
+bool seedBuilder_dropAwayEdits(SeedBuilder *builder, size_t *dropped) {
+	*dropped = 0;
+	if (builder->editCount == 0) {
+		return true;
+	}
 	Side side = {.serialised = &builder->input};
 	if (!parseChains(&builder->input, &side.chains)) {
-		return 0;
+		log_message("cannot identify the away team's edits");
+		return false;
 	}
-	size_t dropped = 0;
-	for (size_t i = 0; i < builder->editedCount; ++i) {
+	for (size_t i = 0; i < builder->input.recordCount; ++i) {
 		if (builder->edited[i] && chainKey(&side, i, 0) == SITE_PART_AWAY) {
 			builder->edited[i] = false;
-			++dropped;
+			++*dropped;
 		}
 	}
+	builder->editCount -= *dropped;
 	freeChains(&side.chains);
-	return dropped;
+	return true;
 }
 
 size_t seedBuilder_editCount(const SeedBuilder *builder) {
-	size_t count = 0;
-	for (size_t i = 0; i < builder->editedCount; ++i) {
-		count += builder->edited[i];
-	}
-	return count;
+	return builder->editCount;
 }
 
 bool seedBuilder_build(SeedBuilder *builder, uint32_t seed, ByteBuffer *out) {
 	Serialised built = {0};
+	bool applyEdits = builder->editCount != 0;
 	EnterCriticalSection(&builder->lock);
-	bool ok = buildTraced(builder, seed, &built);
+	bool ok = buildSerialised(builder, seed, &built, applyEdits);
 	LeaveCriticalSection(&builder->lock);
-	ok = ok && mergeEdits(builder, &built, seed, out);
+	if (ok && applyEdits) {
+		ok = mergeEdits(builder, &built, seed, out);
+	} else if (ok) {
+		buffer_free(out);
+		*out = built.bytes;
+		built.bytes = (ByteBuffer){0};
+	}
 	trace_free(&built);
 	return ok;
 }
@@ -219,11 +232,12 @@ static void restoreSwaps(const Swap *swaps, size_t count) {
 
 // The game's build of the fixture with `seed` (against builder->awayTeam if set), serialised with
 // its write records.
-static bool buildTraced(const SeedBuilder *builder, uint32_t seed, Serialised *out) {
+static bool
+buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced) {
 	Swap swaps[MAX_SWAPS];
 	size_t swapped = swapAwayTeam(builder, swaps);
 	uint8_t *match = match_build(builder->next.fixture, seed);
-	bool ok = match && trace_serialize(match, out, true);
+	bool ok = match && trace_serialize(match, out, traced);
 	if (match) {
 		match_freeBuilt(match);
 	}
@@ -273,6 +287,12 @@ static bool appendRecord(ByteBuffer *out, const Serialised *from, size_t i) {
 
 static bool parseChains(const Serialised *serialised, Chains *chains) {
 	*chains = (Chains){0};
+	for (size_t i = 0; i < serialised->recordCount; ++i) {
+		if (serialised->records[i].path >= serialised->pathCount) {
+			log_message("invalid call chain at record %zu", i);
+			return false;
+		}
+	}
 	size_t total = 0;
 	for (size_t p = 0; p < serialised->pathCount; ++p) {
 		for (const char *c = serialised->paths[p]; *c; ++c) {
@@ -382,8 +402,8 @@ static void alignEnds(const Alignment *a, size_t i0, size_t i1, size_t j0, size_
 // two ranges share at their start and end are paired.
 static void align(const Alignment *a, size_t i0, size_t i1, size_t j0, size_t j1, size_t depth) {
 	if (sameSites(a, i0, i1, j0, j1)) {
-		for (size_t k = 0; k < i1 - i0; ++k) {
-			a->source[j0 + k] = i0 + k;
+		for (size_t j = j0; j < j1; ++j) {
+			a->source[j] = i0 + (j - j0);
 		}
 		return;
 	}
@@ -395,7 +415,7 @@ static void align(const Alignment *a, size_t i0, size_t i1, size_t j0, size_t j1
 	}
 	size_t i = i0;
 	size_t j = j0;
-	while (i < i1) {
+	while (i < i1 && j < j1) {
 		uint32_t key = chainKey(&a->input, i, depth);
 		size_t iEnd = runEnd(&a->input, i, i1, depth, key);
 		size_t jEnd = runEnd(&a->built, j, j1, depth, key);
@@ -403,6 +423,39 @@ static void align(const Alignment *a, size_t i0, size_t i1, size_t j0, size_t j1
 		i = iEnd;
 		j = jEnd;
 	}
+}
+
+static bool alignEdits(Alignment *alignment, const bool *edited, uint32_t seed) {
+	size_t inputCount = alignment->input.serialised->recordCount;
+	size_t builtCount = alignment->built.serialised->recordCount;
+	alignment->source = malloc((builtCount ? builtCount : 1) * sizeof *alignment->source);
+	bool *placed = calloc(inputCount ? inputCount : 1, sizeof *placed);
+	bool ok = alignment->source && placed &&
+						parseChains(alignment->input.serialised, &alignment->input.chains) &&
+						parseChains(alignment->built.serialised, &alignment->built.chains);
+	if (!ok) {
+		log_message("seed %u: cannot align the input's edits", seed);
+	} else {
+		for (size_t j = 0; j < builtCount; ++j) {
+			alignment->source[j] = SIZE_MAX;
+		}
+		align(alignment, 0, inputCount, 0, builtCount, 0);
+		for (size_t j = 0; j < builtCount; ++j) {
+			if (alignment->source[j] < inputCount) {
+				placed[alignment->source[j]] = true;
+			}
+		}
+	}
+	for (size_t i = 0; ok && i < inputCount; ++i) {
+		if (edited[i] && !placed[i]) {
+			log_message(
+				"seed %u: the game's build has a different structure around edited field #%zu", seed, i
+			);
+			ok = false;
+		}
+	}
+	free(placed);
+	return ok;
 }
 
 // The game's build for `seed` with the input's edits re-applied. The build's structure can differ
@@ -414,41 +467,17 @@ mergeEdits(const SeedBuilder *builder, const Serialised *built, uint32_t seed, B
 	const Serialised *input = &builder->input;
 	size_t builtCount = built->recordCount;
 	Alignment a = {.input = {.serialised = input}, .built = {.serialised = built}};
-	a.source = malloc((builtCount ? builtCount : 1) * sizeof *a.source);
-	size_t inputCount = builder->editedCount; // input->recordCount
-	bool *placed = calloc(inputCount ? inputCount : 1, sizeof *placed);
-	bool ok = a.source && placed && parseChains(input, &a.input.chains) &&
-						parseChains(built, &a.built.chains);
-	if (ok) {
-		for (size_t j = 0; j < builtCount; ++j) {
-			a.source[j] = SIZE_MAX;
-		}
-		align(&a, 0, inputCount, 0, builtCount, 0);
-		for (size_t j = 0; j < builtCount; ++j) {
-			if (a.source[j] < inputCount) {
-				placed[a.source[j]] = true;
-			}
-		}
-	}
-	for (size_t i = 0; ok && i < inputCount; ++i) {
-		if (builder->edited[i] && !placed[i]) {
-			log_message(
-				"seed %u: the game's build has a different structure around edited field #%zu", seed, i
-			);
-			ok = false;
-		}
-	}
+	bool ok = sameLayout(input, built) || alignEdits(&a, builder->edited, seed);
 	if (ok) {
 		buffer_clear(out);
 	}
 	for (size_t j = 0; ok && j < builtCount; ++j) {
-		size_t i = a.source[j];
+		size_t i = a.source ? a.source[j] : j;
 		bool fromInput = i != SIZE_MAX && builder->edited[i];
 		ok = appendRecord(out, fromInput ? input : built, fromInput ? i : j);
 	}
 	freeChains(&a.input.chains);
 	freeChains(&a.built.chains);
 	free(a.source);
-	free(placed);
 	return ok;
 }

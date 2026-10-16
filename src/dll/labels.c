@@ -255,6 +255,7 @@ typedef struct Walk {
 	bool playerNamed;
 	int tacticSlot;    // formation slot of the current tactic plan
 	unsigned planRole; // role keying the current set of player instructions
+	size_t siteRunStart;
 	char block[LABEL_LENGTH];
 	char previousBlock[LABEL_LENGTH];
 } Walk;
@@ -281,7 +282,6 @@ static void labelTeamField(
 );
 static const char *tacticPart(uint32_t address, int *slot);
 static bool insideTactic(uint32_t address);
-static int runIndex(const Walk *walk, size_t i);
 static unsigned lowestBit(uint64_t mask);
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelMemberField(const Walk *walk, FieldLabel *label);
@@ -525,16 +525,6 @@ static bool insideTactic(uint32_t address) {
 	return address > SITE_TACTIC_START && address <= SITE_TACTIC_END;
 }
 
-// Index of record `i` among the consecutive records written at its site.
-static int runIndex(const Walk *walk, size_t i) {
-	const TraceRecord *records = walk->serialised->records;
-	int index = 0;
-	for (size_t j = i; j > 0 && records[j - 1].site == records[i].site; --j) {
-		++index;
-	}
-	return index;
-}
-
 // The lowest set bit of a role mask: the role ID (64 if none).
 static unsigned lowestBit(uint64_t mask) {
 	unsigned bit = 0;
@@ -556,9 +546,9 @@ static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record) {
 			break;
 		case SITE_TACTIC_TEAM_INSTRUCTIONS:
 			label->flags = FLAGS_TEAM_INSTRUCTIONS;
-			label->flagWord = (unsigned)runIndex(walk, i);
+			label->flagWord = (unsigned)(i - walk->siteRunStart);
 			(void)snprintf(
-				label->name, sizeof label->name, "%s.team_instructions[%d]", block, runIndex(walk, i)
+				label->name, sizeof label->name, "%s.team_instructions[%u]", block, label->flagWord
 			);
 			break;
 		case SITE_TACTIC_SLOT_POSITION:
@@ -588,16 +578,16 @@ static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record) {
 			break;
 		case SITE_TACTIC_INSTRUCTIONS_BITS:
 			label->flags = FLAGS_PLAYER_INSTRUCTIONS;
-			label->flagWord = (unsigned)runIndex(walk, i);
+			label->flagWord = (unsigned)(i - walk->siteRunStart);
 			roleText(walk->planRole, role, sizeof role);
 			(void)snprintf(
 				label->name,
 				sizeof label->name,
-				"%s.slot[%d].player_instructions[%s].bits[%d]",
+				"%s.slot[%d].player_instructions[%s].bits[%u]",
 				block,
 				walk->tacticSlot,
 				role,
-				runIndex(walk, i)
+				label->flagWord
 			);
 			break;
 		default: break;
@@ -671,6 +661,9 @@ static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record
 
 static void labelRecord(Walk *walk, size_t i) {
 	const TraceRecord *record = &walk->serialised->records[i];
+	if (i == 0 || walk->serialised->records[i - 1].site != record->site) {
+		walk->siteRunStart = i;
+	}
 	uint32_t outer = 0;
 	uint32_t next = 0;
 	int depth = pathHead(walk->serialised->paths[record->path], &outer, &next);

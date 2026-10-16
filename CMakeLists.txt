@@ -33,6 +33,7 @@ add_library(common STATIC
 	src/common/buffer.c
 	src/common/files.c
 	src/common/tactic_names.c
+	src/ui/constants.h
 )
 target_include_directories(common PUBLIC src/common)
 target_compile_options(common PRIVATE ${warnings})
@@ -100,8 +101,10 @@ if(FM24_BUILD_TESTS)
 	add_executable(fm24_tests
 		tests/test.c
 		tests/job_test.c
+		tests/dll_test.c
 		tests/fixture_data_test.c
 		tests/runner_main_test.c
+		tests/runner_test.c
 		tests/fixture_export_test.c
 		tests/fixture_window_test.c
 		src/ui/fixture_export.c
@@ -109,6 +112,11 @@ if(FM24_BUILD_TESTS)
 		src/runner/json_reader.c
 		src/runner/match_config.c
 		src/runner/paths.c
+		src/runner/probe_patterns.c
+		src/dll/memory.c
+		src/dll/site_lookup.c
+		src/dll/site_members.c
+		src/dll/tactic_flags.c
 	)
 	target_include_directories(fm24_tests PRIVATE src/runner src/ui)
 	target_link_libraries(fm24_tests PRIVATE common comctl32 user32 gdi32 ole32 uuid)
@@ -116,7 +124,7 @@ if(FM24_BUILD_TESTS)
 	target_compile_options(fm24_tests PRIVATE ${warnings})
 	target_link_options(fm24_tests PRIVATE -static -static-libgcc)
 	install(TARGETS fm24_tests RUNTIME DESTINATION . COMPONENT Tests)
-	foreach(test job fixture_data runner_main fixture_export fixture_window)
+	foreach(test job dll fixture_data runner runner_main fixture_export fixture_window)
 		add_test(NAME ${test} COMMAND fm24_tests ${test})
 	endforeach()
 	if(CMAKE_BUILD_TYPE STREQUAL "Release" OR "Release" IN_LIST CMAKE_CONFIGURATION_TYPES)

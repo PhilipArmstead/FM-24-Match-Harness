@@ -3,19 +3,24 @@
 
 #include "paths.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <windows.h>
 
 
 bool paths_executableDirectory(wchar_t *out, size_t size) {
+	if (!size || size > MAXDWORD) {
+		return false;
+	}
 	DWORD length = GetModuleFileNameW(NULL, out, (DWORD)size);
 	if (length == 0 || length >= size) {
 		return false;
 	}
 	wchar_t *slash = wcsrchr(out, L'\\');
-	if (slash) {
-		*slash = 0;
+	if (!slash) {
+		return false;
 	}
+	*slash = 0;
 	return true;
 }
 
@@ -25,10 +30,15 @@ bool paths_join(wchar_t *out, size_t size, const wchar_t *directory, const wchar
 }
 
 bool paths_absolute(const wchar_t *path, wchar_t *out, size_t size) {
+	if (!size || size > MAXDWORD) {
+		return false;
+	}
 	DWORD length = GetFullPathNameW(path, (DWORD)size, out, NULL);
 	return length > 0 && length < size;
 }
 
 bool paths_toUtf8(const wchar_t *text, char *out, size_t size) {
-	return WideCharToMultiByte(CP_UTF8, 0, text, -1, out, (int)size, NULL, NULL) > 0;
+	return size > 0 && size <= INT_MAX &&
+				 WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, out, (int)size, NULL, NULL) >
+					 0;
 }

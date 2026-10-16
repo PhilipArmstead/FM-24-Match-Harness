@@ -10,6 +10,7 @@
 #include "protocol.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,12 +33,12 @@ typedef struct Path {
 } Path;
 
 typedef struct Totals {
-	unsigned runs;
-	unsigned homeWins;
-	unsigned draws;
-	unsigned awayWins;
-	unsigned homeGoals;
-	unsigned awayGoals;
+	uint64_t runs;
+	uint64_t homeWins;
+	uint64_t draws;
+	uint64_t awayWins;
+	uint64_t homeGoals;
+	uint64_t awayGoals;
 } Totals;
 
 typedef struct RunOptions {
@@ -54,21 +55,8 @@ typedef struct RunOptions {
 static bool absolutePath(const wchar_t *argument, Path *out);
 static bool workingPath(const wchar_t *name, Path *out);
 static int submitAndReport(const char *job);
-static bool encodeConfig(const Path *json, ByteBuffer *bytes);
-static bool encodeToFile(const Path *json, const Path *output, size_t *size);
-static bool readAwayTeam(const Path *json, uint32_t *awayTeam);
-// A JSON config's "away_team" (0 if it has none).
-static bool readAwayTeam(const Path *json, uint32_t *awayTeam) {
-	ByteBuffer text = {0};
-	bool ok = files_read(json->wide, &text) &&
-						matchConfig_awayTeam(buffer_string(&text), text.length, awayTeam);
-	if (!ok) {
-		fprintf(stderr, "cannot read %s\n", json->utf8);
-	}
-	buffer_free(&text);
-	return ok;
-}
-
+static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t *awayTeam);
+static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t *awayTeam);
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away);
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
 static int printSummary(const Path *csvPath);
@@ -190,8 +178,7 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 	}
 	(void)snprintf(result, resultSize, "Cannot prepare replacement; see the console for details.");
 	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
-			!readAwayTeam(&input, &awayTeam) || !workingPath(L"_job_input.bin", &bin) ||
-			!encodeToFile(&input, &bin, &size)) {
+			!workingPath(L"_job_input.bin", &bin) || !encodeToFile(&input, &bin, &size, &awayTeam)) {
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
@@ -218,7 +205,7 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 }
 
 int commands_encode(int argc, wchar_t **argv) {
-	if (argc < 4) {
+	if (argc != 4) {
 		fprintf(stderr, "usage: fm24ctl encode <input.json> <output.bin>\n");
 		return EXIT_USAGE;
 	}
@@ -226,7 +213,7 @@ int commands_encode(int argc, wchar_t **argv) {
 	Path output;
 	size_t size = 0;
 	if (!absolutePath(argv[2], &input) || !absolutePath(argv[3], &output) ||
-			!encodeToFile(&input, &output, &size)) {
+			!encodeToFile(&input, &output, &size, NULL)) {
 		return EXIT_FAILED;
 	}
 	printf("wrote %zu bytes\n", size);
@@ -236,7 +223,7 @@ int commands_encode(int argc, wchar_t **argv) {
 // A command-line path made absolute (the DLL runs with fm.exe's working directory).
 static bool absolutePath(const wchar_t *argument, Path *out) {
 	bool ok = paths_absolute(argument, out->wide, HARNESS_PATH_LENGTH) &&
-						paths_toUtf8(out->wide, out->utf8, sizeof out->utf8);
+						paths_toUtf8(out->wide, out->utf8, sizeof out->utf8) && !strpbrk(out->utf8, "\r\n");
 	if (!ok) {
 		fprintf(stderr, "bad path: %ls\n", argument);
 	}
@@ -246,9 +233,13 @@ static bool absolutePath(const wchar_t *argument, Path *out) {
 // A working file next to fm24ctl.exe.
 static bool workingPath(const wchar_t *name, Path *out) {
 	wchar_t directory[HARNESS_PATH_LENGTH];
-	return paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
-				 paths_join(out->wide, HARNESS_PATH_LENGTH, directory, name) &&
-				 paths_toUtf8(out->wide, out->utf8, sizeof out->utf8);
+	bool ok = paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
+						paths_join(out->wide, HARNESS_PATH_LENGTH, directory, name) &&
+						paths_toUtf8(out->wide, out->utf8, sizeof out->utf8);
+	if (!ok) {
+		fprintf(stderr, "cannot resolve the working file %ls\n", name);
+	}
+	return ok;
 }
 
 // Submits a job that reports one result line, prints it, and turns it into an exit code.
@@ -262,14 +253,14 @@ static int submitAndReport(const char *job) {
 }
 
 // Encodes a JSON config into match bytes.
-static bool encodeConfig(const Path *json, ByteBuffer *bytes) {
+static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t *awayTeam) {
 	ByteBuffer text = {0};
 	char error[256] = "";
 	bool ok = files_read(json->wide, &text);
 	if (!ok) {
 		fprintf(stderr, "cannot read %s\n", json->utf8);
 	} else if (!(ok = matchConfig_encode(
-								 buffer_string(&text), text.length, bytes, error, sizeof error
+								 buffer_string(&text), text.length, bytes, awayTeam, error, sizeof error
 							 ))) {
 		fprintf(stderr, "%s: %s\n", json->utf8, error);
 	}
@@ -277,9 +268,9 @@ static bool encodeConfig(const Path *json, ByteBuffer *bytes) {
 	return ok;
 }
 
-static bool encodeToFile(const Path *json, const Path *output, size_t *size) {
+static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t *awayTeam) {
 	ByteBuffer bytes = {0};
-	bool ok = encodeConfig(json, &bytes);
+	bool ok = encodeConfig(json, &bytes, awayTeam);
 	if (ok && !(ok = files_write(output->wide, bytes.data, bytes.length))) {
 		fprintf(stderr, "cannot write %s\n", output->utf8);
 	}
@@ -304,13 +295,17 @@ static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned awa
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count) {
 	const char *position = line;
 	for (size_t i = 0; i < count; ++i) {
+		if (*position < '0' || *position > '9') {
+			return false;
+		}
 		char *end = NULL;
 		errno = 0;
 		values[i] = strtoul(position, &end, 10);
-		if (errno != 0 || end == position || (i + 1 < count && *end != ',')) {
+		if (errno != 0 || values[i] > UINT32_MAX ||
+				(i + 1 < count ? *end != ',' : *end && !strchr(",\r\n", *end))) {
 			return false;
 		}
-		position = end + 1;
+		position = *end == ',' ? end + 1 : end;
 	}
 	return true;
 }
@@ -324,26 +319,33 @@ static int printSummary(const Path *csvPath) {
 	}
 	char line[256];
 	Totals totals = {0};
-	bool haveHeader = fgets(line, sizeof line, csv) != NULL;
-	while (haveHeader && fgets(line, sizeof line, csv)) {
+	bool ok =
+		fgets(line, sizeof line, csv) != NULL && strncmp(line, "seed,home_goals,away_goals,", 27) == 0;
+	while (ok && fgets(line, sizeof line, csv)) {
 		unsigned long values[3] = {0};
-		if (parseCsvNumbers(line, values, 3)) {
+		ok = parseCsvNumbers(line, values, 3);
+		if (ok) {
 			addResult(&totals, (unsigned)values[0], (unsigned)values[1], (unsigned)values[2]);
 		}
 	}
-	(void)fclose(csv);
+	ok = !ferror(csv) && ok;
+	ok = fclose(csv) == 0 && ok;
+	if (!ok) {
+		fprintf(stderr, "cannot read valid results from %s\n", csvPath->utf8);
+		return EXIT_FAILED;
+	}
 	if (totals.runs == 0) {
 		printf("0 runs completed; see harness.log\n");
-		return EXIT_OK;
+		return EXIT_FAILED;
 	}
 	printf(
-		"%u runs: home %u / draw %u / away %u, avg %.2f-%.2f\n",
+		"%" PRIu64 " runs: home %" PRIu64 " / draw %" PRIu64 " / away %" PRIu64 ", avg %.2f-%.2f\n",
 		totals.runs,
 		totals.homeWins,
 		totals.draws,
 		totals.awayWins,
-		(double)totals.homeGoals / totals.runs,
-		(double)totals.awayGoals / totals.runs
+		(double)totals.homeGoals / (double)totals.runs,
+		(double)totals.awayGoals / (double)totals.runs
 	);
 	return EXIT_OK;
 }
@@ -357,8 +359,7 @@ static bool prepareInput(Path *input, uint32_t *awayTeam) {
 	}
 	Path bin;
 	size_t size = 0;
-	if (!readAwayTeam(input, awayTeam) || !workingPath(L"_job_input.bin", &bin) ||
-			!encodeToFile(input, &bin, &size)) {
+	if (!workingPath(L"_job_input.bin", &bin) || !encodeToFile(input, &bin, &size, awayTeam)) {
 		return false;
 	}
 	*input = bin;
@@ -394,8 +395,10 @@ static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options
 		options->keepBuild = true;
 	} else if (wcscmp(name, L"--threads") == 0 && hasValue) {
 		wchar_t *end = NULL;
+		errno = 0;
 		options->threads = wcstoul(argv[++*i], &end, 10);
-		if (*end != 0 || options->threads < 1 || options->threads > HARNESS_MAX_THREADS) {
+		if (errno || argv[*i][0] < L'0' || argv[*i][0] > L'9' || *end != 0 || options->threads < 1 ||
+				options->threads > HARNESS_MAX_THREADS) {
 			fprintf(stderr, "--threads must be 1-%d\n", HARNESS_MAX_THREADS);
 			return false;
 		}
@@ -447,6 +450,7 @@ static bool defaultOutput(const Path *input, Path *output) {
 		*dot = 0;
 	}
 	if (wcslen(path) + wcslen(L".csv") >= HARNESS_PATH_LENGTH) {
+		fprintf(stderr, "the default results path is too long\n");
 		return false;
 	}
 	wcscat(path, L".csv");
@@ -469,7 +473,7 @@ static bool parseSeedValue(const wchar_t *value, char *seed, size_t size) {
 	wchar_t *end = NULL;
 	errno = 0;
 	unsigned long long number = wcstoull(value, &end, 10);
-	if (errno != 0 || end == value || *end != 0 || value[0] == L'-' || number > UINT32_MAX) {
+	if (errno != 0 || value[0] < L'0' || value[0] > L'9' || *end != 0 || number > UINT32_MAX) {
 		fprintf(stderr, "--seed must be a number from 0 to %u\n", UINT32_MAX);
 		return false;
 	}

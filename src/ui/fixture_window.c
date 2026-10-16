@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "fixture_window.h"
 
 #include "client.h"
 #include "commands.h"
+#include "constants.h"
 #include "fixture_data.h"
 #include "fixture_export.h"
 #include "fixture_load.h"
@@ -439,7 +441,7 @@ static bool setMetadata(WindowState *state) {
 				warningLength,
 				warningLength + (LONG)wcslen(exportLink),
 				CFE_LINK | CFE_UNDERLINE,
-				RGB(0, 0, 255)
+				RGB_BLUE
 			);
 		}
 	} else {
@@ -1558,7 +1560,7 @@ static void drawEditIcon(const WindowState *state, const DRAWITEMSTRUCT *draw) {
 	SetPolyFillMode(dc, WINDING);
 	SelectObject(dc, GetStockObject(DC_BRUSH));
 	SetDCBrushColor(
-		dc, (draw->itemState & ODS_DISABLED) ? GetSysColor(COLOR_GRAYTEXT) : RGB(0, 0, 255)
+		dc, (draw->itemState & ODS_DISABLED) ? GetSysColor(COLOR_GRAYTEXT) : RGB_BLUE
 	);
 	BeginPath(dc);
 	PolyDraw(dc, points, types, (int)(sizeof points / sizeof points[0]));
@@ -1839,7 +1841,7 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 		window = CreateWindowExW(
 			WS_EX_CONTROLPARENT,
 			windowClass,
-			L"FM24 Match Harness",
+			L"FM24 Match Harness (protocol " HARNESS_PROTOCOL L")",
 			WS_OVERLAPPEDWINDOW,
 			CW_USEDEFAULT,
 			CW_USEDEFAULT,

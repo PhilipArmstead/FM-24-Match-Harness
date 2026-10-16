@@ -26,7 +26,7 @@ typedef struct SeedBuilder {
 	const uint8_t *awayTeam; // a db::TEAM played instead of the fixture's away team, or NULL
 	Serialised input;        // the input, deserialised and serialised again (traced)
 	bool *edited;            // per input record: differs from a build with the input's own seed
-	size_t editedCount;
+	size_t editCount;
 	CRITICAL_SECTION lock; // builds share the game's fixture and the trace hooks
 } SeedBuilder;
 
@@ -43,9 +43,9 @@ bool seedBuilder_open(
 	size_t errorSize
 );
 
-// Forgets the input's edits to the away team's block; returns how many there were. For replacing
+// Forgets the input's edits to the away team's block. For replacing
 // the away team: those edits belong to the team being replaced.
-size_t seedBuilder_dropAwayEdits(SeedBuilder *builder);
+bool seedBuilder_dropAwayEdits(SeedBuilder *builder, size_t *dropped);
 
 // How many of the input's fields are re-applied to each build.
 size_t seedBuilder_editCount(const SeedBuilder *builder);

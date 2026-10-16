@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fixture_data.h"
+#include "json_reader.h"
 #include "match_config.h"
 #include "test.h"
 #include "tests.h"
@@ -319,6 +320,18 @@ TEST(rejects_invalid_configs) {
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"annotation\":00}",
 		"{\"format\":0,\"fields\":[]}",
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"source\":}",
+		"{\"format\":\"fm24-match-config/1\\u0000suffix\",\"fields\":[]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\\u0000junk\":1}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"hex\":\"+1\"}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"hex\":\"-0\"}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"hex\":\" f\"}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"hex\":\"\\u0000f\"}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"hex\":\"abc\"}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"fields\":[]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":4294967296}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":-1}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":1.0}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":1",
 	};
 	FixtureData *data = malloc(sizeof *data);
 	ASSERT_BOOL_EQ(data != NULL, true);
@@ -329,7 +342,7 @@ TEST(rejects_invalid_configs) {
 		char error[256] = "";
 		ByteBuffer bytes = {0};
 		ASSERT_BOOL_EQ(
-			matchConfig_encode(invalid[i], strlen(invalid[i]), &bytes, error, sizeof error), false
+			matchConfig_encode(invalid[i], strlen(invalid[i]), &bytes, NULL, error, sizeof error), false
 		);
 		ASSERT_BOOL_EQ(error[0], true);
 		buffer_free(&bytes);
@@ -388,7 +401,9 @@ TEST(encodes_and_visits_config_fields) {
 	};
 	ByteBuffer bytes = {0};
 	char error[256] = "";
-	ASSERT_BOOL_EQ(matchConfig_encode(json, sizeof json - 1, &bytes, error, sizeof error), true);
+	ASSERT_BOOL_EQ(
+		matchConfig_encode(json, sizeof json - 1, &bytes, NULL, error, sizeof error), true
+	);
 	ASSERT_BOOL_EQ(bytes.length == sizeof expected, true);
 	if (bytes.length == sizeof expected) {
 		ASSERT_INT_EQ(memcmp(bytes.data, expected, sizeof expected), 0);
@@ -403,6 +418,100 @@ TEST(encodes_and_visits_config_fields) {
 	}
 	buffer_free(&bytes);
 	buffer_free(&visited.bytes);
+}
+
+TEST(validates_json_strings_and_skipped_values) {
+	static const char *const invalid[] = {
+		"\"\\u+041\"",
+		"\"\\u 041\"",
+		"\"\\u-000\"",
+		"\"\\u000g\"",
+		"\"\\uD800\\u0041\"",
+		"\"\\q\"",
+		"\"truncated\\",
+		"\"\x80\"",
+		"\"\xC0\x80\"",
+		"\"\xC1\xBF\"",
+		"\"\xE0\x80\x80\"",
+		"\"\xED\xA0\x80\"",
+		"\"\xF0\x80\x80\x80\"",
+		"\"\xF4\x90\x80\x80\"",
+		"\"\xF5\x80\x80\x80\"",
+		"\"\xE2\x82\"",
+		"\"\xC2!\"",
+	};
+	for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		JsonReader reader;
+		ByteBuffer text = {0};
+		jsonReader_init(&reader, invalid[i], strlen(invalid[i]));
+		ASSERT_BOOL_EQ(jsonReader_readString(&reader, &text), false);
+		ASSERT_BOOL_EQ(reader.error[0] != 0, true);
+		jsonReader_init(&reader, invalid[i], strlen(invalid[i]));
+		ASSERT_BOOL_EQ(jsonReader_skipValue(&reader), false);
+		ASSERT_BOOL_EQ(reader.error[0] != 0, true);
+		buffer_free(&text);
+	}
+	static const char json[] = "\"plain\\n\\u0000\\u00e9\\uD83D\\uDE00\xF4\x8F\xBF\xBF\"";
+	static const uint8_t expected[] = {
+		'p',
+		'l',
+		'a',
+		'i',
+		'n',
+		'\n',
+		0,
+		0xc3,
+		0xa9,
+		0xf0,
+		0x9f,
+		0x98,
+		0x80,
+		0xf4,
+		0x8f,
+		0xbf,
+		0xbf,
+	};
+	JsonReader reader;
+	ByteBuffer text = {0};
+	jsonReader_init(&reader, json, sizeof json - 1);
+	ASSERT_BOOL_EQ(jsonReader_readString(&reader, &text), true);
+	ASSERT_BOOL_EQ(text.length == sizeof expected, true);
+	if (text.length == sizeof expected) {
+		ASSERT_INT_EQ(memcmp(text.data, expected, sizeof expected), 0);
+	}
+	buffer_free(&text);
+	static const char annotation[] =
+		"{\"ignored\":[18446744073709551616,"
+		"12345678901234567890123456789012345678901234567890123456789012345678901234567890,"
+		"-123456789012345678901234567890.5e+1234567890,{\"\\u0000\":\"skip\\uD83D\\uDE00\"}]}";
+	jsonReader_init(&reader, annotation, sizeof annotation - 1);
+	ASSERT_BOOL_EQ(jsonReader_skipValue(&reader), true);
+	ASSERT_BOOL_EQ(reader.position == reader.end, true);
+	for (size_t i = 0; i < sizeof json - 2; ++i) {
+		jsonReader_init(&reader, json, i);
+		ASSERT_BOOL_EQ(jsonReader_readString(&reader, NULL), false);
+	}
+}
+
+TEST(reads_replacement_metadata_during_encoding) {
+	static const char *const configs[] = {
+		"{\"format\":\"fm24-match-config/1\",\"away_team\":677,\"fields\":[{\"u8\":42}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}],\"away_team\":4294967295}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}]}",
+	};
+	static const uint32_t expected[] = {677, UINT32_MAX, 0};
+	for (size_t i = 0; i < sizeof configs / sizeof configs[0]; ++i) {
+		ByteBuffer bytes = {0};
+		char error[256] = "";
+		uint32_t awayTeam = 123;
+		ASSERT_BOOL_EQ(
+			matchConfig_encode(configs[i], strlen(configs[i]), &bytes, &awayTeam, error, sizeof error),
+			true
+		);
+		ASSERT_BOOL_EQ(awayTeam == expected[i], true);
+		ASSERT_BOOL_EQ(bytes.length == 1 && bytes.data[0] == 42, true);
+		buffer_free(&bytes);
+	}
 }
 
 TEST(reads_baseline_fixture) {
@@ -479,6 +588,13 @@ void registerFixtureDataTests(void) {
 	test_run("fixture data decodes tactic masks", test_decodes_tactic_masks);
 	test_run("fixture data rejects invalid configs", test_rejects_invalid_configs);
 	test_run("fixture data encodes and visits config fields", test_encodes_and_visits_config_fields);
+	test_run(
+		"JSON validates decoded and skipped strings", test_validates_json_strings_and_skipped_values
+	);
+	test_run(
+		"config encoding reads replacement metadata once",
+		test_reads_replacement_metadata_during_encoding
+	);
 }
 
 void registerFixtureBaselineTests(const char *path) {

@@ -89,12 +89,19 @@ typedef struct Match {
 	bool byShift; // FOUND by the common address shift among tied candidates
 } Match;
 
+typedef struct Shift {
+	int64_t value;
+	size_t count;
+} Shift;
+
 typedef struct Probe {
 	Image image;
 	Anchor *anchors;
 	size_t anchorCount;
 	int32_t buckets[1 << TABLE_BITS];
 	Match *matches;
+	Shift *shifts;
+	size_t shiftCount;
 } Probe;
 
 static bool defaultGamePath(wchar_t *path, size_t size);
@@ -118,26 +125,29 @@ static void collectJumpsTo(const Image *image, uint32_t target, Match *match);
 static uint32_t score(const Probe *probe, size_t function, uint32_t rva, uint32_t *firstDiff);
 static void resolveTies(Probe *probe);
 static int64_t commonShift(const Probe *probe, size_t rank);
+static void rankShifts(Probe *probe);
 static void report(FILE *out, const Probe *probe, const wchar_t *path);
 static void reportData(FILE *out, const Probe *probe);
 static void reportSummary(FILE *out, const Probe *probe);
 
 int commands_probe(int argc, wchar_t **argv) {
 	wchar_t path[HARNESS_PATH_LENGTH];
-	if (argc >= 3) {
-		(void)wcsncpy(path, argv[2], HARNESS_PATH_LENGTH - 1);
-		path[HARNESS_PATH_LENGTH - 1] = 0;
-	} else if (!defaultGamePath(path, HARNESS_PATH_LENGTH)) {
+	if (argc > 3 || (argc == 3 ? !paths_absolute(argv[2], path, HARNESS_PATH_LENGTH)
+														 : !defaultGamePath(path, HARNESS_PATH_LENGTH))) {
 		fprintf(stderr, "usage: fm24ctl probe [path\\to\\fm.exe] (or start the game first)\n");
 		return 2;
 	}
 	Probe *probe = calloc(1, sizeof *probe);
 	if (!probe) {
+		fprintf(stderr, "out of memory\n");
 		return 1;
 	}
 	int status = 1;
 	probe->matches = calloc(probeFunctionCount, sizeof *probe->matches);
-	if (probe->matches && openImage(&probe->image, path) && buildAnchors(probe)) {
+	probe->shifts = calloc(probeFunctionCount, sizeof *probe->shifts);
+	if (!probe->matches || !probe->shifts) {
+		fprintf(stderr, "out of memory\n");
+	} else if (openImage(&probe->image, path) && buildAnchors(probe)) {
 		printf("searching %ls for %zu functions...\n", path, probeFunctionCount);
 		scan(probe, false);
 		chooseAnchors(probe);
@@ -147,6 +157,7 @@ int commands_probe(int argc, wchar_t **argv) {
 		}
 		resolveTies(probe);
 		resolveThunks(probe);
+		rankShifts(probe);
 		wchar_t directory[HARNESS_PATH_LENGTH];
 		wchar_t output[HARNESS_PATH_LENGTH];
 		FILE *file = NULL;
@@ -157,16 +168,23 @@ int commands_probe(int argc, wchar_t **argv) {
 		reportSummary(stdout, probe);
 		if (file) {
 			report(file, probe, path);
-			status = fclose(file) == 0 ? 0 : 1;
-			printf("full report: %ls (please send this file)\n", output);
+			bool written = !ferror(file);
+			written = fclose(file) == 0 && written;
+			if (written) {
+				status = 0;
+				printf("full report: %ls (please send this file)\n", output);
+			} else {
+				fprintf(stderr, "cannot write probe.txt\n");
+			}
 		} else {
+			fprintf(stderr, "cannot create probe.txt; writing report to stdout instead\n");
 			report(stdout, probe, path);
-			status = 0;
 		}
 	}
 	closeImage(&probe->image);
 	free(probe->anchors);
 	free(probe->matches);
+	free(probe->shifts);
 	free(probe);
 	return status;
 }
@@ -197,7 +215,9 @@ static bool openImage(Image *image, const wchar_t *path) {
 		return false;
 	}
 	LARGE_INTEGER size;
-	if (!GetFileSizeEx(image->file, &size)) {
+	if (!GetFileSizeEx(image->file, &size) || size.QuadPart <= 0 ||
+			(uint64_t)size.QuadPart > SIZE_MAX) {
+		fprintf(stderr, "cannot read the size of %ls\n", path);
 		return false;
 	}
 	image->size = (size_t)size.QuadPart;
@@ -233,12 +253,14 @@ static bool parseHeaders(Image *image) {
 	}
 	uint32_t ntOffset = 0;
 	memcpy(&ntOffset, view + DOS_HEADER_LFANEW, sizeof ntOffset);
-	if (ntOffset > image->size - sizeof(IMAGE_NT_HEADERS64)) {
+	if (ntOffset > image->size || sizeof(IMAGE_NT_HEADERS64) > image->size - ntOffset) {
 		return false;
 	}
 	IMAGE_NT_HEADERS64 nt;
 	memcpy(&nt, view + ntOffset, sizeof nt);
-	if (nt.Signature != IMAGE_NT_SIGNATURE || nt.OptionalHeader.Magic != PE32_PLUS_MAGIC) {
+	if (nt.Signature != IMAGE_NT_SIGNATURE || nt.OptionalHeader.Magic != PE32_PLUS_MAGIC ||
+			nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+			nt.FileHeader.SizeOfOptionalHeader < sizeof nt.OptionalHeader) {
 		return false;
 	}
 	image->timestamp = nt.FileHeader.TimeDateStamp;
@@ -249,18 +271,24 @@ static bool parseHeaders(Image *image) {
 	if (count > MAX_SECTIONS || headers + count * sizeof(IMAGE_SECTION_HEADER) > image->size) {
 		return false;
 	}
+	image->sectionCount = 0;
 	for (size_t i = 0; i < count; ++i) {
 		IMAGE_SECTION_HEADER header;
 		memcpy(&header, view + headers + i * sizeof header, sizeof header);
+		uint64_t end = (uint64_t)header.PointerToRawData + header.SizeOfRawData;
+		uint32_t extent = header.Misc.VirtualSize > header.SizeOfRawData ? header.Misc.VirtualSize
+																																		 : header.SizeOfRawData;
+		if (end > image->size || (uint64_t)header.VirtualAddress + extent > image->sizeOfImage) {
+			return false;
+		}
 		Section *section = &image->sections[image->sectionCount++];
 		memcpy(section->name, header.Name, SECTION_NAME_LENGTH);
 		section->name[SECTION_NAME_LENGTH] = 0;
 		section->rva = header.VirtualAddress;
 		section->virtualSize = header.Misc.VirtualSize;
 		section->characteristics = header.Characteristics;
-		uint64_t end = (uint64_t)header.PointerToRawData + header.SizeOfRawData;
-		section->raw = end <= image->size ? view + header.PointerToRawData : NULL;
-		section->rawSize = section->raw ? header.SizeOfRawData : 0;
+		section->raw = view + header.PointerToRawData;
+		section->rawSize = header.SizeOfRawData;
 	}
 	return true;
 }
@@ -333,6 +361,7 @@ static bool addAnchor(Probe *probe, size_t *capacity, uint32_t function, uint32_
 		size_t grown = *capacity ? *capacity * 2 : 1024;
 		Anchor *anchors = realloc(probe->anchors, grown * sizeof *anchors);
 		if (!anchors) {
+			fprintf(stderr, "out of memory building probe anchors\n");
 			return false;
 		}
 		probe->anchors = anchors;
@@ -356,7 +385,7 @@ static void scan(Probe *probe, bool collect) {
 		if (!(section->characteristics & IMAGE_SCN_MEM_EXECUTE) || section->rawSize < ANCHOR_LENGTH) {
 			continue;
 		}
-		for (uint32_t i = 0; i + ANCHOR_LENGTH <= section->rawSize; ++i) {
+		for (uint32_t i = 0; i <= section->rawSize - ANCHOR_LENGTH; ++i) {
 			uint64_t key = loadU64(section->raw + i);
 			for (int32_t a = probe->buckets[bucketOf(key)]; a >= 0; a = probe->anchors[a].next) {
 				Anchor *anchor = &probe->anchors[a];
@@ -364,8 +393,10 @@ static void scan(Probe *probe, bool collect) {
 					continue;
 				}
 				if (!collect) {
-					++anchor->hits;
-				} else if (anchor->used && section->rva + i >= anchor->offset) {
+					if (anchor->hits <= MAX_ANCHOR_HITS) {
+						++anchor->hits;
+					}
+				} else if (section->rva + i >= anchor->offset) {
 					considerCandidate(probe, anchor->function, section->rva + i - anchor->offset);
 				}
 			}
@@ -388,6 +419,15 @@ static void chooseAnchors(Probe *probe) {
 			}
 			if (best) {
 				best->used = true;
+			}
+		}
+		memset(probe->buckets, 0xFF, sizeof probe->buckets);
+		for (size_t i = 0; i < probe->anchorCount; ++i) {
+			Anchor *anchor = &probe->anchors[i];
+			if (anchor->used) {
+				uint32_t bucket = bucketOf(anchor->key);
+				anchor->next = probe->buckets[bucket];
+				probe->buckets[bucket] = (int32_t)i;
 			}
 		}
 	}
@@ -456,6 +496,7 @@ static uint32_t score(const Probe *probe, size_t function, uint32_t rva, uint32_
 // Look-alike functions score the same at each other's addresses. Take the candidate whose shift
 // (this build's address minus the Steam one) is the most common among the uniquely found ones.
 static void resolveTies(Probe *probe) {
+	rankShifts(probe);
 	for (size_t rank = 0; rank < MAX_CANDIDATES; ++rank) {
 		int64_t shift = commonShift(probe, rank);
 		if (shift == INT64_MIN) {
@@ -497,18 +538,23 @@ static void resolveThunks(Probe *probe) {
 static void collectJumpsTo(const Image *image, uint32_t target, Match *match) {
 	for (size_t s = 0; s < image->sectionCount; ++s) {
 		const Section *section = &image->sections[s];
-		if (!(section->characteristics & IMAGE_SCN_MEM_EXECUTE)) {
+		if (!(section->characteristics & IMAGE_SCN_MEM_EXECUTE) ||
+				section->rawSize < JMP_REL32_LENGTH) {
 			continue;
 		}
-		for (uint32_t i = 0; i + JMP_REL32_LENGTH <= section->rawSize; ++i) {
+		for (uint32_t i = 0; i <= section->rawSize - JMP_REL32_LENGTH; ++i) {
 			if (section->raw[i] != JMP_REL32) {
 				continue;
 			}
 			int32_t displacement = 0;
 			memcpy(&displacement, section->raw + i + 1, sizeof displacement);
 			int64_t lands = (int64_t)section->rva + i + JMP_REL32_LENGTH + displacement;
-			if (lands == target && match->tieCount < MAX_CANDIDATES) {
-				match->ties[match->tieCount++] = section->rva + i;
+			if (lands == target) {
+				if (match->tieCount < MAX_CANDIDATES) {
+					match->ties[match->tieCount++] = section->rva + i;
+				} else {
+					match->tooMany = true;
+				}
 			}
 		}
 	}
@@ -526,38 +572,36 @@ static bool isThunkOf(size_t thunk, size_t target) {
 
 // The rank-th most common shift among the uniquely found functions (INT64_MIN if none).
 static int64_t commonShift(const Probe *probe, size_t rank) {
-	int64_t previous = INT64_MAX;
-	size_t previousCount = SIZE_MAX;
-	int64_t result = INT64_MIN;
-	for (size_t r = 0; r <= rank; ++r) {
-		result = INT64_MIN;
-		size_t bestCount = 0;
-		for (size_t f = 0; f < probeFunctionCount; ++f) {
-			const Match *match = &probe->matches[f];
-			if (match->status != FOUND || match->byShift) {
-				continue;
-			}
-			int64_t shift = (int64_t)match->rva - probeFunctions[f].rva;
-			size_t count = 0;
-			for (size_t g = 0; g < probeFunctionCount; ++g) {
-				const Match *other = &probe->matches[g];
-				count += other->status == FOUND && !other->byShift &&
-								 (int64_t)other->rva - probeFunctions[g].rva == shift;
-			}
-			// Order: by count, then by shift, strictly after the previous rank.
-			bool afterPrevious = count < previousCount || (count == previousCount && shift > previous);
-			if (afterPrevious && (count > bestCount || (count == bestCount && shift < result))) {
-				bestCount = count;
-				result = shift;
-			}
-		}
-		if (result == INT64_MIN) {
-			return INT64_MIN;
-		}
-		previous = result;
-		previousCount = bestCount;
+	return rank < probe->shiftCount ? probe->shifts[rank].value : INT64_MIN;
+}
+
+static int compareShifts(const void *left, const void *right) {
+	const Shift *a = left;
+	const Shift *b = right;
+	if (a->count != b->count) {
+		return (a->count < b->count) - (a->count > b->count);
 	}
-	return result;
+	return (a->value > b->value) - (a->value < b->value);
+}
+
+static void rankShifts(Probe *probe) {
+	probe->shiftCount = 0;
+	for (size_t f = 0; f < probeFunctionCount; ++f) {
+		const Match *match = &probe->matches[f];
+		if (match->status != FOUND || match->byShift) {
+			continue;
+		}
+		int64_t shift = (int64_t)match->rva - probeFunctions[f].rva;
+		size_t i = 0;
+		while (i < probe->shiftCount && probe->shifts[i].value != shift) {
+			++i;
+		}
+		if (i == probe->shiftCount) {
+			probe->shifts[probe->shiftCount++] = (Shift){.value = shift};
+		}
+		++probe->shifts[i].count;
+	}
+	qsort(probe->shifts, probe->shiftCount, sizeof *probe->shifts, compareShifts);
 }
 
 static void report(FILE *out, const Probe *probe, const wchar_t *path) {

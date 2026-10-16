@@ -21,6 +21,7 @@
 #include "profiler.h"
 #include "seed_build.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,8 +42,8 @@ typedef struct Run {
 	size_t seedOffset;
 	uint32_t fileSeed;
 	size_t total;
-	volatile LONG next;   // index of the next seed to hand out
-	volatile LONG failed; // set when a match cannot be loaded; workers stop taking seeds
+	atomic_size_t next;
+	atomic_bool failed;
 	SeedResult *results;
 	CRITICAL_SECTION lock; // guards results, counters, progress, the CSV and details
 	size_t written;        // rows written so far (always a prefix of the seed list)
@@ -51,6 +52,8 @@ typedef struct Run {
 	unsigned draws;
 	uintptr_t progressWindow;
 	FILE *csv;
+	bool outputFailed;
+	LARGE_INTEGER frequency;
 	Profiler *profiler;        // samples worker 0 (the job thread)
 	MatchStatsTotals *details; // --detailed: player and team statistics summed over the seeds
 	SeedBuilder *seedBuilder;  // rebuilds the input per seed; NULL: patch the seed into the input
@@ -69,7 +72,7 @@ static bool playSeed(
 	Run *run,
 	unsigned slot,
 	ByteBuffer *input,
-	size_t seedOffset,
+	SeedBuilder *builder,
 	uint32_t seed,
 	Profiler *profiler,
 	SeedResult *out
@@ -79,7 +82,7 @@ static void reportProgress(Run *run);
 static DWORD WINAPI worker(LPVOID parameter);
 static void runWorkers(Run *run, unsigned count);
 static bool openRun(const Job *job, const ByteBuffer *input, Run *run);
-static void closeRun(Run *run);
+static bool closeRun(Run *run);
 
 void jobs_run(const Job *job, const wchar_t *directory) {
 	ByteBuffer input = {0};
@@ -100,7 +103,7 @@ void jobs_run(const Job *job, const wchar_t *directory) {
 			job_writeResult(
 				directory, "error: %s (--keep-build plays the input with only its seed changed)", error
 			);
-			closeRun(&run);
+			(void)closeRun(&run);
 			buffer_free(&input);
 			return;
 		}
@@ -115,38 +118,42 @@ void jobs_run(const Job *job, const wchar_t *directory) {
 		run.total,
 		threads
 	);
-	LARGE_INTEGER frequency;
 	LARGE_INTEGER start;
 	LARGE_INTEGER end;
-	QueryPerformanceFrequency(&frequency);
 	QueryPerformanceCounter(&start);
 	run.profiler = job->profile[0] ? profiler_start(job->profile) : NULL;
 	reportProgress(&run);
-	runWorkers(&run, threads);
+	if (job->profile[0] && !run.profiler) {
+		atomic_store_explicit(&run.failed, true, memory_order_relaxed);
+	} else {
+		runWorkers(&run, threads);
+	}
 	profiler_stop(run.profiler);
 	QueryPerformanceCounter(&end);
-	if (run.details && !matchStats_write(run.details, job->output)) {
+	bool ok = run.written == run.total && !atomic_load_explicit(&run.failed, memory_order_relaxed);
+	if (ok && run.details && !matchStats_write(run.details, job->output)) {
 		log_message("cannot write the detailed statistics");
+		ok = false;
 	}
-	job_writeResult(
-		directory,
-		"%s: %zu/%zu runs%s%s",
-		run.written == run.total ? "ok" : "error",
-		run.written,
-		run.total,
-		run.seedBuilder ? ", each seed rebuilt by the game" : "",
-		run.written == run.total ? "" : "; see harness.log"
-	);
 	if (run.seedBuilder) {
 		seedBuilder_close(run.seedBuilder);
 	}
-	closeRun(&run);
+	ok = closeRun(&run) && ok;
+	job_writeResult(
+		directory,
+		"%s: %zu/%zu runs%s%s",
+		ok ? "ok" : "error",
+		run.written,
+		run.total,
+		run.seedBuilder ? ", each seed rebuilt by the game" : "",
+		ok ? "" : "; see harness.log"
+	);
 	buffer_free(&input);
 	log_message(
 		"job finished: %zu/%zu runs in %.1f s",
 		run.written,
 		run.total,
-		elapsedMilliseconds(start, end, frequency) / 1000.0
+		elapsedMilliseconds(start, end, run.frequency) / 1000.0
 	);
 }
 
@@ -182,29 +189,28 @@ static bool playSeed(
 	Run *run,
 	unsigned slot,
 	ByteBuffer *input,
-	size_t seedOffset,
+	SeedBuilder *builder,
 	uint32_t seed,
 	Profiler *profiler,
 	SeedResult *out
 ) {
 	ByteBuffer rebuilt = {0};
 	ByteBuffer *bytes = input;
-	if (run->seedBuilder) {
-		if (!seedBuilder_build(run->seedBuilder, seed, &rebuilt)) {
+	if (builder) {
+		if (!seedBuilder_build(builder, seed, &rebuilt)) {
 			log_message("seed %u: rebuild failed", seed);
 			buffer_free(&rebuilt);
 			return false;
 		}
 		bytes = &rebuilt;
 	} else {
-		memcpy(input->data + seedOffset, &seed, sizeof seed);
+		memcpy(input->data + run->seedOffset, &seed, sizeof seed);
 	}
-	LARGE_INTEGER frequency;
 	LARGE_INTEGER start;
 	LARGE_INTEGER loaded;
 	LARGE_INTEGER end;
-	QueryPerformanceFrequency(&frequency);
-	double cpuStart = threadCpuMilliseconds();
+	double cpuStart = profiler ? threadCpuMilliseconds() : 0;
+	double cpuLoaded = 0;
 	QueryPerformanceCounter(&start);
 	uint8_t *match = match_deserializeOn(slot, bytes);
 	buffer_free(&rebuilt);
@@ -212,8 +218,10 @@ static bool playSeed(
 		log_message("seed %u: deserialize failed", seed);
 		return false;
 	}
-	QueryPerformanceCounter(&loaded);
-	double cpuLoaded = threadCpuMilliseconds();
+	if (profiler) {
+		QueryPerformanceCounter(&loaded);
+		cpuLoaded = threadCpuMilliseconds();
+	}
 	if (!run->job->humanControl) {
 		match_handToAssistant(match);
 	}
@@ -221,42 +229,61 @@ static bool playSeed(
 	QueryPerformanceCounter(&end);
 	if (profiler) {
 		double cpuEnd = threadCpuMilliseconds();
-		double wallLoad = elapsedMilliseconds(start, loaded, frequency);
+		double wallLoad = elapsedMilliseconds(start, loaded, run->frequency);
 		markPhase(profiler, "deserialize", seed, wallLoad, cpuLoaded - cpuStart);
 		markPhase(
-			profiler, "play", seed, elapsedMilliseconds(loaded, end, frequency), cpuEnd - cpuLoaded
+			profiler, "play", seed, elapsedMilliseconds(loaded, end, run->frequency), cpuEnd - cpuLoaded
 		);
 	}
 	out->match = match_result(match);
+	bool ok = true;
 	if (run->details) {
 		EnterCriticalSection(&run->lock);
-		matchStats_add(run->details, match);
+		ok = matchStats_add(run->details, match);
 		LeaveCriticalSection(&run->lock);
+		if (!ok) {
+			log_message("seed %u: out of memory accumulating player statistics", seed);
+		}
 	}
-	out->milliseconds = elapsedMilliseconds(start, end, frequency);
+	out->milliseconds = elapsedMilliseconds(start, end, run->frequency);
 	match_delete(match);
-	return true;
+	return ok;
 }
 
 // Writes the rows that are now complete in seed order. Called with run->lock held.
 static void writeReadyRows(Run *run) {
+	if (run->outputFailed) {
+		return;
+	}
+	size_t previous = run->written;
+	bool ok = true;
 	while (
 		run->written < run->total && run->results[run->written].done && run->results[run->written].ok) {
 		const SeedResult *result = &run->results[run->written];
-		fprintf(
-			run->csv,
-			"%u,%u,%u,%u,%u,%016llx,%.1f\n",
-			result->match.seed,
-			result->match.homeGoals,
-			result->match.awayGoals,
-			result->match.clockTicks,
-			result->match.finished ? 1U : 0U,
-			(unsigned long long)result->match.finalRngState,
-			result->milliseconds
-		);
+		if (fprintf(
+					run->csv,
+					"%u,%u,%u,%u,%u,%016llx,%.1f\n",
+					result->match.seed,
+					result->match.homeGoals,
+					result->match.awayGoals,
+					result->match.clockTicks,
+					result->match.finished ? 1U : 0U,
+					(unsigned long long)result->match.finalRngState,
+					result->milliseconds
+				) < 0) {
+			ok = false;
+			break;
+		}
 		++run->written;
 	}
-	(void)fflush(run->csv);
+	if (run->written != previous && fflush(run->csv) != 0) {
+		ok = false;
+	}
+	if (!ok) {
+		log_message("cannot write the results CSV");
+		run->outputFailed = true;
+		atomic_store_explicit(&run->failed, true, memory_order_relaxed);
+	}
 }
 
 static void reportProgress(Run *run) {
@@ -278,23 +305,25 @@ static DWORD WINAPI worker(LPVOID parameter) {
 	game_initThread();
 	if (!match_inputStream(self->index)) {
 		log_message("worker %u: cannot create a stream", self->index);
-		InterlockedExchange(&run->failed, 1);
+		atomic_store_explicit(&run->failed, true, memory_order_relaxed);
 		return 1;
 	}
 	ByteBuffer input = {0}; // a private copy: each worker patches its own seed into it
-	if (!buffer_append(&input, run->input->data, run->input->length)) {
-		InterlockedExchange(&run->failed, 1);
+	SeedBuilder *builder = run->seedBuilder;
+	if (!builder && !buffer_append(&input, run->input->data, run->input->length)) {
+		log_message("worker %u: out of memory copying the input", self->index);
+		atomic_store_explicit(&run->failed, true, memory_order_relaxed);
 		return 1;
 	}
 	Profiler *profiler = self->index == 0 ? run->profiler : NULL;
-	for (;;) {
-		LONG index = InterlockedIncrement(&run->next) - 1;
-		if (run->failed || (size_t)index >= run->total) {
+	while (!atomic_load_explicit(&run->failed, memory_order_relaxed)) {
+		size_t index = atomic_fetch_add_explicit(&run->next, 1, memory_order_relaxed);
+		if (index >= run->total) {
 			break;
 		}
 		uint32_t seed = run->job->keepSeed ? run->fileSeed : run->job->seeds[index];
 		SeedResult result = {0};
-		result.ok = playSeed(run, self->index, &input, run->seedOffset, seed, profiler, &result);
+		result.ok = playSeed(run, self->index, &input, builder, seed, profiler, &result);
 		result.done = true;
 		EnterCriticalSection(&run->lock);
 		run->results[index] = result;
@@ -305,7 +334,7 @@ static DWORD WINAPI worker(LPVOID parameter) {
 		reportProgress(run);
 		LeaveCriticalSection(&run->lock);
 		if (!result.ok) {
-			InterlockedExchange(&run->failed, 1);
+			atomic_store_explicit(&run->failed, true, memory_order_relaxed);
 			break;
 		}
 	}
@@ -342,6 +371,9 @@ static bool openRun(const Job *job, const ByteBuffer *input, Run *run) {
 		.input = input,
 		.total = job->keepSeed ? 1 : job->seedCount,
 		.progressWindow = job->progressWindow};
+	atomic_init(&run->next, 0);
+	atomic_init(&run->failed, false);
+	QueryPerformanceFrequency(&run->frequency);
 	if (!match_seedOffset(input->data, input->length, &run->seedOffset)) {
 		log_message("the input is not a serialised GAME_MATCH");
 		return false;
@@ -359,14 +391,28 @@ static bool openRun(const Job *job, const ByteBuffer *input, Run *run) {
 		}
 		return false;
 	}
-	fprintf(run->csv, "seed,home_goals,away_goals,clock_ticks,finished,rng_final,ms\n");
 	InitializeCriticalSection(&run->lock);
+	if (fprintf(run->csv, "seed,home_goals,away_goals,clock_ticks,finished,rng_final,ms\n") < 0) {
+		log_message("cannot write the results CSV header");
+		(void)closeRun(run);
+		return false;
+	}
 	return true;
 }
 
-static void closeRun(Run *run) {
-	(void)fclose(run->csv);
+static bool closeRun(Run *run) {
+	bool ok = !ferror(run->csv);
+	if (fclose(run->csv) != 0) {
+		ok = false;
+	}
+	if (!ok) {
+		log_message("cannot finish writing the results CSV");
+	}
 	DeleteCriticalSection(&run->lock);
+	if (run->details) {
+		matchStats_free(run->details);
+	}
 	free(run->details);
 	free(run->results);
+	return ok;
 }

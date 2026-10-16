@@ -29,7 +29,10 @@ static bool isComplete(const Job *job);
 bool job_read(const wchar_t *directory, Job *job) {
 	*job = (Job){.threads = 1};
 	wchar_t path[HARNESS_PATH_LENGTH];
-	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE);
+	if (swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE) < 0) {
+		log_message("job file path is too long");
+		return false;
+	}
 	FILE *file = _wfopen(path, L"rb");
 	if (!file) {
 		log_message("job file not found");
@@ -38,6 +41,11 @@ bool job_read(const wchar_t *directory, Job *job) {
 	char line[LINE_LENGTH];
 	bool ok = true;
 	while (ok && fgets(line, sizeof line, file)) {
+		if (strlen(line) == sizeof line - 1 && line[sizeof line - 2] != '\n') {
+			log_message("job line is too long");
+			ok = false;
+			break;
+		}
 		line[strcspn(line, "\r\n")] = 0;
 		char *equals = strchr(line, '=');
 		if (equals) {
@@ -48,10 +56,20 @@ bool job_read(const wchar_t *directory, Job *job) {
 			}
 		}
 	}
-	(void)fclose(file);
+	if (ferror(file)) {
+		log_message("cannot read the job file");
+		ok = false;
+	}
+	if (fclose(file) != 0) {
+		log_message("cannot close the job file");
+		ok = false;
+	}
 	if (ok && !isComplete(job)) {
 		log_message("job is missing required keys");
 		ok = false;
+	}
+	if (!ok) {
+		job_free(job);
 	}
 	return ok;
 }
@@ -63,16 +81,22 @@ void job_free(Job *job) {
 
 void job_writeResult(const wchar_t *directory, const char *format, ...) {
 	wchar_t path[HARNESS_PATH_LENGTH];
-	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_RESULT_FILE);
+	if (swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_RESULT_FILE) < 0) {
+		log_message("job result path is too long");
+		return;
+	}
 	FILE *file = _wfopen(path, L"wb");
 	if (!file) {
+		log_message("cannot open the job result file");
 		return;
 	}
 	va_list args;
 	va_start(args, format);
-	vfprintf(file, format, args);
+	bool ok = vfprintf(file, format, args) >= 0;
 	va_end(args);
-	(void)fclose(file);
+	if (fclose(file) != 0 || !ok) {
+		log_message("cannot write the job result file");
+	}
 }
 
 static bool widen(const char *text, wchar_t *out, size_t size) {
@@ -95,6 +119,9 @@ static bool appendSeed(Job *job, size_t *capacity, uint32_t seed) {
 
 // A decimal number at `text`; `end` is left after it. False if there is none or it overflows.
 static bool parseNumber(const char *text, char **end, unsigned long long *value) {
+	if (*text < '0' || *text > '9') {
+		return false;
+	}
 	errno = 0;
 	*value = strtoull(text, end, 10);
 	return errno == 0 && *end != text;
@@ -115,10 +142,20 @@ static bool parseRange(const char *part, unsigned long long *first, unsigned lon
 
 // "42", "1-1000" or "1,5,10-20".
 static bool parseSeeds(Job *job, char *spec) {
+	free(job->seeds);
+	job->seeds = NULL;
+	job->seedCount = 0;
+	job->keepSeed = strcmp(spec, "keep") == 0;
+	if (job->keepSeed) {
+		return true;
+	}
 	size_t capacity = 0;
 	for (char *part = spec; part && *part;) {
 		char *comma = strchr(part, ',');
 		if (comma) {
+			if (!comma[1]) {
+				return false;
+			}
 			*comma = 0;
 		}
 		unsigned long long first = 0;
@@ -185,12 +222,21 @@ static bool parseLine(Job *job, char *key, char *value) {
 		return widen(value, job->profile, HARNESS_PATH_LENGTH);
 	}
 	if (strcmp(key, "seeds") == 0) {
-		job->keepSeed = strcmp(value, "keep") == 0;
-		return job->keepSeed || parseSeeds(job, value);
+		return parseSeeds(job, value);
 	}
 	if (strcmp(key, "seed") == 0) {
-		job->hasSeed = strcmp(value, "random") != 0;
-		job->seed = job->hasSeed ? (uint32_t)strtoul(value, NULL, 10) : 0;
+		if (strcmp(value, "random") == 0) {
+			job->hasSeed = false;
+			job->seed = 0;
+			return true;
+		}
+		char *end = NULL;
+		unsigned long long seed = 0;
+		if (!parseNumber(value, &end, &seed) || *end != 0 || seed > UINT32_MAX) {
+			return false;
+		}
+		job->hasSeed = true;
+		job->seed = (uint32_t)seed;
 		return true;
 	}
 	if (strcmp(key, "full") == 0) {
@@ -222,8 +268,7 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "progress_window") == 0) {
 		char *end = NULL;
 		unsigned long long window = 0;
-		if (!parseNumber(value, &end, &window) || *end != 0 ||
-				strspn(value, "0123456789") != strlen(value) || window > UINTPTR_MAX) {
+		if (!parseNumber(value, &end, &window) || *end != 0 || window > UINTPTR_MAX) {
 			return false;
 		}
 		job->progressWindow = (uintptr_t)window;

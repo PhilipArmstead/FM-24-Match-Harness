@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 
 enum { MAX_MERGED_STRING = 4096 };
@@ -84,11 +85,7 @@ static void writeEscaped(FILE *file, const uint8_t *text, size_t length) {
 }
 
 static void writeEscapedString(FILE *file, const char *text) {
-	size_t length = 0;
-	while (text[length]) {
-		++length;
-	}
-	writeEscaped(file, (const uint8_t *)text, length);
+	writeEscaped(file, (const uint8_t *)text, strlen(text));
 }
 
 // Length of the UTF-8 sequence started by `lead` (0 if `lead` cannot start one).
@@ -96,13 +93,13 @@ static size_t sequenceLength(uint8_t lead) {
 	if (lead < 0x80) {
 		return 1;
 	}
-	if ((lead >> 5) == 6) {
+	if (lead >= 0xC2 && lead <= 0xDF) {
 		return 2;
 	}
 	if ((lead >> 4) == 14) {
 		return 3;
 	}
-	return (lead >> 3) == 30 ? 4 : 0;
+	return lead >= 0xF0 && lead <= 0xF4 ? 4 : 0;
 }
 
 // Valid UTF-8 without control characters: safe to show as a JSON string.
@@ -114,6 +111,11 @@ static bool isText(const uint8_t *text, size_t length) {
 		}
 		for (size_t k = 1; k < sequence; ++k) {
 			if ((text[i + k] & 0xC0) != 0x80) {
+				return false;
+			}
+			if (sequence >= 3 &&
+					((text[i] == 0xE0 && text[i + 1] < 0xA0) || (text[i] == 0xED && text[i + 1] >= 0xA0) ||
+						(text[i] == 0xF0 && text[i + 1] < 0x90) || (text[i] == 0xF4 && text[i + 1] >= 0x90))) {
 				return false;
 			}
 		}

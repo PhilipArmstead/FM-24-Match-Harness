@@ -99,7 +99,11 @@ static void writeConfig(
 		);
 		return;
 	}
-	size_t dropped = seedBuilder_dropAwayEdits(builder);
+	size_t dropped = 0;
+	if (!seedBuilder_dropAwayEdits(builder, &dropped)) {
+		job_writeResult(directory, "error: cannot identify the away team's edits; see harness.log");
+		return;
+	}
 	size_t kept = seedBuilder_editCount(builder);
 	builder->awayTeam = team == fixtureAway ? NULL : team;
 	char homeName[TEAM_NAME_LENGTH];

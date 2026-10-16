@@ -23,15 +23,22 @@ enum {
 
 typedef int64_t (*StreamWriteFn)(void *self, const void *bytes, int64_t length);
 
+typedef struct PathEntry {
+	uint32_t rvas[TRACE_DEPTH - 1];
+	uint32_t index;
+	size_t count;
+} PathEntry;
+
 // State of the trace in progress (serialising is single-threaded and not re-entrant).
 static Serialised *active;
 static StreamWriteFn originalWrite;
 static DataBuffer *outputBuffer;
-static uint32_t pathBuckets[PATH_BUCKETS]; // path index + 1, 0 = empty
+static PathEntry pathBuckets[PATH_BUCKETS];
+static bool traceFailed;
 
-static uint32_t hashChain(const char *chain);
+static uint32_t hashChain(const uint32_t *rvas, size_t count);
 static bool appendPath(Serialised *serialised, const char *chain);
-static uint32_t internPath(const char *chain);
+static uint32_t internPath(const uint32_t *rvas, size_t count);
 static uint32_t pathOf(void *const *frames, int count);
 static int64_t tracedWrite(void *self, const void *bytes, int64_t length);
 static bool recordsTileBytes(const Serialised *serialised);
@@ -67,6 +74,7 @@ bool trace_serialize(uint8_t *match, Serialised *out, bool traced) {
 			&tracingVtable[1 + WRITE_SLOT], &replacement, sizeof replacement
 		); // code address as a slot
 		memset(pathBuckets, 0, sizeof pathBuckets);
+		traceFailed = false;
 		active = out;
 		*vtableSlot = &tracingVtable[1];
 	}
@@ -75,6 +83,10 @@ bool trace_serialize(uint8_t *match, Serialised *out, bool traced) {
 	if (traced) {
 		*vtableSlot = vtable;
 		active = NULL;
+		if (traceFailed) {
+			log_message("cannot record the serialisation trace");
+			return false;
+		}
 	}
 	size_t size = stream_outputSize(outputBuffer);
 	if (!ok || size == 0) {
@@ -108,10 +120,10 @@ void trace_free(Serialised *serialised) {
 	*serialised = (Serialised){0};
 }
 
-static uint32_t hashChain(const char *chain) {
-	uint32_t hash = 2166136261U; // FNV-1a
-	for (const char *c = chain; *c; ++c) {
-		hash = (hash ^ (uint8_t)*c) * 16777619U;
+static uint32_t hashChain(const uint32_t *rvas, size_t count) {
+	uint32_t hash = 2166136261U;
+	for (size_t i = 0; i < count; ++i) {
+		hash = (hash ^ rvas[i]) * 16777619U;
 	}
 	return hash;
 }
@@ -137,19 +149,31 @@ static bool appendPath(Serialised *serialised, const char *chain) {
 }
 
 // Index of a chain in the path table, adding it if new (UINT32_MAX if out of memory or full).
-static uint32_t internPath(const char *chain) {
-	uint32_t slot = hashChain(chain) & (PATH_BUCKETS - 1);
+static uint32_t internPath(const uint32_t *rvas, size_t count) {
+	uint32_t slot = hashChain(rvas, count) & (PATH_BUCKETS - 1);
 	for (uint32_t probe = 0; probe < PATH_BUCKETS; ++probe, slot = (slot + 1) & (PATH_BUCKETS - 1)) {
-		uint32_t entry = pathBuckets[slot];
-		if (entry == 0) {
+		PathEntry *entry = &pathBuckets[slot];
+		if (entry->index == 0) {
+			char chain[CHAIN_CAPACITY] = "";
+			size_t length = 0;
+			for (size_t i = 0; i < count; ++i) {
+				int written =
+					snprintf(chain + length, sizeof chain - length, "%s%x", i ? ">" : "", rvas[i]);
+				if (written < 0 || (size_t)written >= sizeof chain - length) {
+					return UINT32_MAX;
+				}
+				length += (size_t)written;
+			}
 			if (!appendPath(active, chain)) {
 				return UINT32_MAX;
 			}
-			pathBuckets[slot] = (uint32_t)active->pathCount;
+			memcpy(entry->rvas, rvas, count * sizeof *rvas);
+			entry->count = count;
+			entry->index = (uint32_t)active->pathCount;
 			return (uint32_t)active->pathCount - 1;
 		}
-		if (strcmp(active->paths[entry - 1], chain) == 0) {
-			return entry - 1;
+		if (entry->count == count && memcmp(entry->rvas, rvas, count * sizeof *rvas) == 0) {
+			return entry->index - 1;
 		}
 	}
 	return UINT32_MAX;
@@ -158,7 +182,7 @@ static uint32_t internPath(const char *chain) {
 // frames[0] is the write's call site; the chain is frames[1..k] from the outside in, where frame k
 // is the return address inside GAME_MATCH__serialize.
 static uint32_t pathOf(void *const *frames, int count) {
-	char chain[CHAIN_CAPACITY] = "";
+	uint32_t rvas[TRACE_DEPTH - 1];
 	size_t length = 0;
 	for (int k = count - 1; k >= 1; --k) {
 		uint32_t rva = game_rva(frames[k]);
@@ -166,22 +190,23 @@ static uint32_t pathOf(void *const *frames, int count) {
 		if (length == 0 && !top) {
 			continue;
 		}
-		int written = snprintf(chain + length, sizeof chain - length, "%s%x", length ? ">" : "", rva);
-		if (written < 0 || (size_t)written >= sizeof chain - length) {
-			break;
-		}
-		length += (size_t)written;
+		rvas[length++] = rva;
 	}
-	return internPath(chain);
+	return internPath(rvas, length);
 }
 
 static int64_t tracedWrite(void *self, const void *bytes, int64_t length) {
+	if (length <= 0 || traceFailed) {
+		return originalWrite(self, bytes, length);
+	}
 	void *frames[TRACE_DEPTH] = {0};
 	USHORT count =
 		RtlCaptureStackBackTrace(1, TRACE_DEPTH, frames, NULL); // [0] = serialiser call site
 	uint32_t offset = (uint32_t)stream_outputSize(outputBuffer);
 	int64_t written = originalWrite(self, bytes, length);
-	if (active && length > 0) {
+	if (count == 0 || (uint64_t)length > UINT32_MAX - offset) {
+		traceFailed = true;
+	} else {
 		TraceRecord record = {
 			.offset = offset,
 			.length = (uint32_t)length,
@@ -189,7 +214,7 @@ static int64_t tracedWrite(void *self, const void *bytes, int64_t length) {
 			.caller = game_rva(frames[1]),
 			.path = pathOf(frames, count),
 		};
-		(void)trace_appendRecord(active, record);
+		traceFailed = record.path == UINT32_MAX || !trace_appendRecord(active, record);
 	}
 	return written;
 }
@@ -198,10 +223,13 @@ static int64_t tracedWrite(void *self, const void *bytes, int64_t length) {
 static bool recordsTileBytes(const Serialised *serialised) {
 	size_t expected = 0;
 	for (size_t i = 0; i < serialised->recordCount; ++i) {
-		if (serialised->records[i].offset != expected || serialised->records[i].path == UINT32_MAX) {
-			break;
+		const TraceRecord *record = &serialised->records[i];
+		if (record->offset != expected || record->path >= serialised->pathCount ||
+				record->length == 0 || record->length > serialised->bytes.length - expected) {
+			log_message("invalid serialisation trace at record %zu", i);
+			return false;
 		}
-		expected += serialised->records[i].length;
+		expected += record->length;
 	}
 	if (expected != serialised->bytes.length) {
 		log_message(

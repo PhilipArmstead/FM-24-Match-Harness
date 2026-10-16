@@ -21,7 +21,7 @@ static wchar_t directory[HARNESS_PATH_LENGTH]; // where the DLL, job file, resul
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved);
 
 static void runJob(void);
-static DWORD WINAPI worker(LPVOID unused);
+static DWORD WINAPI worker(LPVOID parameter);
 static void setDirectory(HINSTANCE module);
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved) {
@@ -30,20 +30,19 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved) {
 		return TRUE;
 	}
 	DisableThreadLibraryCalls(module);
-	setDirectory(module);
-	log_open(directory);
-	if (game_init()) {
-		HANDLE thread = CreateThread(NULL, 0, worker, NULL, 0, NULL);
-		if (thread) {
-			CloseHandle(thread);
-		}
+	HANDLE thread = CreateThread(NULL, 0, worker, module, 0, NULL);
+	if (!thread) {
+		OutputDebugStringW(L"fm24 harness: cannot start the job thread");
+		return FALSE;
 	}
+	CloseHandle(thread);
 	return TRUE;
 }
 
 static void runJob(void) {
 	Job job;
 	if (!job_read(directory, &job)) {
+		job_writeResult(directory, "error: cannot read the job; see harness.log");
 		return;
 	}
 	switch (job.command) {
@@ -56,20 +55,36 @@ static void runJob(void) {
 	job_free(&job);
 }
 
-static DWORD WINAPI worker(LPVOID unused) {
-	(void)unused;
+static DWORD WINAPI worker(LPVOID parameter) {
+	setDirectory(parameter);
+	log_open(directory);
+	if (!game_init()) {
+		return 1;
+	}
 	HANDLE go = CreateEventW(NULL, FALSE, FALSE, HARNESS_EVENT_GO);
 	HANDLE done = CreateEventW(NULL, FALSE, FALSE, HARNESS_EVENT_DONE);
 	if (!go || !done) {
 		log_message("cannot create events");
+		if (go) {
+			CloseHandle(go);
+		}
+		if (done) {
+			CloseHandle(done);
+		}
 		return 1;
 	}
 	log_message("ready; waiting for jobs");
 	while (WaitForSingleObject(go, INFINITE) == WAIT_OBJECT_0) {
 		runJob();
-		SetEvent(done);
+		if (!SetEvent(done)) {
+			log_message("cannot signal job completion (Windows error %lu)", GetLastError());
+			break;
+		}
 	}
-	return 0;
+	log_message("job event loop stopped (Windows error %lu)", GetLastError());
+	CloseHandle(done);
+	CloseHandle(go);
+	return 1;
 }
 
 static void setDirectory(HINSTANCE module) {

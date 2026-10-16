@@ -97,20 +97,32 @@ static bool findDll(wchar_t *dllPath, size_t size) {
 // Runs LoadLibraryW(dllPath) in the game; returns false (and prints why) on failure.
 static bool loadRemotely(HANDLE process, const wchar_t *dllPath) {
 	size_t bytes = (wcslen(dllPath) + 1) * sizeof(wchar_t);
-	void *remote = VirtualAllocEx(process, NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	if (!remote || !WriteProcessMemory(process, remote, dllPath, bytes, NULL)) {
-		fprintf(stderr, "cannot write the DLL path into fm.exe (%lu)\n", GetLastError());
+	HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+	FARPROC loadLibrary = kernel ? GetProcAddress(kernel, "LoadLibraryW") : NULL;
+	if (!loadLibrary) {
+		fprintf(stderr, "cannot find LoadLibraryW (%lu)\n", GetLastError());
 		return false;
 	}
-	FARPROC loadLibrary = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "LoadLibraryW");
+	void *remote = VirtualAllocEx(process, NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	SIZE_T written = 0;
+	if (!remote || !WriteProcessMemory(process, remote, dllPath, bytes, &written) ||
+			written != bytes) {
+		fprintf(stderr, "cannot write the DLL path into fm.exe (%lu)\n", GetLastError());
+		if (remote) {
+			VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+		}
+		return false;
+	}
 	LPTHREAD_START_ROUTINE start = NULL;
 	memcpy(&start, &loadLibrary, sizeof start); // FARPROC -> thread routine, without a cast warning
 	HANDLE thread = CreateRemoteThread(process, NULL, 0, start, remote, 0, NULL);
 	if (!thread) {
 		fprintf(stderr, "CreateRemoteThread failed (%lu)\n", GetLastError());
+		VirtualFreeEx(process, remote, 0, MEM_RELEASE);
 		return false;
 	}
-	if (WaitForSingleObject(thread, LOAD_TIMEOUT_MS) == WAIT_TIMEOUT) {
+	DWORD waited = WaitForSingleObject(thread, LOAD_TIMEOUT_MS);
+	if (waited == WAIT_TIMEOUT) {
 		// A debugger probably suspended fm.exe on the DLL-load event. Keep the path allocated so
 		// LoadLibraryW can still read it once the game resumes.
 		fprintf(
@@ -121,12 +133,19 @@ static bool loadRemotely(HANDLE process, const wchar_t *dllPath) {
 		CloseHandle(thread);
 		return false;
 	}
+	if (waited != WAIT_OBJECT_0) {
+		fprintf(
+			stderr, "cannot wait for LoadLibraryW (%lu); its DLL path remains allocated\n", GetLastError()
+		);
+		CloseHandle(thread);
+		return false;
+	}
 	DWORD loaded = 0;
-	GetExitCodeThread(thread, &loaded);
+	bool completed = GetExitCodeThread(thread, &loaded) != 0;
 	CloseHandle(thread);
 	VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-	if (!loaded) {
+	if (!completed || !loaded) {
 		fprintf(stderr, "LoadLibrary failed inside fm.exe\n");
 	}
-	return loaded != 0;
+	return completed && loaded != 0;
 }

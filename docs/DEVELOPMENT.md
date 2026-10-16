@@ -62,11 +62,34 @@ binaries in `bin/`. Close a running runner before rebuilding; for a loaded
 DLL, see the protocol-version instructions below.
 
 Run `bin/fm24_tests.exe` for the application regression checks, or pass a
-suite name (`job`, `fixture_data`, `runner_main`, `fixture_export` or
+suite name (`job`, `dll`, `fixture_data`, `runner`, `runner_main`, `fixture_export` or
 `fixture_window`) to run only that suite. Each named test prints `[PASS]`
 or `[FAIL]`, followed by a test/failure count; failures return a nonzero
 exit code. Assertions report the source location, expression and expected
 and actual values without stopping the remaining checks.
+
+The `dll` suite uses synthetic engine objects to check serialisation traces,
+edit alignment, player identity across rebuilt line-ups, instruction labels
+and UTF-8 exports without loading FM24. The `job` suite also covers repeated
+seed keys and malformed or overflowing seed values.
+
+The `runner` suite checks single-read config preparation, CLI and CSV numbers,
+result-file failures, PE bounds, selected-anchor scans, address-shift ranking
+and jump-candidate overflow without connecting to FM24.
+Config preparation reads replacement-team metadata while encoding, rather than
+loading and parsing the same JSON twice. Field visitors reuse one field buffer
+instead of retaining the entire encoded fixture. Strings and hex values are
+copied in batches, and discarded annotations allocate no decoding buffers.
+Malformed UTF-8, Unicode escapes, hex digits and replacement IDs are rejected.
+Probe's second scan indexes only selected anchors; address shifts are ranked
+once per resolution/reporting phase.
+
+Per-seed rebuilding omits write tracing and edit alignment when the input
+has no edits. Edited inputs with unchanged write sites skip call-chain
+parsing and alignment allocations. When tracing is needed, call chains are
+interned as numeric RVAs; their text is formatted only once per distinct
+chain. CPU timing calls are limited to the profiled worker, and workers
+only copy the input when patching seeds rather than rebuilding it.
 
 Use `ctest --test-dir build --output-on-failure` for individual results and the
 Release packaging check. Building does not run the tests. To stage only
@@ -146,6 +169,10 @@ on the Steam `fm.exe`:
 Run everything from `bin/`. The job file, result file and `harness.log` live
 next to the DLL there.
 
+Submit only one game job at a time across runner processes and viewer windows:
+the protocol shares its job, input and result files. A client timeout does not
+cancel DLL work; wait for completion in `harness.log` before submitting another job.
+
 1. Start FM24 and load the save. Wait until the game is **idle** (not
    processing). The engine calls aren't synchronised with the game's own
    threads.
@@ -210,7 +237,10 @@ next to the DLL there.
      is the engine's own per-player stats objects. The values match the
      game's statistics screens, team and player (checked on one match). The
      members are listed in `src/dll/match_stats.c` and `docs/PLAN.md`
-     (Phase 18)
+     (Phase 18). Player rows are ordered by unique ID and retain each person's
+     totals when a rebuilt line-up changes order or introduces another player.
+     Reports are written only after every seed succeeds; a CSV or detailed-report
+     write failure makes the job fail rather than reporting success.
    - both teams' in-match changes (substitutions etc.) are made by the game's
      AI, as when the game simulates a match nobody watches. Before kick-off
      the harness resets the human manager's control flags to "no match plan,

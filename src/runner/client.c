@@ -18,7 +18,7 @@ enum {
 	READY_POLL_MS = 50,
 };
 
-static void readResult(const wchar_t *path, char *result, size_t size);
+static bool readResult(const wchar_t *path, char *result, size_t size);
 static bool openEvents(HANDLE *go, HANDLE *done);
 static bool connectHarness(HANDLE *go, HANDLE *done);
 
@@ -33,21 +33,29 @@ bool client_submit(const char *job, unsigned timeoutMs, char *result, size_t res
 			 paths_join(jobPath, HARNESS_PATH_LENGTH, directory, HARNESS_JOB_FILE) &&
 			 paths_join(resultPath, HARNESS_PATH_LENGTH, directory, HARNESS_RESULT_FILE);
 	if (ok) {
-		DeleteFileW(resultPath);
-		ok = files_write(jobPath, job, strlen(job));
+		ok = DeleteFileW(resultPath) || GetLastError() == ERROR_FILE_NOT_FOUND;
+		ok = ok && files_write(jobPath, job, strlen(job));
 		if (!ok) {
-			fprintf(stderr, "cannot write the job file\n");
+			fprintf(stderr, "cannot prepare the job and result files\n");
 		}
 	}
 	if (ok) {
-		SetEvent(go);
-		ok = WaitForSingleObject(done, timeoutMs) == WAIT_OBJECT_0;
+		ok = SetEvent(go) != 0;
 		if (!ok) {
-			fprintf(stderr, "timed out\n");
+			fprintf(stderr, "cannot signal the harness (%lu)\n", GetLastError());
+		}
+	}
+	if (ok) {
+		DWORD waited = WaitForSingleObject(done, timeoutMs);
+		ok = waited == WAIT_OBJECT_0;
+		if (waited == WAIT_TIMEOUT) {
+			fprintf(stderr, "timed out; the harness may still be running\n");
+		} else if (!ok) {
+			fprintf(stderr, "cannot wait for the harness (%lu)\n", GetLastError());
 		}
 	}
 	if (ok && result) {
-		readResult(resultPath, result, resultSize);
+		ok = readResult(resultPath, result, resultSize);
 	}
 	if (go) {
 		CloseHandle(go);
@@ -59,19 +67,34 @@ bool client_submit(const char *job, unsigned timeoutMs, char *result, size_t res
 }
 
 bool client_succeeded(const char *result) {
-	return strncmp(result, "ok", 2) == 0;
+	return strncmp(result, "ok", 2) == 0 && (result[2] == 0 || result[2] == ':');
 }
 
-static void readResult(const wchar_t *path, char *result, size_t size) {
-	(void)snprintf(result, size, "no result; see harness.log");
+static bool readResult(const wchar_t *path, char *result, size_t size) {
+	if (size < 2) {
+		fprintf(stderr, "result buffer is too small\n");
+		return false;
+	}
+	result[0] = 0;
 	FILE *file = _wfopen(path, L"rb");
 	if (!file) {
-		return;
+		fprintf(stderr, "cannot open the result file; see harness.log\n");
+		return false;
 	}
-	if (!fgets(result, (int)size, file)) {
+	size_t length = fread(result, 1, size - 1, file);
+	bool ok = length > 0 && !memchr(result, 0, length) && fgetc(file) == EOF && !ferror(file);
+	result[length] = 0;
+	size_t lineLength = strcspn(result, "\r\n");
+	if (lineLength < length) {
+		size_t ending = result[lineLength] == '\r' && result[lineLength + 1] == '\n' ? 2 : 1;
+		ok = ok && lineLength + ending == length;
+	}
+	ok = fclose(file) == 0 && ok;
+	if (!ok) {
 		result[0] = 0;
+		fprintf(stderr, "cannot read a complete result; see harness.log\n");
 	}
-	(void)fclose(file);
+	return ok;
 }
 
 // Opens the DLL's events; false if this protocol's harness is not running in fm.exe.

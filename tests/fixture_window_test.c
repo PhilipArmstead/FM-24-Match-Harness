@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "files.h"
 #include "paths.h"
 #include "protocol.h"
 #include "test.h"
 #include "tests.h"
+#include "../ui/constants.h"
 
 #include <shobjidl.h>
 #include <time.h>
@@ -421,7 +423,7 @@ static void checkAwayIcon(HWND window, WindowState *state) {
 	unsigned blue = 0;
 	for (int y = 0; y < 27; ++y) {
 		for (int x = 0; x < 27; ++x) {
-			blue += GetPixel(memory, x, y) == RGB(0, 0, 255);
+			blue += GetPixel(memory, x, y) == RGB_BLUE;
 		}
 	}
 	ASSERT_BOOL_EQ(blue > 50, true);
@@ -984,7 +986,7 @@ TEST(exports_fixtures_and_runs_simulations) {
 	LONG linkStart = (LONG)wcslen(unsavedPrefix);
 	LONG linkEnd = linkStart + (LONG)wcslen(exportLink);
 	checkFormat(state.metadata, 0, linkStart, CFE_BOLD, RGB(255, 0, 0));
-	checkFormat(state.metadata, linkStart, linkEnd, CFE_LINK | CFE_UNDERLINE, RGB(0, 0, 255));
+	checkFormat(state.metadata, linkStart, linkEnd, CFE_LINK | CFE_UNDERLINE, RGB_BLUE);
 	checkFormat(state.metadata, linkEnd, linkEnd + 13, 0, GetSysColor(COLOR_WINDOWTEXT));
 
 	ENLINK link = {.nmhdr = {.hwndFrom = state.metadata, .code = EN_LINK}, .msg = WM_LBUTTONDOWN};

@@ -26,7 +26,7 @@ static DataBuffer *inputStreams[HARNESS_MAX_THREADS];
 
 uint8_t *match_build(uint8_t *fixture, uint32_t seed) {
 	rng_seedThread(seed);
-	uint8_t scratch[16] __attribute__((aligned(16))) = {0};
+	_Alignas(16) uint8_t scratch[16] = {0};
 	((FixturePrepareFn)game_function(RVA_FIXTURE_PREPARE_TEAMS))(fixture, scratch);
 	uint8_t *match = ((MatchCreateFn)game_function(RVA_ALLOC_FROM_POOL))();
 	if (!match) {

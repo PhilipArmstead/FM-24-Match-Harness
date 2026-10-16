@@ -78,8 +78,14 @@ int main(const int argc, const char *argv[]) {
 		const char *name;
 		void (*registerTests)(void);
 	} tests[] = {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(FM24_DLL_TESTS)
 		{"job", registerJobTests},
+		{"dll", registerDllTests},
+#endif
+#if defined(_WIN32) || defined(FM24_RUNNER_TESTS)
+		{"runner", registerRunnerTests},
+#endif
+#ifdef _WIN32
 		{"runner_main", registerRunnerMainTests},
 		{"fixture_window", registerFixtureWindowTests},
 #endif

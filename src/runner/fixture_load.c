@@ -53,9 +53,7 @@ static bool decodeBinary(const wchar_t *path, ByteBuffer *text, char *error, siz
 			(void)snprintf(error, errorSize, "%s", result);
 			ok = false;
 		} else if (!(ok = files_read(temporary, text))) {
-			(void)snprintf(
-				error, errorSize, "cannot read the decoded fixture (Windows error %lu)", GetLastError()
-			);
+			(void)snprintf(error, errorSize, "cannot read the decoded fixture");
 		}
 	}
 	if (!DeleteFileW(temporary)) {
@@ -77,7 +75,7 @@ bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t
 	} else if (files_hasExtension(path, L".json")) {
 		ok = files_read(path, &text);
 		if (!ok) {
-			(void)snprintf(error, errorSize, "cannot read fixture (Windows error %lu)", GetLastError());
+			(void)snprintf(error, errorSize, "cannot read fixture");
 		}
 	} else {
 		(void)snprintf(error, errorSize, "expected a .json or .bin fixture");

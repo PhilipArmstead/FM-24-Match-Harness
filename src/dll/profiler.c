@@ -6,6 +6,7 @@
 #include "game.h"
 #include "log.h"
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +32,7 @@ struct Profiler {
 	HANDLE thread;
 	FILE *file;
 	CRITICAL_SECTION lock; // the file is written by both threads
-	volatile LONG stop;
+	atomic_bool stop;
 	uintptr_t stackLimit; // the target's stack, for the return address scan
 	uintptr_t stackBase;
 	Range code[MAX_CODE_RANGES]; // fm.exe's executable sections
@@ -50,8 +51,10 @@ static void setCodeRanges(Profiler *profiler);
 Profiler *profiler_start(const wchar_t *path) {
 	Profiler *profiler = calloc(1, sizeof *profiler);
 	if (!profiler) {
+		log_message("profiler: out of memory");
 		return NULL;
 	}
+	atomic_init(&profiler->stop, false);
 	const NT_TIB *tib = (const NT_TIB *)NtCurrentTeb();
 	profiler->stackLimit = (uintptr_t)tib->StackLimit;
 	profiler->stackBase = (uintptr_t)tib->StackBase;
@@ -93,7 +96,7 @@ void profiler_stop(Profiler *profiler) {
 		return;
 	}
 	if (profiler->thread) {
-		InterlockedExchange(&profiler->stop, 1);
+		atomic_store_explicit(&profiler->stop, true, memory_order_relaxed);
 		WaitForSingleObject(profiler->thread, INFINITE);
 		CloseHandle(profiler->thread);
 	}
@@ -215,7 +218,7 @@ static DWORD WINAPI sampler(LPVOID parameter) {
 		return 1;
 	}
 	LARGE_INTEGER due = {.QuadPart = -INTERVAL_100NS};
-	while (!profiler->stop) {
+	while (!atomic_load_explicit(&profiler->stop, memory_order_relaxed)) {
 		if (!SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE) ||
 				WaitForSingleObject(timer, INFINITE) != WAIT_OBJECT_0) {
 			break;
