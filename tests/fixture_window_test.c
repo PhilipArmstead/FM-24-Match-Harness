@@ -417,6 +417,31 @@ static void checkFormat(HWND metadata, LONG start, LONG end, DWORD effects, COLO
 	ASSERT_BOOL_EQ(format.crTextColor == color, true);
 }
 
+static void checkNotes(HWND metadata) {
+	wchar_t text[8192] = {0};
+	GETTEXTEX request = {.cb = sizeof text, .codepage = 1200};
+	ASSERT_BOOL_EQ(SendMessageW(metadata, EM_GETTEXTEX, (WPARAM)&request, (LPARAM)text) > 0, true);
+	const wchar_t *note = wcsstr(text, L"\rNOTE: ");
+	const wchar_t *controlNote = wcsstr(text, L"\rNOTE 2: ");
+	ASSERT_BOOL_EQ(note && controlNote && note < controlNote, true);
+	if (!note || !controlNote) {
+		return;
+	}
+	ASSERT_INT_EQ(
+		wcscmp(
+			controlNote,
+			L"\rNOTE 2: AI/unknown control: assignments unmapped. Squad listed below; AI may replace "
+			L"this tactic."
+		),
+		0
+	);
+	LONG start = (LONG)(note + 1 - text);
+	checkFormat(metadata, start, start + 5, CFE_BOLD, GetSysColor(COLOR_WINDOWTEXT));
+	start = (LONG)(controlNote + 1 - text);
+	checkFormat(metadata, start, start + 7, CFE_BOLD, GetSysColor(COLOR_WINDOWTEXT));
+	checkFormat(metadata, start + 7, (LONG)wcslen(text), 0, GetSysColor(COLOR_WINDOWTEXT));
+}
+
 static void checkContents(const wchar_t *path, const char *expected) {
 	ByteBuffer contents = {0};
 	ASSERT_BOOL_EQ(files_read(path, &contents), true);
@@ -440,7 +465,6 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 	}
 	for (unsigned i = 0; i < 2; ++i) {
 		ASSERT_BOOL_EQ(controlVisible(state->headings[i]), tab == 0);
-		ASSERT_BOOL_EQ(controlVisible(state->notes[i]), tab == 0);
 		ASSERT_BOOL_EQ(controlVisible(state->pitches[i]), tab == 0);
 		ASSERT_BOOL_EQ(controlVisible(state->lists[i]), tab == 0);
 	}
@@ -610,9 +634,10 @@ static void checkAwayHeading(HWND window, WindowState *state, const wchar_t *exp
 	SelectObject(dc, old);
 	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
 	RECT heading = controlBounds(window, state->headings[1]);
-	RECT note = controlBounds(window, state->notes[1]);
+	RECT pitch = controlBounds(window, state->pitches[1]);
+	RECT list = controlBounds(window, state->lists[1]);
 	int width = extent.cx + scaled(state, 4);
-	int maximum = note.right - note.left - scaled(state, 27);
+	int maximum = list.right - pitch.left - scaled(state, 27);
 	ASSERT_INT_EQ(heading.right - heading.left, width < maximum ? width : maximum);
 	if (width <= maximum) {
 		wchar_t text[2 * FIXTURE_TEXT + 128] = {0};
@@ -1004,6 +1029,15 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	WindowState state = {.data = data, .path = path, .filename = L"temp-fixture.json", .dpi = 96};
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
 	ASSERT_BOOL_EQ(createControls(window, &state), true);
+	checkNotes(state.metadata);
+	layout(window, &state);
+	for (unsigned side = 0; side < 2; ++side) {
+		RECT heading = controlBounds(window, state.headings[side]);
+		RECT pitch = controlBounds(window, state.pitches[side]);
+		RECT list = controlBounds(window, state.lists[side]);
+		ASSERT_INT_EQ(pitch.top, heading.bottom);
+		ASSERT_INT_EQ(list.top, heading.bottom);
+	}
 	checkFonts(window, &state);
 	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
 	for (unsigned i = 0; i < 2; ++i) {
@@ -1038,7 +1072,6 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(!controlVisible(state.progress), true);
 	ASSERT_BOOL_EQ(GetWindowLongW(state.tabs, GWL_STYLE) & WS_CLIPSIBLINGS, true);
 	checkControlColors(window, state.headings[0], WM_CTLCOLORSTATIC);
-	checkControlColors(window, state.notes[0], WM_CTLCOLORSTATIC);
 	checkControlColors(window, state.simulation[SIM_THREADS_LABEL], WM_CTLCOLORSTATIC);
 	checkControlColors(window, state.simulation[SIM_DETAILED], WM_CTLCOLORBTN);
 	changeTab(window, &state, 0);
@@ -1579,6 +1612,7 @@ TEST(exports_fixtures_and_runs_simulations) {
 	ASSERT_BOOL_EQ(setMetadata(&state), true);
 	firstLine(state.metadata, L"Viewing fixture: temp-fixture.json");
 	checkFormat(state.metadata, 17, 34, CFE_BOLD, GetSysColor(COLOR_WINDOWTEXT));
+	checkNotes(state.metadata);
 
 	state.temporary = true;
 	ASSERT_BOOL_EQ(setMetadata(&state), true);
@@ -1588,6 +1622,7 @@ TEST(exports_fixtures_and_runs_simulations) {
 	checkFormat(state.metadata, 0, linkStart, CFE_BOLD, RGB(255, 0, 0));
 	checkFormat(state.metadata, linkStart, linkEnd, CFE_LINK | CFE_UNDERLINE, RGB_BLUE);
 	checkFormat(state.metadata, linkEnd, linkEnd + 13, 0, GetSysColor(COLOR_WINDOWTEXT));
+	checkNotes(state.metadata);
 
 	ENLINK link = {.nmhdr = {.hwndFrom = state.metadata, .code = EN_LINK}, .msg = WM_LBUTTONDOWN};
 	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 0, true);

@@ -84,7 +84,6 @@ typedef struct WindowState {
 	HWND progress;
 	HWND headings[2];
 	wchar_t headingText[2][2 * FIXTURE_TEXT + 128];
-	HWND notes[2];
 	HWND pitches[2];
 	HWND lists[2];
 	HWND simulation[SIM_CONTROL_COUNT];
@@ -393,7 +392,6 @@ static void selectTab(WindowState *state) {
 	bool simulation = TabCtrl_GetCurSel(state->tabs) == 1;
 	for (unsigned i = 0; i < 2; ++i) {
 		ShowWindow(state->headings[i], simulation ? SW_HIDE : SW_SHOW);
-		ShowWindow(state->notes[i], simulation ? SW_HIDE : SW_SHOW);
 		ShowWindow(state->pitches[i], simulation ? SW_HIDE : SW_SHOW);
 		ShowWindow(state->lists[i], simulation ? SW_HIDE : SW_SHOW);
 	}
@@ -427,6 +425,9 @@ static bool setMetadata(WindowState *state) {
 	static const char note[] =
 		"NOTE: Condition/sharpness are percentages. Fatigue is signed jadedness (0 = fresh), not a "
 		"percentage.";
+	static const char controlNote[] =
+		"NOTE 2: AI/unknown control: assignments unmapped. Squad listed below; AI may replace this "
+		"tactic.";
 	const FixtureData *data = state->data;
 	const char *competition = strcmp(data->matchType, "Friendly") == 0 ? "Friendly"
 														: data->competition[0]                   ? data->competition
@@ -437,12 +438,13 @@ static bool setMetadata(WindowState *state) {
 		sizeof text,
 		"%s @ %s, %s\r\n"
 		"Weather: Unknown (serialized weather fields have not been mapped)\r\n"
-		"Referee: %s\r\n\r\n%s",
+		"Referee: %s\r\n\r\n%s\r\n%s",
 		competition,
 		data->venue[0] ? data->venue : "Unknown",
 		data->when[0] ? data->when : "Unknown (no export date annotation)",
 		data->officials[4][0] ? data->officials[4] : "Not stored/unassigned",
-		note
+		note,
+		controlNote
 	);
 	wchar_t wide[8192];
 	int length;
@@ -481,10 +483,13 @@ static bool setMetadata(WindowState *state) {
 		);
 	}
 	GETTEXTLENGTHEX textLength = {.flags = GTL_NUMCHARS | GTL_PRECISE, .codepage = 1200};
-	LONG noteStart = (LONG)SendMessageW(state->metadata, EM_GETTEXTLENGTHEX, (WPARAM)&textLength, 0) -
-									 (LONG)(sizeof note - 1);
+	LONG controlNoteStart =
+		(LONG)SendMessageW(state->metadata, EM_GETTEXTLENGTHEX, (WPARAM)&textLength, 0) -
+		(LONG)(sizeof controlNote - 1);
+	LONG noteStart = controlNoteStart - 1 - (LONG)(sizeof note - 1);
 	if (ok && noteStart >= 0) {
-		ok = formatMetadata(state->metadata, noteStart, noteStart + 5, CFE_BOLD, normal);
+		ok = formatMetadata(state->metadata, noteStart, noteStart + 5, CFE_BOLD, normal) &&
+				 formatMetadata(state->metadata, controlNoteStart, controlNoteStart + 7, CFE_BOLD, normal);
 	} else {
 		ok = false;
 	}
@@ -580,14 +585,6 @@ static bool setHeadings(WindowState *state) {
 			(void)snprintf(text, sizeof text, "Away: ");
 		}
 		if (!widen(text, state->headingText[side], sizeof state->headingText[side] / sizeof(wchar_t))) {
-			return false;
-		}
-		if (!setText(
-					state->notes[side],
-					team->lineupKnown ? "Stored starting XI; pitch numbers are tactic slots."
-														: "AI/unknown control: assignments unmapped. Squad listed below; AI "
-															"may replace this tactic."
-				)) {
 			return false;
 		}
 	}
@@ -1242,7 +1239,6 @@ static bool setFonts(WindowState *state) {
 	}
 	for (unsigned i = 0; i < 2; ++i) {
 		SendMessageW(state->headings[i], WM_SETFONT, (WPARAM)heading, TRUE);
-		SendMessageW(state->notes[i], WM_SETFONT, (WPARAM)font, TRUE);
 		SendMessageW(state->lists[i], WM_SETFONT, (WPARAM)font, TRUE);
 		SendMessageW(state->pitches[i], WM_SETFONT, (WPARAM)font, TRUE);
 		for (unsigned column = 0; column < 9; ++column) {
@@ -1320,7 +1316,6 @@ static void layout(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < 2; ++i) {
 		int y = top + (int)i * (panelHeight + margin);
 		int header = scaled(state, 27);
-		int note = scaled(state, 22);
 		int headingWidth = width;
 		if (i == 1) {
 			HDC dc = GetDC(window);
@@ -1379,12 +1374,11 @@ static void layout(HWND window, WindowState *state) {
 			DestroyWindow(window);
 			return;
 		}
-		MoveWindow(state->notes[i], left, y + header, width, note, TRUE);
-		int height = panelHeight - header - note;
+		int height = panelHeight - header;
 		int pitchWidth = scaled(state, 220);
-		MoveWindow(state->pitches[i], left, y + header + note, pitchWidth, height, TRUE);
+		MoveWindow(state->pitches[i], left, y + header, pitchWidth, height, TRUE);
 		int offset = pitchWidth + margin;
-		MoveWindow(state->lists[i], left + offset, y + header + note, width - offset, height, TRUE);
+		MoveWindow(state->lists[i], left + offset, y + header, width - offset, height, TRUE);
 	}
 }
 
@@ -1573,20 +1567,6 @@ static bool createControls(HWND window, WindowState *state) {
 			instance,
 			NULL
 		);
-		state->notes[i] = CreateWindowExW(
-			0,
-			L"STATIC",
-			L"",
-			WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
-			0,
-			0,
-			0,
-			0,
-			window,
-			NULL,
-			instance,
-			NULL
-		);
 		state->pitches[i] = CreateWindowExW(
 			0,
 			pitchClass,
@@ -1615,7 +1595,7 @@ static bool createControls(HWND window, WindowState *state) {
 			instance,
 			NULL
 		);
-		if (!state->headings[i] || !state->notes[i] || !state->pitches[i] || !state->lists[i]) {
+		if (!state->headings[i] || !state->pitches[i] || !state->lists[i]) {
 			return false;
 		}
 		ListView_SetExtendedListViewStyle(
