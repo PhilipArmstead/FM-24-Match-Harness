@@ -14,8 +14,11 @@
 
 
 static int errorMessages;
+static bool calibriInstalled;
 static time_t testTime(time_t *out);
 static int testMessageBox(HWND window, const wchar_t *text, const wchar_t *caption, UINT type);
+static int WINAPI
+testEnumFontFamiliesExW(HDC dc, LOGFONTW *font, FONTENUMPROCW callback, LPARAM data, DWORD flags);
 static HRESULT WINAPI testCoCreateInstance(
 	REFCLSID classId,
 	IUnknown *outer,
@@ -27,12 +30,28 @@ static HRESULT WINAPI testCoCreateInstance(
 #define time testTime
 #define MessageBoxW testMessageBox
 #define CoCreateInstance testCoCreateInstance
+#define EnumFontFamiliesExW testEnumFontFamiliesExW
 #include "../src/ui/fixture_window.c" // NOLINT(bugprone-suspicious-include): test internal UI callbacks.
 
 
 #undef time
 #undef MessageBoxW
 #undef CoCreateInstance
+#undef EnumFontFamiliesExW
+
+static int WINAPI
+testEnumFontFamiliesExW(HDC dc, LOGFONTW *font, FONTENUMPROCW callback, LPARAM data, DWORD flags) {
+	ASSERT_BOOL_EQ(dc != NULL && flags == 0, true);
+	ASSERT_INT_EQ(font->lfCharSet, DEFAULT_CHARSET);
+	ASSERT_INT_EQ(wcscmp(font->lfFaceName, L"Calibri"), 0);
+	if (!calibriInstalled) {
+		return 1;
+	}
+	TEXTMETRICW metrics = {0};
+	int result = callback(font, &metrics, TRUETYPE_FONTTYPE, data);
+	ASSERT_INT_EQ(result, 0);
+	return result;
+}
 
 static time_t testTime(time_t *out) {
 	if (out) {
@@ -620,6 +639,34 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	state->replacementPath[0] = 0;
 }
 
+static void checkFonts(WindowState *state) {
+	static const UINT resolutions[] = {96, 144};
+	for (unsigned available = 0; available < 2; ++available) {
+		calibriInstalled = available != 0;
+		for (unsigned i = 0; i < sizeof resolutions / sizeof resolutions[0]; ++i) {
+			state->dpi = resolutions[i];
+			ASSERT_BOOL_EQ(setFonts(state), true);
+			LOGFONTW heading = {0};
+			LOGFONTW body = {0};
+			ASSERT_INT_EQ(GetObjectW(state->headingFont, sizeof heading, &heading), sizeof heading);
+			ASSERT_INT_EQ(GetObjectW(state->font, sizeof body, &body), sizeof body);
+			ASSERT_INT_EQ(wcscmp(heading.lfFaceName, calibriInstalled ? L"Calibri" : L"Segoe UI"), 0);
+			ASSERT_INT_EQ(wcscmp(body.lfFaceName, L"Segoe UI"), 0);
+			ASSERT_INT_EQ(heading.lfHeight, -MulDiv(13, (int)state->dpi, 72));
+			ASSERT_INT_EQ(heading.lfWeight, FW_SEMIBOLD);
+			ASSERT_INT_EQ(body.lfHeight, -MulDiv(10, (int)state->dpi, 72));
+			for (unsigned side = 0; side < 2; ++side) {
+				ASSERT_BOOL_EQ(
+					(HFONT)SendMessageW(state->headings[side], WM_GETFONT, 0, 0) == state->headingFont, true
+				);
+			}
+		}
+	}
+	calibriInstalled = false;
+	state->dpi = 96;
+	ASSERT_BOOL_EQ(setFonts(state), true);
+}
+
 static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	INITCOMMONCONTROLSEX controls = {.dwSize = sizeof controls,
 		.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS | ICC_PROGRESS_CLASS};
@@ -636,6 +683,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	WindowState state = {.data = data, .path = path, .filename = L"temp-fixture.json", .dpi = 96};
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
 	ASSERT_BOOL_EQ(createControls(window, &state), true);
+	checkFonts(&state);
 	state.taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
 	ASSERT_BOOL_EQ(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0, true);
 	ASSERT_BOOL_EQ(TabCtrl_GetItemCount(state.tabs) == 2, true);

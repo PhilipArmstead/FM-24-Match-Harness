@@ -87,6 +87,10 @@ typedef struct WindowState {
 	unsigned long threadLimit;
 	HFONT font;
 	HFONT headingFont;
+	HBITMAP editIcon;
+	COLORREF editIconColor;
+	COLORREF editIconBackground;
+	int editIconSize;
 	UINT dpi;
 	int metadataHeight;
 	bool layoutPending;
@@ -851,7 +855,24 @@ static void checkReplacement(HWND window, WindowState *state) {
 	job->data = NULL;
 }
 
+static int CALLBACK
+fontFound(const LOGFONTW *font, const TEXTMETRICW *metrics, DWORD type, LPARAM found) {
+	(void)font;
+	(void)metrics;
+	(void)type;
+	*(bool *)found = true;
+	return 0;
+}
+
 static bool setFonts(WindowState *state) {
+	HDC dc = GetDC(state->metadata);
+	if (!dc) {
+		return false;
+	}
+	LOGFONTW family = {.lfCharSet = DEFAULT_CHARSET, .lfFaceName = L"Calibri"};
+	bool calibri = false;
+	EnumFontFamiliesExW(dc, &family, fontFound, (LPARAM)&calibri, 0);
+	ReleaseDC(state->metadata, dc);
 	HFONT font = CreateFontW(
 		-MulDiv(10, (int)state->dpi, 72),
 		0,
@@ -882,7 +903,7 @@ static bool setFonts(WindowState *state) {
 		CLIP_DEFAULT_PRECIS,
 		CLEARTYPE_QUALITY,
 		DEFAULT_PITCH,
-		L"Segoe UI"
+		calibri ? L"Calibri" : L"Segoe UI"
 	);
 	if (!font || !heading) {
 		if (font) {
@@ -1396,7 +1417,7 @@ static LRESULT metadataNotification(HWND window, WindowState *state, const NMHDR
 	return 0;
 }
 
-static void drawEditIcon(const WindowState *state, const DRAWITEMSTRUCT *draw) {
+static bool drawEditPath(HDC dc, int size, COLORREF color) {
 	// assets/edit.svg in 1/1000 viewBox units; SVG arcs are cubic GDI curves.
 	static const POINT points[] = {
 		{12965, 5462},
@@ -1540,33 +1561,111 @@ static void drawEditIcon(const WindowState *state, const DRAWITEMSTRUCT *draw) {
 		4,
 		5,
 	};
-	HDC dc = draw->hDC;
 	int saved = SaveDC(dc);
-	FillRect(dc, &draw->rcItem, GetSysColorBrush(COLOR_WINDOW));
-	if (draw->itemState & ODS_FOCUS) {
-		RECT focus = draw->rcItem;
-		InflateRect(&focus, -1, -1);
-		DrawFocusRect(dc, &focus);
+	if (!saved) {
+		return false;
 	}
+	bool ok = SetMapMode(dc, MM_ANISOTROPIC) &&
+						SetWindowExtEx(dc, 32000, 32000, NULL) &&
+						SetViewportExtEx(dc, size, size, NULL) &&
+						SetPolyFillMode(dc, WINDING) &&
+						SelectObject(dc, GetStockObject(DC_BRUSH)) &&
+						SetDCBrushColor(dc, color) != CLR_INVALID &&
+						BeginPath(dc) &&
+						PolyDraw(dc, points, types, (int)(sizeof points / sizeof points[0])) &&
+						EndPath(dc) && FillPath(dc);
+	return RestoreDC(dc, saved) && ok;
+}
+
+static HBITMAP createEditIcon(HDC dc, int size, COLORREF color, COLORREF background) {
+	// Supersample only on cache misses; normal repaints copy the reduced bitmap.
+	int largeSize = size * 4;
+	HDC source = CreateCompatibleDC(dc);
+	HDC target = CreateCompatibleDC(dc);
+	HBITMAP large = CreateCompatibleBitmap(dc, largeSize, largeSize);
+	HBITMAP bitmap = CreateCompatibleBitmap(dc, size, size);
+	HGDIOBJ oldSource = source && large ? SelectObject(source, large) : NULL;
+	HGDIOBJ oldTarget = target && bitmap ? SelectObject(target, bitmap) : NULL;
+	RECT bounds = {0, 0, largeSize, largeSize};
+	bool ok = oldSource && oldTarget &&
+						SetDCBrushColor(source, background) != CLR_INVALID &&
+						FillRect(source, &bounds, GetStockObject(DC_BRUSH)) &&
+						drawEditPath(source, largeSize, color) &&
+						SetStretchBltMode(target, HALFTONE) &&
+						SetBrushOrgEx(target, 0, 0, NULL) &&
+						StretchBlt(target, 0, 0, size, size, source, 0, 0, largeSize, largeSize, SRCCOPY);
+	if (oldSource) {
+		SelectObject(source, oldSource);
+	}
+	if (oldTarget) {
+		SelectObject(target, oldTarget);
+	}
+	if (source) {
+		DeleteDC(source);
+	}
+	if (target) {
+		DeleteDC(target);
+	}
+	if (large) {
+		DeleteObject(large);
+	}
+	if (!ok && bitmap) {
+		DeleteObject(bitmap);
+	}
+	return ok ? bitmap : NULL;
+}
+
+static bool drawEditIcon(WindowState *state, const DRAWITEMSTRUCT *draw) {
 	int inset = scaled(state, 3);
 	int size = draw->rcItem.bottom - draw->rcItem.top - 2 * inset;
+	if (size <= 0 || size > INT_MAX / 4) {
+		return false;
+	}
+	COLORREF color = (draw->itemState & ODS_DISABLED) ? GetSysColor(COLOR_GRAYTEXT) : RGB_BLUE;
+	COLORREF background = GetSysColor(COLOR_WINDOW);
+	HDC dc = draw->hDC;
+	if (!state->editIcon || state->editIconSize != size || state->editIconColor != color ||
+			state->editIconBackground != background) {
+		HBITMAP bitmap = createEditIcon(dc, size, color, background);
+		if (!bitmap) {
+			return false;
+		}
+		if (state->editIcon) {
+			DeleteObject(state->editIcon);
+		}
+		state->editIcon = bitmap;
+		state->editIconSize = size;
+		state->editIconColor = color;
+		state->editIconBackground = background;
+	}
+	HDC memory = CreateCompatibleDC(dc);
+	if (!memory) {
+		return false;
+	}
+	HGDIOBJ old = SelectObject(memory, state->editIcon);
 	int pressed = (draw->itemState & ODS_SELECTED) ? 1 : 0;
-	SetMapMode(dc, MM_ANISOTROPIC);
-	SetWindowExtEx(dc, 32000, 32000, NULL);
-	SetViewportExtEx(dc, size, size, NULL);
-	SetViewportOrgEx(
-		dc, draw->rcItem.left + inset + pressed, draw->rcItem.top + inset + pressed, NULL
-	);
-	SetPolyFillMode(dc, WINDING);
-	SelectObject(dc, GetStockObject(DC_BRUSH));
-	SetDCBrushColor(
-		dc, (draw->itemState & ODS_DISABLED) ? GetSysColor(COLOR_GRAYTEXT) : RGB_BLUE
-	);
-	BeginPath(dc);
-	PolyDraw(dc, points, types, (int)(sizeof points / sizeof points[0]));
-	EndPath(dc);
-	FillPath(dc);
-	RestoreDC(dc, saved);
+	bool ok = old && FillRect(dc, &draw->rcItem, GetSysColorBrush(COLOR_WINDOW)) &&
+						BitBlt(
+							dc,
+							draw->rcItem.left + inset + pressed,
+							draw->rcItem.top + inset + pressed,
+							size,
+							size,
+							memory,
+							0,
+							0,
+							SRCCOPY
+						);
+	if (old) {
+		SelectObject(memory, old);
+	}
+	DeleteDC(memory);
+	if (ok && (draw->itemState & ODS_FOCUS)) {
+		RECT focus = draw->rcItem;
+		InflateRect(&focus, -1, -1);
+		ok = DrawFocusRect(dc, &focus);
+	}
+	return ok;
 }
 
 static LRESULT
@@ -1673,11 +1772,17 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 		case WM_DRAWITEM: {
 			const DRAWITEMSTRUCT *draw = (const DRAWITEMSTRUCT *)lParam;
 			if (draw->hwndItem == state->away[AWAY_ICON]) {
-				drawEditIcon(state, draw);
+				if (!drawEditIcon(state, draw)) {
+					fprintf(stderr, "fixture viewer: cannot render edit icon\n");
+					showError(window, L"Cannot render edit icon.");
+					state->failed = true;
+					DestroyWindow(window);
+				}
 				return TRUE;
 			}
 			break;
 		}
+		case WM_SYSCOLORCHANGE: InvalidateRect(state->away[AWAY_ICON], NULL, TRUE); break;
 		case WM_SETCURSOR:
 			if ((HWND)wParam == state->away[AWAY_ICON] && IsWindowEnabled(state->away[AWAY_ICON])) {
 				SetCursor(LoadCursorW(NULL, IDC_HAND));
@@ -1714,7 +1819,13 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 		case WM_TIMER:
 		case WM_NOTIFY:
 		case WM_CLOSE: return actionMessage(window, state, message, wParam, lParam);
-		case WM_DESTROY: PostQuitMessage(state->failed ? 1 : 0); return 0;
+		case WM_DESTROY:
+			if (state->editIcon) {
+				DeleteObject(state->editIcon);
+				state->editIcon = NULL;
+			}
+			PostQuitMessage(state->failed ? 1 : 0);
+			return 0;
 		default: break;
 	}
 	return DefWindowProcW(window, message, wParam, lParam);
