@@ -90,12 +90,6 @@ static void writeConfig(const Job *job, SeedBuilder *builder, uint8_t *team, uin
 		job_writeResult("error: cannot read the fixture's teams");
 		return;
 	}
-	const uint8_t *opponent =
-		builder->teams[1 - side] ? builder->teams[1 - side] : original[1 - side];
-	if (team == opponent) {
-		job_writeResult("error: that is the %s team", side ? "home" : "away");
-		return;
-	}
 	size_t dropped = 0;
 	if (!seedBuilder_dropTeamEdits(builder, side, &dropped)) {
 		job_writeResult("error: cannot identify the %s team's edits; see harness.log", sideName);

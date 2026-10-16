@@ -128,21 +128,20 @@ static const char *const ratingNames[69] = {
 	"concentration",
 };
 
-// MATCH_STAFF+0x60, byte by byte, matched against two staff members' FMRTE profiles
-// (docs/FIXTURE.md#staff-attributes). Bytes 0-26 are on the 1-20 scale, 27-51 on 1-100. "_a"/"_b"
-// pairs held the same value in both profiles, so which is which is unknown.
+// MATCH_STAFF+0x60, byte by byte, matched against four staff members' FMRTE profiles
+// (docs/FIXTURE.md#staff-attributes). The named bytes 0-26 are on the 1-20 scale, 27-51 on 1-100.
 static const char *const staffAttributeNames[STAFF_ATTRIBUTE_COUNT] = {
 	"tactical_attacking",
 	"business",
 	"unknown_2",
 	"tactical_directness",
-	"determination_or_discipline",
+	"level_of_discipline",
 	"tactical_free_roles",
 	"interference",
 	"tactical_marking",
 	"tactical_offside",
 	"patience",
-	"pressing_or_hardness_of_training_a",
+	"tactical_pressing",
 	"resources",
 	"working_with_youngsters",
 	"unknown_13",
@@ -154,15 +153,15 @@ static const char *const staffAttributeNames[STAFF_ATTRIBUTE_COUNT] = {
 	"tactical_depth",
 	"tactical_flamboyancy",
 	"tactical_flexibility",
-	"pressing_or_hardness_of_training_b",
+	"hardness_of_training",
 	"squad_rotation",
 	"tactical_tempo",
 	"tactical_width",
 	"unknown_26",
 	"coaching_gk_shot_stopping",
-	"man_management_or_judging_ca_a",
+	"judging_ca",
 	"judging_pa",
-	"man_management_or_judging_ca_b",
+	"man_management",
 	"motivating",
 	"physiotherapy",
 	"tactical_knowledge",

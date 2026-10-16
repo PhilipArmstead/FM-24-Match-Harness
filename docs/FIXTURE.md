@@ -440,27 +440,27 @@ staff member's reputation and ability:
 
 Reputations are 0-10000 and abilities 1-200. The 52 attributes are a copy of
 the staff record that starts `0xE0` bytes before the person record in the
-game's memory (`MATCH_STAFF+0x60` to `+0x93`), in this order. The first 27
-are on the game's 1-20 scale. The other 25 are on the 1-100 scale that the
-game shows as `(value + 2) / 5`, like a player's ratings: a Motivating of 16
-is stored as 80.
+game's memory (`MATCH_STAFF+0x60` to `+0x93`), in this order. The named ones
+among the first 27 are on the game's 1-20 scale. The named ones among the
+other 25 are on the 1-100 scale that the game shows as `(value + 2) / 5`, like
+a player's ratings: a Motivating of 16 is stored as 80.
 
 | #  | Scale | Name                                            | #  | Scale | Name                             |
 |----|-------|-------------------------------------------------|----|-------|----------------------------------|
-| 0  | 1-20  | `tactical_attacking`                            | 26 | 1-20  | `unknown_26`                     |
+| 0  | 1-20  | `tactical_attacking`                            | 26 | ?     | `unknown_26` (15, 35, 10 and 75) |
 | 1  | 1-20  | `business`                                      | 27 | 1-100 | `coaching_gk_shot_stopping`      |
-| 2  | 1-20  | `unknown_2`                                     | 28 | 1-100 | `man_management_or_judging_ca_a` |
+| 2  | ?     | `unknown_2` (17, 10, 10 and 8 seen)             | 28 | 1-100 | `judging_ca`                     |
 | 3  | 1-20  | `tactical_directness`                           | 29 | 1-100 | `judging_pa`                     |
-| 4  | 1-20  | `determination_or_discipline`                   | 30 | 1-100 | `man_management_or_judging_ca_b` |
+| 4  | 1-20  | `level_of_discipline`                           | 30 | 1-100 | `man_management`                 |
 | 5  | 1-20  | `tactical_free_roles`                           | 31 | 1-100 | `motivating`                     |
 | 6  | 1-20  | `interference`                                  | 32 | 1-100 | `physiotherapy`                  |
 | 7  | 1-20  | `tactical_marking`                              | 33 | 1-100 | `tactical_knowledge`             |
 | 8  | 1-20  | `tactical_offside`                              | 34 | 1-100 | `coaching_attacking`             |
 | 9  | 1-20  | `patience`                                      | 35 | 1-100 | `coaching_defending`             |
-| 10 | 1-20  | `pressing_or_hardness_of_training_a`            | 36 | 1-100 | `coaching_fitness`               |
+| 10 | 1-20  | `tactical_pressing`                             | 36 | 1-100 | `coaching_fitness`               |
 | 11 | 1-20  | `resources`                                     | 37 | 1-100 | `coaching_mental`                |
 | 12 | 1-20  | `working_with_youngsters`                       | 38 | 1-100 | `coaching_technical`             |
-| 13 | 1-20  | `unknown_13` (74, 66 and 100 in the files seen) | 39 | 1-100 | `coaching_tactical`              |
+| 13 | ?     | `unknown_13` (74, 66, 100 and 89 seen)          | 39 | 1-100 | `coaching_tactical`              |
 | 14 | 1-20  | `buying_players`                                | 40 | 1-100 | `coaching_dirtiness_allowance`   |
 | 15 | 1-20  | `mind_games`                                    | 41 | 1-100 | `coaching_gk_handling`           |
 | 16 | 1-20  | `tactical_sitting_back`                         | 42 | 1-100 | `coaching_gk_distribution`       |
@@ -469,18 +469,26 @@ is stored as 80.
 | 19 | 1-20  | `tactical_depth`                                | 45 | 1-100 | `judging_team_data`              |
 | 20 | 1-20  | `tactical_flamboyancy`                          | 46 | 1-100 | `presenting_data`                |
 | 21 | 1-20  | `tactical_flexibility`                          | 47 | 1-100 | `sports_science`                 |
-| 22 | 1-20  | `pressing_or_hardness_of_training_b`            | 48 | 1-100 | `unknown_48`                     |
+| 22 | 1-20  | `hardness_of_training`                          | 48 | ?     | `unknown_48` (25, 5, 10 and 25)  |
 | 23 | 1-20  | `squad_rotation`                                | 49 | 1-100 | `negotiating`                    |
 | 24 | 1-20  | `tactical_tempo`                                | 50 | 1-100 | `judging_staff_ability`          |
 | 25 | 1-20  | `tactical_width`                                | 51 | 1-100 | `coaching_set_pieces`            |
 
-The names come from matching two staff members' FMRTE profiles (Pako
-Ayestarán and Josep Gombau) against their values. The `tactical_*` ones are
-FMRTE's "tactical attributes" (the staff member's preferred style), not the
-coaching ones. The two profiles had the same values for man management and
-judging CA, and for pressing and hardness of training, so which of each
-`_a`/`_b` pair is which isn't known. Only one of determination and level of
-discipline is stored here. FMRTE's coaching attribute "player" isn't stored.
+The names come from matching four staff members' FMRTE profiles (Pako
+Ayestarán, Josep Gombau, the human manager and Bristol City's AI manager Liam
+Manning) against their values; every attribute FMRTE showed matched its byte
+in all four, and so did the reputations and abilities. The `tactical_*` ones
+are FMRTE's "tactical attributes" (the staff member's preferred style), not
+the coaching ones. A human manager's profile shows no tactical, non-tactical,
+chairman or data attributes, but the bytes are still there (10 for most of
+them, 2 for the data ones). The four `unknown_*` bytes match nothing FMRTE
+shows; the values seen are in the table, in the order of the profiles above,
+so their scale isn't known either.
+
+Not stored here: determination, FMRTE's coaching attribute "player", and a
+human manager's own attributes (hands-on approach, domestic player bias,
+tactical consistency, club/player loyalty, squad discipline, financial control
+and media handling). None of them was found anywhere in the manager's block.
 
 **Only the manager's attributes reach the engine.** In one fixture (Aston
 Villa against Bristol City, seeds 1-50), maxing every known attribute of the
@@ -489,25 +497,94 @@ into 50 wins. Maxing those of any backroom entry or `team_extra`, alone or
 all 20 together, played every seed exactly as before. That includes the
 assistant manager, who makes the substitutions under `run`.
 
-Maxing the manager's attributes one at a time in the same fixture (seeds
-1-20, baseline 18 wins and 2 draws, 3.70-1.50 on average) changed matches for
-five of them:
+Setting the manager's attributes one at a time to their maximum, and then to
+1, in the same fixture (seeds 1-20) changed matches for six of them:
+`motivating`, `man_management`, `coaching_mental`, `level_of_discipline`,
+`working_with_youngsters` and `tactical_attacking`. The other 40 known
+attributes played every seed exactly as before in both directions, including
+`coaching_fitness` at 1. `unknown_*` weren't tested.
 
-| Attribute                        | From | To  | Seeds changed | Result                              |
-|----------------------------------|------|-----|---------------|-------------------------------------|
-| `motivating`                     | 80   | 100 | 20 of 20      | 20 wins, 3.80-0.85                  |
-| `man_management_or_judging_ca_b` | 50   | 100 | 20 of 20      | 15 wins, 4 draws, 1 loss, 3.35-1.35 |
-| `working_with_youngsters`        | 12   | 20  | 14 of 20      | 18 wins, 2 draws, 3.75-1.50         |
-| `determination_or_discipline`    | 16   | 20  | 8 of 20       | 18 wins, 2 draws, 3.50-1.30         |
-| `tactical_attacking`             | 10   | 20  | 3 of 20       | 18 wins, 2 draws, 3.55-1.35         |
+Over seeds 1-300 (a later state of the same fixture: baseline 264 wins, 28
+draws and 8 losses, 3.69-1.35 on average, 2.73 points per match), none of the
+six made a clear difference in a consistent direction:
 
-"Seeds changed" counts seeds whose final random-number state differed, so it
-shows that the engine read the value, not that results improved. The other
-41 known attributes changed nothing; `coaching_fitness` and
-`coaching_mental` were already at their maximum and weren't tested. Twenty
-seeds are too few to say how much each one helps. Judging CA is a scouting
-attribute, so `_b`, which the engine reads, is probably man management, but
-that hasn't been confirmed in the game.
+| Attribute                 | From | Set to | W-D-L     | Points | Goal difference | Goals against | Scores changed |
+|---------------------------|------|--------|-----------|--------|-----------------|---------------|----------------|
+| `man_management`          | 50   | 100    | 266-25-9  | 2.74   | +0.11 ± 0.11    | -0.24 ± 0.07  | 281            |
+|                           |      | 1      | 280-13-7  | 2.84   | +0.35 ± 0.12    | -0.34 ± 0.08  | 285            |
+| `motivating`              | 80   | 100    | 270-22-8  | 2.77   | +0.07 ± 0.12    | -0.19 ± 0.08  | 283            |
+|                           |      | 1      | 269-24-7  | 2.77   | +0.09 ± 0.12    | -0.23 ± 0.09  | 280            |
+| `coaching_mental`         | 100  | 1      | 274-17-9  | 2.80   | +0.34 ± 0.12    | -0.32 ± 0.08  | 285            |
+| `level_of_discipline`     | 16   | 20     | 261-29-10 | 2.71   | +0.02 ± 0.07    | +0.03 ± 0.04  | 102            |
+|                           |      | 1      | 264-25-11 | 2.72   | -0.08 ± 0.11    | -0.06 ± 0.08  | 277            |
+| `working_with_youngsters` | 12   | 20     | 267-25-8  | 2.75   | +0.12 ± 0.06    | -0.05 ± 0.04  | 162            |
+|                           |      | 1      | 266-26-8  | 2.75   | +0.07 ± 0.06    | -0.06 ± 0.04  | 170            |
+| `tactical_attacking`      | 10   | 20     | 263-28-9  | 2.72   | +0.00 ± 0.04    | -0.04 ± 0.03  | 48             |
+|                           |      | 1      | 267-25-8  | 2.75   | +0.08 ± 0.05    | -0.04 ± 0.03  | 66             |
+
+Points are per match. Goal difference and goals against are the average
+change per seed from the baseline, with its standard error. "Scores changed"
+counts seeds whose score differed from the baseline's.
+
+Once the engine reads a changed value, nearly every match plays out
+differently, so `man_management`, `motivating` and `coaching_mental` are in
+effect new samples of 300 matches. All of them conceded fewer goals than the
+baseline whether the attribute went up or down, which says more about these
+300 seeds' baseline than about the attributes: compare their maximum with
+their 1 instead. `motivating` made no difference that way (1.16 against 1.13
+goals against); `man_management` at 1 did slightly better than at its maximum
+(2.84 against 2.74 points), which is about two standard errors. The other
+three change fewer seeds, so their comparison with the baseline is closer,
+and they moved results by at most about a tenth of a goal.
+
+Over seeds 1-1000 the baseline was 889 wins, 82 draws and 29 losses,
+3.61-1.20 (2.75 points per match): the 1.35 goals against of seeds 1-300 was
+indeed bad luck. Neither attribute made a clear difference:
+
+| Attribute        | Set to | W-D-L     | Points | Goal difference | Goals against |
+|------------------|--------|-----------|--------|-----------------|---------------|
+| `man_management` | 100    | 882-87-31 | 2.73   | -0.02 ± 0.07    | -0.03 ± 0.04  |
+|                  | 1      | 907-55-38 | 2.78   | +0.12 ± 0.07    | -0.08 ± 0.04  |
+| `motivating`     | 100    | 904-62-34 | 2.77   | +0.01 ± 0.07    | -0.02 ± 0.04  |
+|                  | 1      | 889-80-31 | 2.75   | +0.03 ± 0.07    | -0.04 ± 0.05  |
+
+Comparing each maximum with its 1 seed by seed, `motivating` changed nothing
+(goal difference -0.02 ± 0.07, points +0.03 ± 0.03). `man_management` at its
+maximum had a goal difference 0.14 ± 0.07 lower than at 1, and 0.04 ± 0.03
+fewer points: about two standard errors, small, and the opposite of what the
+name suggests. The engine reads these attributes, but for this fixture they
+barely change results.
+
+To check that against a level match, Villa played themselves
+(`manager_attributes.py --opponent "Aston Villa" --side both --both`, seeds
+1-1000, `run --keep-build`). Both managers are Phil Armstead (`motivating` 80,
+`man_management` 50) with the same line-up and tactic; only the away bench
+differs (see [Changing the opponent](#changing-the-opponent)). The baseline,
+from the home side, was 298 wins, 210 draws and 492 losses, 2.33-2.72. Each
+attribute was set to its maximum and to 1 for one manager at a time. Seed by
+seed, from the home side:
+
+| Attribute        | Side | Maximum minus 1: points | Goal difference |
+|------------------|------|-------------------------|-----------------|
+| `man_management` | home | -0.12 ± 0.06            | -0.11 ± 0.08    |
+|                  | away | +0.09 ± 0.06            | +0.14 ± 0.08    |
+| `motivating`     | home | +0.02 ± 0.06            | +0.02 ± 0.08    |
+|                  | away | -0.05 ± 0.06            | -0.05 ± 0.08    |
+
+A higher `man_management` again did worse, for whichever side had it. Taking
+both sides together (home's maximum minus 1, and away's 1 minus maximum), its
+maximum cost its own side 0.11 ± 0.04 points and 0.13 ± 0.06 goal difference
+per match, against 1. That is about two and a half standard errors, in the
+same direction as against Bristol City. `motivating` came to +0.03 ± 0.04
+points and +0.03 ± 0.06 goal difference: nothing.
+
+All eight variants did better for the home side than the unmodified baseline
+(1.19 ± 0.015 points per match pooled, against 1.10 ± 0.04), whichever
+manager was changed and in whichever direction. That was the baseline's luck,
+not the editing: the baseline saved again by Python, and with an attribute the
+engine doesn't read (`tactical_offside`) changed, both played all 1000 seeds
+exactly as the baseline did, and the unmodified file over seeds 1001-3000 made
+1.19 ± 0.03 points per match (650-422-928, 2.37-2.61).
 
 ## Teams
 
@@ -965,6 +1042,15 @@ You can replace either side repeatedly; replacing one preserves the other.
 Selecting the fixture's original team clears that side's override.
 The viewer's edit icons use these same commands.
 
+The team may be your own: it then plays itself, with the same line-up and
+tactic on both sides. The game fills the away bench itself, though, with
+different players and unnamed filler players, and it gives the fillers new
+positions every time it builds the match. Their fields then don't line up from
+one build to the next, so `run` can't rebuild the file for other seeds; use
+`run --keep-build`, which plays the file's own build with each seed (the
+officials, weather and the players' per-match values stay those of the seed it
+was built with).
+
 Limits:
 
 - The input must still be based on the human manager's next fixture, as for
@@ -1028,9 +1114,8 @@ name used above is unique.
   database](#values-copied-from-the-games-database) (condition, sharpness,
   personality, ...).
 - Player instruction bit 0:1, and the other unnamed bits.
-- The [staff attributes](#staff-attributes) named `unknown_*`, which of each
-  `_a`/`_b` pair is which, and how much each of the manager's attributes the
-  engine reads changes results.
+- The [staff attributes](#staff-attributes) named `unknown_*`, and how much
+  each of the manager's attributes the engine reads changes results.
 - Which set-piece routine is which, which takers list is which set piece, and
   which opposition record is which opponent.
 
