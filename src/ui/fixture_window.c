@@ -1565,15 +1565,12 @@ static bool drawEditPath(HDC dc, int size, COLORREF color) {
 	if (!saved) {
 		return false;
 	}
-	bool ok = SetMapMode(dc, MM_ANISOTROPIC) &&
-						SetWindowExtEx(dc, 32000, 32000, NULL) &&
-						SetViewportExtEx(dc, size, size, NULL) &&
-						SetPolyFillMode(dc, WINDING) &&
+	bool ok = SetMapMode(dc, MM_ANISOTROPIC) && SetWindowExtEx(dc, 32000, 32000, NULL) &&
+						SetViewportExtEx(dc, size, size, NULL) && SetPolyFillMode(dc, WINDING) &&
 						SelectObject(dc, GetStockObject(DC_BRUSH)) &&
-						SetDCBrushColor(dc, color) != CLR_INVALID &&
-						BeginPath(dc) &&
-						PolyDraw(dc, points, types, (int)(sizeof points / sizeof points[0])) &&
-						EndPath(dc) && FillPath(dc);
+						SetDCBrushColor(dc, color) != CLR_INVALID && BeginPath(dc) &&
+						PolyDraw(dc, points, types, (int)(sizeof points / sizeof points[0])) && EndPath(dc) &&
+						FillPath(dc);
 	return RestoreDC(dc, saved) && ok;
 }
 
@@ -1587,11 +1584,9 @@ static HBITMAP createEditIcon(HDC dc, int size, COLORREF color, COLORREF backgro
 	HGDIOBJ oldSource = source && large ? SelectObject(source, large) : NULL;
 	HGDIOBJ oldTarget = target && bitmap ? SelectObject(target, bitmap) : NULL;
 	RECT bounds = {0, 0, largeSize, largeSize};
-	bool ok = oldSource && oldTarget &&
-						SetDCBrushColor(source, background) != CLR_INVALID &&
+	bool ok = oldSource && oldTarget && SetDCBrushColor(source, background) != CLR_INVALID &&
 						FillRect(source, &bounds, GetStockObject(DC_BRUSH)) &&
-						drawEditPath(source, largeSize, color) &&
-						SetStretchBltMode(target, HALFTONE) &&
+						drawEditPath(source, largeSize, color) && SetStretchBltMode(target, HALFTONE) &&
 						SetBrushOrgEx(target, 0, 0, NULL) &&
 						StretchBlt(target, 0, 0, size, size, source, 0, 0, largeSize, largeSize, SRCCOPY);
 	if (oldSource) {
@@ -1782,7 +1777,11 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			}
 			break;
 		}
-		case WM_SYSCOLORCHANGE: InvalidateRect(state->away[AWAY_ICON], NULL, TRUE); break;
+		case WM_SYSCOLORCHANGE:
+			if (state->away[AWAY_ICON]) {
+				InvalidateRect(state->away[AWAY_ICON], NULL, TRUE);
+			}
+			break;
 		case WM_SETCURSOR:
 			if ((HWND)wParam == state->away[AWAY_ICON] && IsWindowEnabled(state->away[AWAY_ICON])) {
 				SetCursor(LoadCursorW(NULL, IDC_HAND));

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "../ui/constants.h"
 #include "files.h"
 #include "paths.h"
 #include "protocol.h"
 #include "test.h"
 #include "tests.h"
-#include "../ui/constants.h"
 
 #include <shobjidl.h>
 #include <time.h>
@@ -432,22 +432,107 @@ static void checkHeadingResize(HWND window, WindowState *state) {
 
 static void checkAwayIcon(HWND window, WindowState *state) {
 	HDC dc = GetDC(window);
-	HDC memory = CreateCompatibleDC(dc);
-	HBITMAP bitmap = CreateCompatibleBitmap(dc, 27, 27);
-	ASSERT_BOOL_EQ(memory && bitmap, true);
-	HGDIOBJ old = SelectObject(memory, bitmap);
-	DRAWITEMSTRUCT draw = {
-		.hwndItem = state->away[AWAY_ICON], .hDC = memory, .rcItem = {0, 0, 27, 27}};
-	ASSERT_BOOL_EQ(windowProcedure(window, WM_DRAWITEM, 0, (LPARAM)&draw) == TRUE, true);
-	unsigned blue = 0;
-	for (int y = 0; y < 27; ++y) {
-		for (int x = 0; x < 27; ++x) {
-			blue += GetPixel(memory, x, y) == RGB_BLUE;
-		}
+	ASSERT_BOOL_EQ(dc != NULL, true);
+	if (!dc) {
+		return;
 	}
-	ASSERT_BOOL_EQ(blue > 50, true);
-	ASSERT_BOOL_EQ(GetPixel(memory, 0, 0) == GetSysColor(COLOR_WINDOW), true);
-	SelectObject(memory, old);
+	HDC memory = CreateCompatibleDC(dc);
+	HBITMAP bitmap = CreateCompatibleBitmap(dc, 54, 54);
+	ASSERT_BOOL_EQ(memory && bitmap, true);
+	if (!memory || !bitmap) {
+		if (memory) {
+			DeleteDC(memory);
+		}
+		if (bitmap) {
+			DeleteObject(bitmap);
+		}
+		ReleaseDC(window, dc);
+		return;
+	}
+	HGDIOBJ old = SelectObject(memory, bitmap);
+	ASSERT_BOOL_EQ(old != NULL, true);
+	UINT originalDpi = state->dpi;
+	static const UINT resolutions[] = {96, 120, 144, 192};
+	for (unsigned i = 0; old && i < sizeof resolutions / sizeof resolutions[0]; ++i) {
+		state->dpi = resolutions[i];
+		int side = scaled(state, 27);
+		DRAWITEMSTRUCT draw = {
+			.hwndItem = state->away[AWAY_ICON], .hDC = memory, .rcItem = {0, 0, side, side}};
+		ASSERT_BOOL_EQ(windowProcedure(window, WM_DRAWITEM, 0, (LPARAM)&draw) == TRUE, true);
+		COLORREF normal[54 * 54];
+		unsigned blue = 0;
+		unsigned blended = 0;
+		COLORREF background = GetSysColor(COLOR_WINDOW);
+		for (int y = 0; y < side; ++y) {
+			for (int x = 0; x < side; ++x) {
+				COLORREF pixel = GetPixel(memory, x, y);
+				normal[y * side + x] = pixel;
+				blue += pixel == RGB_BLUE;
+				blended += pixel != RGB_BLUE && pixel != background && pixel != CLR_INVALID;
+			}
+		}
+		ASSERT_BOOL_EQ(blue > 50 && blended > 20, true);
+		ASSERT_BOOL_EQ(GetPixel(memory, 0, 0) == background, true);
+		ASSERT_INT_EQ(state->editIconSize, side - 2 * scaled(state, 3));
+		ASSERT_BOOL_EQ(state->editIconColor == RGB_BLUE, true);
+		ASSERT_BOOL_EQ(state->editIconBackground == background, true);
+		BITMAP image = {0};
+		ASSERT_INT_EQ(GetObjectW(state->editIcon, sizeof image, &image), sizeof image);
+		ASSERT_BOOL_EQ(
+			image.bmWidth == state->editIconSize && image.bmHeight == state->editIconSize, true
+		);
+		HBITMAP cached = state->editIcon;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
+		ASSERT_BOOL_EQ(state->editIcon == cached, true);
+
+		draw.itemState = ODS_SELECTED;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
+		ASSERT_BOOL_EQ(state->editIcon == cached, true);
+		for (int y = 1; y < side; ++y) {
+			for (int x = 1; x < side; ++x) {
+				ASSERT_BOOL_EQ(GetPixel(memory, x, y) == normal[(y - 1) * side + x - 1], true);
+			}
+		}
+		draw.itemState = ODS_FOCUS;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
+		ASSERT_BOOL_EQ(state->editIcon == cached, true);
+		unsigned focus = 0;
+		for (int x = 1; x < side - 1; ++x) {
+			focus += GetPixel(memory, x, 1) != normal[side + x];
+		}
+		ASSERT_BOOL_EQ(focus > 0, true);
+
+		draw.itemState = ODS_DISABLED;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
+		ASSERT_BOOL_EQ(state->editIcon != cached, true);
+		ASSERT_BOOL_EQ(state->editIconColor == GetSysColor(COLOR_GRAYTEXT), true);
+		unsigned gray = 0;
+		blue = 0;
+		for (int y = 0; y < side; ++y) {
+			for (int x = 0; x < side; ++x) {
+				COLORREF pixel = GetPixel(memory, x, y);
+				gray += pixel == GetSysColor(COLOR_GRAYTEXT);
+				blue += pixel == RGB_BLUE;
+			}
+		}
+		ASSERT_BOOL_EQ(gray > 50 && blue == 0, true);
+		cached = state->editIcon;
+		draw.itemState = 0;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
+		ASSERT_BOOL_EQ(state->editIcon != cached && state->editIconColor == RGB_BLUE, true);
+
+		cached = state->editIcon;
+		state->editIconBackground ^= 1;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), true);
+		ASSERT_BOOL_EQ(state->editIcon != cached && state->editIconBackground == background, true);
+		draw.rcItem.bottom = 0;
+		ASSERT_BOOL_EQ(drawEditIcon(state, &draw), false);
+		ASSERT_BOOL_EQ(state->editIcon != NULL, true);
+	}
+	state->dpi = originalDpi;
+	if (old) {
+		SelectObject(memory, old);
+	}
 	ASSERT_BOOL_EQ(DeleteObject(bitmap), true);
 	ASSERT_BOOL_EQ(DeleteDC(memory), true);
 	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
@@ -915,6 +1000,14 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	releaseTaskbar(&state);
 	ASSERT_BOOL_EQ(state.taskbar == NULL && taskbarReleases == taskbarInitializations, true);
 	ASSERT_BOOL_EQ(CloseHandle(simulationRelease), true);
+	ASSERT_BOOL_EQ(state.editIcon != NULL, true);
+	HBITMAP cached = state.editIcon;
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_DESTROY, 0, 0) == 0, true);
+	ASSERT_BOOL_EQ(state.editIcon == NULL, true);
+	BITMAP image;
+	ASSERT_INT_EQ(GetObjectW(cached, sizeof image, &image), 0);
+	MSG quit;
+	ASSERT_BOOL_EQ(PeekMessageW(&quit, NULL, WM_QUIT, WM_QUIT, PM_REMOVE), true);
 	ASSERT_BOOL_EQ(DestroyWindow(window), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.font), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.headingFont), true);
