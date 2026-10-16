@@ -606,7 +606,7 @@ static void rankShifts(Probe *probe) {
 
 static void report(FILE *out, const Probe *probe, const wchar_t *path) {
 	const Image *image = &probe->image;
-	fprintf(out, "fm24ctl probe (protocol %ls)\n", HARNESS_PROTOCOL);
+	fprintf(out, "fm24ctl probe (v%ls)\n", HARNESS_PROTOCOL);
 	fprintf(out, "file: %ls\n", path);
 	fprintf(
 		out,
