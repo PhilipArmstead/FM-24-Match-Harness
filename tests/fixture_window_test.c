@@ -358,7 +358,19 @@ static void clickAway(HWND window, WindowState *state, unsigned control) {
 static void checkAwayLayout(HWND window, WindowState *state) {
 	RECT heading = controlBounds(window, state->headings[1]);
 	RECT icon = controlBounds(window, state->away[AWAY_ICON]);
-	ASSERT_BOOL_EQ(icon.left == heading.right && icon.top == heading.top, true);
+	HDC dc = GetDC(window);
+	ASSERT_BOOL_EQ(dc != NULL, true);
+	if (dc) {
+		HGDIOBJ old = SelectObject(dc, state->headingFont);
+		TEXTMETRICW metrics = {0};
+		ASSERT_BOOL_EQ(GetTextMetricsW(dc, &metrics), true);
+		int offset = icon.top + icon.bottom - 2 * heading.top - metrics.tmHeight;
+		ASSERT_BOOL_EQ(offset >= -1 && offset <= 1, true);
+		SelectObject(dc, old);
+		ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
+	}
+	ASSERT_BOOL_EQ(icon.left == heading.right, true);
+	ASSERT_INT_EQ(icon.bottom - icon.top, scaled(state, 27));
 	if (!state->editingAway) {
 		return;
 	}
@@ -724,8 +736,8 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	state->replacementPath[0] = 0;
 }
 
-static void checkFonts(WindowState *state) {
-	static const UINT resolutions[] = {96, 144};
+static void checkFonts(HWND window, WindowState *state) {
+	static const UINT resolutions[] = {96, 120, 144, 192};
 	for (unsigned available = 0; available < 2; ++available) {
 		calibriInstalled = available != 0;
 		for (unsigned i = 0; i < sizeof resolutions / sizeof resolutions[0]; ++i) {
@@ -745,6 +757,8 @@ static void checkFonts(WindowState *state) {
 					(HFONT)SendMessageW(state->headings[side], WM_GETFONT, 0, 0) == state->headingFont, true
 				);
 			}
+			layout(window, state);
+			checkAwayLayout(window, state);
 		}
 	}
 	calibriInstalled = false;
@@ -768,7 +782,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	WindowState state = {.data = data, .path = path, .filename = L"temp-fixture.json", .dpi = 96};
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
 	ASSERT_BOOL_EQ(createControls(window, &state), true);
-	checkFonts(&state);
+	checkFonts(window, &state);
 	state.taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
 	ASSERT_BOOL_EQ(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0, true);
 	ASSERT_BOOL_EQ(TabCtrl_GetItemCount(state.tabs) == 2, true);

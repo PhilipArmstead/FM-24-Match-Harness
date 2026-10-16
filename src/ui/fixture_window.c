@@ -1000,7 +1000,14 @@ static void layout(HWND window, WindowState *state) {
 			if (headingWidth > width - header) {
 				headingWidth = width - header;
 			}
-			MoveWindow(state->away[AWAY_ICON], left + headingWidth, y, header, header, TRUE);
+			MoveWindow(
+				state->away[AWAY_ICON],
+				left + headingWidth,
+				y + (extent.cy - header) / 2,
+				header,
+				header,
+				TRUE
+			);
 			if (state->editingAway) {
 				int x = left + headingWidth;
 				int gap = scaled(state, 6);
