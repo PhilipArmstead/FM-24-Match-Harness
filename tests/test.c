@@ -88,6 +88,7 @@ int main(const int argc, const char *argv[]) {
 #ifdef _WIN32
 		{"runner_main", registerRunnerMainTests},
 		{"fixture_window", registerFixtureWindowTests},
+		{"fixture_load", registerFixtureLoadTests},
 #endif
 		{"fixture_data", registerFixtureDataTests},
 		{"fixture_export", registerFixtureExportTests},

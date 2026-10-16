@@ -142,7 +142,7 @@ add `-players.csv` and `-teams.csv`. Running again replaces the previous result 
 JSON viewing does not need FM24. Binary viewing requires the supported game
 running and idle: the harness decodes and re-exports the input, without
 building a new fixture, preparing the match or playing it. The viewer does
-not modify the input file.
+not modify the input file unless you explicitly save over it.
 
 **Data limits:** the human-controlled side's starting XI maps to its first
 11 players. AI squad order is different, so its 11 tactic rows show

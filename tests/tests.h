@@ -10,5 +10,6 @@ void registerRunnerMainTests(void);
 void registerRunnerTests(void);
 void registerFixtureExportTests(void);
 void registerFixtureWindowTests(void);
+void registerFixtureLoadTests(void);
 
 #endif

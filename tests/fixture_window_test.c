@@ -8,12 +8,15 @@
 #include "test.h"
 #include "tests.h"
 
+#include <shlobj.h>
 #include <shobjidl.h>
 #include <time.h>
 #include <windows.h>
 
 
 static int errorMessages;
+static unsigned discardPrompts;
+static int discardAnswer = IDNO;
 static bool calibriInstalled;
 static time_t testTime(time_t *out);
 static int testMessageBox(HWND window, const wchar_t *text, const wchar_t *caption, UINT type);
@@ -26,11 +29,13 @@ static HRESULT WINAPI testCoCreateInstance(
 	REFIID interfaceId,
 	void **out
 );
+static HRESULT WINAPI testShellItem(PCWSTR path, IBindCtx *context, REFIID interfaceId, void **out);
 
 #define time testTime
 #define MessageBoxW testMessageBox
 #define CoCreateInstance testCoCreateInstance
 #define EnumFontFamiliesExW testEnumFontFamiliesExW
+#define SHCreateItemFromParsingName testShellItem
 #include "../src/ui/fixture_window.c" // NOLINT(bugprone-suspicious-include): test internal UI callbacks.
 
 
@@ -38,6 +43,7 @@ static HRESULT WINAPI testCoCreateInstance(
 #undef MessageBoxW
 #undef CoCreateInstance
 #undef EnumFontFamiliesExW
+#undef SHCreateItemFromParsingName
 
 static int WINAPI
 testEnumFontFamiliesExW(HDC dc, LOGFONTW *font, FONTENUMPROCW callback, LPARAM data, DWORD flags) {
@@ -64,7 +70,11 @@ static int testMessageBox(HWND window, const wchar_t *text, const wchar_t *capti
 	(void)window;
 	(void)text;
 	(void)caption;
-	(void)type;
+	if ((type & MB_ICONMASK) == MB_ICONWARNING) {
+		ASSERT_BOOL_EQ((type & MB_YESNO) == MB_YESNO && (type & MB_DEFBUTTON2) != 0, true);
+		++discardPrompts;
+		return discardAnswer;
+	}
 	++errorMessages;
 	return IDOK;
 }
@@ -96,6 +106,151 @@ static HRESULT taskbarCreateResult = S_OK;
 static HRESULT taskbarInitResult = S_OK;
 static HRESULT taskbarStateResult = S_OK;
 static HRESULT taskbarValueResult = S_OK;
+static bool dialogSave;
+static bool dialogBinary;
+static unsigned dialogCreates;
+static unsigned dialogReleases;
+static unsigned shellReleases;
+static HRESULT dialogCreateResult = S_OK;
+static HRESULT dialogShowResult = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+static const wchar_t *dialogPath;
+static const wchar_t *dialogFilename;
+static HWND dialogOwner;
+static IShellItem folderItem;
+static IShellItem selectedItem;
+static const wchar_t *fileLoadPath;
+static const wchar_t *fileSaveInput;
+static const wchar_t *fileSaveOutput;
+static bool fileFailure;
+static HANDLE fileRelease;
+static unsigned fileLoads;
+static unsigned fileSaves;
+static bool binaryReplacement;
+
+static ULONG STDMETHODCALLTYPE testDialogRelease(IFileDialog *dialog) {
+	ASSERT_BOOL_EQ(dialog != NULL, true);
+	++dialogReleases;
+	return 0;
+}
+
+static HRESULT STDMETHODCALLTYPE
+testDialogOptions(IFileDialog *dialog, FILEOPENDIALOGOPTIONS options) {
+	(void)dialog;
+	ASSERT_BOOL_EQ(
+		options == (FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR |
+								 (dialogSave ? FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES : FOS_FILEMUSTEXIST)),
+		true
+	);
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE
+testDialogTypes(IFileDialog *dialog, UINT count, const COMDLG_FILTERSPEC *types) {
+	(void)dialog;
+	ASSERT_INT_EQ((int)count, dialogSave ? 2 : 3);
+	if (!dialogSave) {
+		ASSERT_INT_EQ(wcscmp(types[0].pszSpec, L"*.bin;*.json"), 0);
+		++types;
+	}
+	ASSERT_INT_EQ(wcscmp(types[0].pszSpec, L"*.json"), 0);
+	ASSERT_INT_EQ(wcscmp(types[1].pszSpec, L"*.bin"), 0);
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogTypeIndex(IFileDialog *dialog, UINT index) {
+	(void)dialog;
+	ASSERT_INT_EQ((int)index, dialogSave && dialogBinary ? 2 : 1);
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogTitle(IFileDialog *dialog, LPCWSTR title) {
+	(void)dialog;
+	ASSERT_INT_EQ(wcscmp(title, dialogSave ? L"Save fixture as" : L"Open fixture"), 0);
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogExtension(IFileDialog *dialog, LPCWSTR extension) {
+	(void)dialog;
+	ASSERT_INT_EQ(wcscmp(extension, dialogBinary ? L"bin" : L"json"), 0);
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogFilename(IFileDialog *dialog, LPCWSTR filename) {
+	(void)dialog;
+	ASSERT_BOOL_EQ(dialogFilename != NULL, true);
+	if (dialogFilename) {
+		ASSERT_INT_EQ(wcscmp(filename, dialogFilename), 0);
+	}
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogFolder(IFileDialog *dialog, IShellItem *folder) {
+	(void)dialog;
+	ASSERT_BOOL_EQ(folder == &folderItem, true);
+	return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogShow(IFileDialog *dialog, HWND owner) {
+	(void)dialog;
+	ASSERT_BOOL_EQ(owner == dialogOwner, true);
+	return dialogShowResult;
+}
+
+static HRESULT STDMETHODCALLTYPE testDialogResult(IFileDialog *dialog, IShellItem **out) {
+	(void)dialog;
+	*out = &selectedItem;
+	return S_OK;
+}
+
+static ULONG STDMETHODCALLTYPE testShellRelease(IShellItem *item) {
+	ASSERT_BOOL_EQ(item == &folderItem || item == &selectedItem, true);
+	++shellReleases;
+	return 0;
+}
+
+static HRESULT STDMETHODCALLTYPE testShellPath(IShellItem *item, SIGDN kind, LPWSTR *out) {
+	ASSERT_BOOL_EQ(item == &selectedItem && kind == SIGDN_FILESYSPATH, true);
+	size_t size = (wcslen(dialogPath) + 1) * sizeof(wchar_t);
+	*out = CoTaskMemAlloc(size);
+	if (!*out) {
+		return E_OUTOFMEMORY;
+	}
+	memcpy(*out, dialogPath, size);
+	return S_OK;
+}
+
+static HRESULT WINAPI
+testShellItem(PCWSTR path, IBindCtx *context, REFIID interfaceId, void **out) {
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	ASSERT_BOOL_EQ(GetCurrentDirectoryW(HARNESS_PATH_LENGTH, directory) > 0, true);
+	ASSERT_INT_EQ(wcscmp(path, directory), 0);
+	ASSERT_BOOL_EQ(context == NULL && IsEqualGUID(interfaceId, &IID_IShellItem), true);
+	*out = &folderItem;
+	return S_OK;
+}
+
+static IFileDialog *testFileDialog(void) {
+	static IFileDialogVtbl methods = {
+		.Release = testDialogRelease,
+		.SetOptions = testDialogOptions,
+		.SetFileTypes = testDialogTypes,
+		.SetFileTypeIndex = testDialogTypeIndex,
+		.SetTitle = testDialogTitle,
+		.SetDefaultExtension = testDialogExtension,
+		.SetFileName = testDialogFilename,
+		.SetFolder = testDialogFolder,
+		.Show = testDialogShow,
+		.GetResult = testDialogResult,
+	};
+	static IFileDialog dialog = {.lpVtbl = &methods};
+	static IShellItemVtbl shellMethods = {
+		.Release = testShellRelease,
+		.GetDisplayName = testShellPath,
+	};
+	folderItem.lpVtbl = &shellMethods;
+	selectedItem.lpVtbl = &shellMethods;
+	return &dialog;
+}
 
 static HRESULT STDMETHODCALLTYPE testTaskbarInit(ITaskbarList3 *taskbar) {
 	ASSERT_BOOL_EQ(taskbar != NULL, true);
@@ -134,6 +289,16 @@ static HRESULT WINAPI testCoCreateInstance(
 	REFIID interfaceId,
 	void **out
 ) {
+	if (IsEqualGUID(classId, &CLSID_FileOpenDialog) || IsEqualGUID(classId, &CLSID_FileSaveDialog)) {
+		ASSERT_BOOL_EQ(
+			IsEqualGUID(classId, dialogSave ? &CLSID_FileSaveDialog : &CLSID_FileOpenDialog), true
+		);
+		ASSERT_BOOL_EQ(IsEqualGUID(interfaceId, &IID_IFileDialog), true);
+		ASSERT_BOOL_EQ(outer == NULL && context == CLSCTX_INPROC_SERVER, true);
+		++dialogCreates;
+		*out = SUCCEEDED(dialogCreateResult) ? testFileDialog() : NULL;
+		return dialogCreateResult;
+	}
 	static ITaskbarList3Vtbl methods = {.Release = testTaskbarRelease,
 		.HrInit = testTaskbarInit,
 		.SetProgressState = testTaskbarState,
@@ -171,7 +336,7 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
 	ASSERT_BOOL_EQ(argc == 5 && argv[argc] == NULL, true);
 	ASSERT_INT_EQ(wcscmp(argv[1], L"replace-away"), 0);
-	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
+	ASSERT_INT_EQ(wcscmp(argv[2], binaryReplacement ? argv[4] : expectedInput), 0);
 	ASSERT_INT_EQ(wcscmp(argv[3], expectedTeam), 0);
 	ASSERT_BOOL_EQ(files_hasExtension(argv[4], L".json"), true);
 	wcscpy(replacementOutput, argv[4]);
@@ -187,6 +352,19 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 }
 
 bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t errorSize) {
+	if (fileLoadPath) {
+		ASSERT_INT_EQ(wcscmp(path, fileLoadPath), 0);
+		++fileLoads;
+		ASSERT_BOOL_EQ(WaitForSingleObject(fileRelease, 5000) == WAIT_OBJECT_0, true);
+		if (fileFailure) {
+			(void)snprintf(error, errorSize, "Cannot read the selected fixture.");
+			return false;
+		}
+		memset(out, 0, sizeof *out);
+		strcpy(out->teams[0].name, "Opened home");
+		strcpy(out->teams[1].name, "Opened away");
+		return true;
+	}
 	ASSERT_INT_EQ(wcscmp(path, replacementOutput), 0);
 	if (replacementLoadFailure) {
 		(void)snprintf(error, errorSize, "cannot read replacement fixture");
@@ -203,6 +381,21 @@ bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t
 	return true;
 }
 
+bool fixtureLoad_save(const wchar_t *input, const wchar_t *output, char *error, size_t errorSize) {
+	ASSERT_INT_EQ(wcscmp(input, fileSaveInput), 0);
+	if (binaryReplacement) {
+		ASSERT_BOOL_EQ(files_hasExtension(output, L".json"), true);
+		return files_write(output, "{\"decoded\":true}", 16);
+	}
+	ASSERT_INT_EQ(wcscmp(output, fileSaveOutput), 0);
+	++fileSaves;
+	ASSERT_BOOL_EQ(WaitForSingleObject(fileRelease, 5000) == WAIT_OBJECT_0, true);
+	if (fileFailure) {
+		(void)snprintf(error, errorSize, "Cannot save the fixture.");
+		return false;
+	}
+	return CopyFileW(input, output, FALSE) != 0;
+}
 static void firstLine(HWND metadata, const wchar_t *expected) {
 	wchar_t text[8192] = {0};
 	ASSERT_BOOL_EQ(GetWindowTextW(metadata, text, 8192) > 0, true);
@@ -242,6 +435,9 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 	TabCtrl_SetCurSel(state->tabs, tab);
 	NMHDR notification = {.hwndFrom = state->tabs, .code = (UINT)TCN_SELCHANGE};
 	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0, true);
+	for (unsigned i = 0; i < 2; ++i) {
+		ASSERT_BOOL_EQ(controlVisible(state->fileButtons[i]), true);
+	}
 	for (unsigned i = 0; i < 2; ++i) {
 		ASSERT_BOOL_EQ(controlVisible(state->headings[i]), tab == 0);
 		ASSERT_BOOL_EQ(controlVisible(state->notes[i]), tab == 0);
@@ -294,7 +490,27 @@ static RECT controlBounds(HWND window, HWND control) {
 	return bounds;
 }
 
+static void checkFileButtonLayout(HWND window, const WindowState *state) {
+	RECT metadata = controlBounds(window, state->metadata);
+	RECT text = {0};
+	SendMessageW(state->metadata, EM_GETRECT, 0, (LPARAM)&text);
+	MapWindowPoints(state->metadata, window, (POINT *)&text, 2);
+	RECT previous = text;
+	for (unsigned i = 0; i < 2; ++i) {
+		RECT button = controlBounds(window, state->fileButtons[i]);
+		ASSERT_BOOL_EQ(button.left > previous.right && button.right < metadata.right, true);
+		ASSERT_BOOL_EQ(button.top > metadata.top && button.bottom < metadata.bottom, true);
+		ASSERT_INT_EQ(button.right - button.left, scaled(state, 78));
+		ASSERT_INT_EQ(button.bottom - button.top, scaled(state, 26));
+		ASSERT_BOOL_EQ(
+			(HFONT)SendMessageW(state->fileButtons[i], WM_GETFONT, 0, 0) == state->font, true
+		);
+		previous = button;
+	}
+}
+
 static void checkPageLayout(HWND window, const WindowState *state) {
+	checkFileButtonLayout(window, state);
 	RECT client = {0};
 	ASSERT_BOOL_EQ(GetClientRect(window, &client), true);
 	RECT tabs = controlBounds(window, state->tabs);
@@ -760,12 +976,15 @@ static void checkFonts(HWND window, WindowState *state) {
 					(HFONT)SendMessageW(state->headings[side], WM_GETFONT, 0, 0) == state->headingFont, true
 				);
 			}
+			state->metadataHeight = scaled(state, 110);
 			layout(window, state);
+			checkFileButtonLayout(window, state);
 			checkAwayLayout(window, state);
 		}
 	}
 	calibriInstalled = false;
 	state->dpi = 96;
+	state->metadataHeight = scaled(state, 110);
 	ASSERT_BOOL_EQ(setFonts(state), true);
 }
 
@@ -786,6 +1005,14 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
 	ASSERT_BOOL_EQ(createControls(window, &state), true);
 	checkFonts(window, &state);
+	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
+	for (unsigned i = 0; i < 2; ++i) {
+		wchar_t label[16] = {0};
+		ASSERT_BOOL_EQ(GetWindowTextW(state.fileButtons[i], label, 16) > 0, true);
+		ASSERT_INT_EQ(wcscmp(label, fileLabels[i]), 0);
+		ASSERT_BOOL_EQ(GetWindowLongW(state.fileButtons[i], GWL_STYLE) & WS_TABSTOP, true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state.fileButtons[i]), true);
+	}
 	state.taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
 	ASSERT_BOOL_EQ(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0, true);
 	ASSERT_BOOL_EQ(TabCtrl_GetItemCount(state.tabs) == 2, true);
@@ -1051,6 +1278,217 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	}
 }
 
+static void clickFile(HWND window, WindowState *state, bool save) {
+	dialogSave = save;
+	ASSERT_BOOL_EQ(
+		windowProcedure(
+			window,
+			WM_COMMAND,
+			MAKEWPARAM(0, BN_CLICKED),
+			(LPARAM)state->fileButtons[save ? FILE_SAVE_BUTTON : FILE_OPEN_BUTTON]
+		) == 0,
+		true
+	);
+}
+
+static void finishFile(HWND window, WindowState *state) {
+	ASSERT_BOOL_EQ(state->fileThread != NULL, true);
+	if (!state->fileThread) {
+		return;
+	}
+	ASSERT_BOOL_EQ(SetEvent(fileRelease), true);
+	ASSERT_BOOL_EQ(WaitForSingleObject(state->fileThread, 5000) == WAIT_OBJECT_0, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, FILE_TIMER, 0) == 0, true);
+	ASSERT_BOOL_EQ(state->fileThread == NULL && state->fileJob.data == NULL, true);
+	ASSERT_BOOL_EQ(ResetEvent(fileRelease), true);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->fileButtons[i]), true);
+	}
+}
+
+static void checkFileOperations(FixtureData *data) {
+	HINSTANCE instance = GetModuleHandleW(NULL);
+	WNDCLASSW definition = {.lpfnWndProc = pitchProcedure,
+		.hInstance = instance,
+		.cbWndExtra = sizeof(HFONT),
+		.lpszClassName = pitchClass};
+	ASSERT_BOOL_EQ(RegisterClassW(&definition), true);
+	HWND window =
+		CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 900, 600, NULL, NULL, instance, NULL);
+	ASSERT_BOOL_EQ(window != NULL, true);
+	wchar_t source[HARNESS_PATH_LENGTH];
+	wchar_t json[HARNESS_PATH_LENGTH];
+	wchar_t binary[HARNESS_PATH_LENGTH];
+	ASSERT_BOOL_EQ(paths_absolute(L"source.json", source, HARNESS_PATH_LENGTH), true);
+	ASSERT_BOOL_EQ(paths_absolute(L"saved fixture.json", json, HARNESS_PATH_LENGTH), true);
+	ASSERT_BOOL_EQ(paths_absolute(L"saved fixture.bin", binary, HARNESS_PATH_LENGTH), true);
+	ASSERT_BOOL_EQ(files_write(source, "{\"fixture\":true}", 16), true);
+	WindowState state = {
+		.data = data, .path = source, .filename = L"source.json", .dpi = 96, .metadataHeight = 110};
+	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
+	ASSERT_BOOL_EQ(createControls(window, &state), true);
+	activeWindow = window;
+	dialogOwner = window;
+	fileRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
+	ASSERT_BOOL_EQ(fileRelease != NULL, true);
+	int errors = errorMessages;
+	unsigned creates = dialogCreates;
+	unsigned releases = dialogReleases;
+	unsigned shells = shellReleases;
+
+	// Cancelling and setup failures must leave the current source untouched.
+	dialogShowResult = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+	clickFile(window, &state, false);
+	ASSERT_BOOL_EQ(state.fileThread == NULL && state.path == source && errorMessages == errors, true);
+	ASSERT_BOOL_EQ(dialogCreates == creates + 1 && dialogReleases == releases + 1, true);
+	ASSERT_BOOL_EQ(shellReleases == shells + 1, true);
+	dialogCreateResult = E_FAIL;
+	clickFile(window, &state, false);
+	ASSERT_BOOL_EQ(
+		state.fileThread == NULL && state.path == source && errorMessages == ++errors, true
+	);
+	dialogCreateResult = S_OK;
+	dialogShowResult = S_OK;
+	dialogPath = L"C:\\unsupported.txt";
+	clickFile(window, &state, false);
+	ASSERT_BOOL_EQ(state.fileThread == NULL && errorMessages == ++errors, true);
+
+	state.temporary = true;
+	ASSERT_BOOL_EQ(setMetadata(&state), true);
+	dialogPath = source;
+	fileLoadPath = source;
+	discardAnswer = IDNO;
+	clickFile(window, &state, false);
+	ASSERT_BOOL_EQ(state.fileThread == NULL && state.temporary && discardPrompts == 1, true);
+	discardAnswer = IDYES;
+	fileFailure = true;
+	clickFile(window, &state, false);
+	ASSERT_BOOL_EQ(state.fileThread != NULL && discardPrompts == 2, true);
+	ASSERT_BOOL_EQ(state.path == source && state.temporary, true);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		ASSERT_BOOL_EQ(!IsWindowEnabled(state.fileButtons[i]), true);
+	}
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state.simulation[SIM_SUBMIT]), true);
+	clickSimulate(window, &state);
+	ASSERT_BOOL_EQ(state.simulationThread == NULL, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_CLOSE, 0, 0) == 0, true);
+	ASSERT_BOOL_EQ(IsWindow(window) && errorMessages == ++errors, true);
+	finishFile(window, &state);
+	ASSERT_BOOL_EQ(state.path == source && state.temporary && errorMessages == ++errors, true);
+	firstLine(state.metadata, L"This fixture object is not saved. Click here to export it");
+
+	fileFailure = false;
+	SetWindowTextW(state.simulation[SIM_SUMMARY], L"Old result");
+	clickFile(window, &state, false);
+	finishFile(window, &state);
+	ASSERT_BOOL_EQ(!state.temporary && !state.missing && errorMessages == errors, true);
+	ASSERT_INT_EQ(wcscmp(state.savedFilename, source), 0);
+	ASSERT_INT_EQ(wcscmp(state.filename, L"source.json"), 0);
+	ASSERT_INT_EQ(strcmp(state.data->teams[0].name, "Opened home"), 0);
+	ASSERT_INT_EQ(strcmp(state.data->teams[1].name, "Opened away"), 0);
+	ASSERT_INT_EQ(GetWindowTextLengthW(state.simulation[SIM_SUMMARY]), 0);
+	ASSERT_BOOL_EQ(discardPrompts == 3 && fileLoads == 2, true);
+
+	dialogFilename = L"source.json";
+	dialogPath = json;
+	dialogShowResult = HRESULT_FROM_WIN32(ERROR_CANCELLED);
+	clickFile(window, &state, true);
+	ASSERT_BOOL_EQ(state.fileThread == NULL && wcscmp(state.savedFilename, source) == 0, true);
+	dialogShowResult = S_OK;
+	fileSaveInput = source;
+	fileSaveOutput = json;
+	fileFailure = true;
+	clickFile(window, &state, true);
+	finishFile(window, &state);
+	ASSERT_BOOL_EQ(wcscmp(state.savedFilename, source) == 0 && errorMessages == ++errors, true);
+	ASSERT_BOOL_EQ(fileMissing(json), true);
+
+	fileFailure = false;
+	// A successful save of an edited temporary fixture must survive temporary-file cleanup.
+	wcscpy(state.replacementPath, source);
+	state.path = state.replacementPath;
+	state.savedFilename[0] = 0;
+	state.temporary = true;
+	dialogFilename = L"source.json";
+	clickFile(window, &state, true);
+	finishFile(window, &state);
+	ASSERT_BOOL_EQ(!state.temporary && !state.missing && state.replacementPath[0] == 0, true);
+	ASSERT_BOOL_EQ(fileMissing(source), true);
+	ASSERT_INT_EQ(wcscmp(state.savedFilename, json), 0);
+	ASSERT_INT_EQ(wcscmp(state.filename, L"saved fixture.json"), 0);
+	checkContents(json, "{\"fixture\":true}");
+
+	dialogFilename = L"saved fixture.json";
+	dialogPath = binary;
+	fileSaveInput = json;
+	fileSaveOutput = binary;
+	clickFile(window, &state, true);
+	finishFile(window, &state);
+	ASSERT_INT_EQ(wcscmp(state.savedFilename, binary), 0);
+	checkContents(binary, "{\"fixture\":true}");
+
+	// The active binary source determines the default save format and the next open's load path.
+	dialogBinary = true;
+	dialogFilename = L"saved fixture.bin";
+	dialogPath = json;
+	fileSaveInput = binary;
+	fileSaveOutput = json;
+	clickFile(window, &state, true);
+	finishFile(window, &state);
+	ASSERT_INT_EQ(wcscmp(state.savedFilename, json), 0);
+	dialogBinary = false;
+	dialogPath = binary;
+	fileLoadPath = binary;
+	clickFile(window, &state, false);
+	finishFile(window, &state);
+	ASSERT_INT_EQ(wcscmp(state.savedFilename, binary), 0);
+	ASSERT_BOOL_EQ(fileLoads == 3 && fileSaves == 4 && errorMessages == errors, true);
+	ASSERT_BOOL_EQ(discardPrompts == 3, true);
+	wcscpy(state.replacementPath, binary);
+	setActivePath(&state, binary, false);
+	ASSERT_BOOL_EQ(state.replacementPath[0] == 0 && !fileMissing(binary), true);
+
+	// Away-team edits still work after a binary Save As becomes the active source.
+	fileLoadPath = NULL;
+	fileSaveInput = binary;
+	binaryReplacement = true;
+	replacementResult = 0;
+	replacementLoadFailure = false;
+	expectedTeam = L"Luton Town";
+	replacementRelease = CreateEventW(NULL, TRUE, TRUE, NULL);
+	ASSERT_BOOL_EQ(replacementRelease != NULL, true);
+	ReplaceAwayJob replacement = {0};
+	wcscpy(replacement.input, binary);
+	wcscpy(replacement.team, expectedTeam);
+	replacement.data = calloc(1, sizeof *replacement.data);
+	ASSERT_BOOL_EQ(replacement.data != NULL, true);
+	if (replacement.data) {
+		ASSERT_INT_EQ((int)replaceAway(&replacement), 0);
+		ASSERT_INT_EQ(strcmp(replacement.data->teams[1].name, "Luton Town"), 0);
+	}
+	free(replacement.data);
+	removeReplacement(replacement.output);
+	ASSERT_BOOL_EQ(CloseHandle(replacementRelease), true);
+	binaryReplacement = false;
+
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	wchar_t expectedDirectory[HARNESS_PATH_LENGTH];
+	wcscpy(expectedDirectory, json);
+	*wcsrchr(expectedDirectory, L'\\') = 0;
+	ASSERT_BOOL_EQ(GetCurrentDirectoryW(HARNESS_PATH_LENGTH, directory) > 0, true);
+	ASSERT_INT_EQ(wcscmp(directory, expectedDirectory), 0);
+	ASSERT_BOOL_EQ(dialogCreates == dialogReleases + 1, true);
+	activeWindow = NULL;
+	fileLoadPath = NULL;
+	ASSERT_BOOL_EQ(CloseHandle(fileRelease), true);
+	ASSERT_BOOL_EQ(DestroyWindow(window), true);
+	ASSERT_BOOL_EQ(DeleteObject(state.font), true);
+	ASSERT_BOOL_EQ(DeleteObject(state.headingFont), true);
+	ASSERT_BOOL_EQ(UnregisterClassW(pitchClass, instance), true);
+	ASSERT_BOOL_EQ(DeleteFileW(json), true);
+	ASSERT_BOOL_EQ(DeleteFileW(binary), true);
+}
+
 TEST(exports_fixtures_and_runs_simulations) {
 	wchar_t original[HARNESS_PATH_LENGTH] = {0};
 	wchar_t temporary[HARNESS_PATH_LENGTH] = {0};
@@ -1182,6 +1620,7 @@ TEST(exports_fixtures_and_runs_simulations) {
 	ASSERT_BOOL_EQ(errorMessages == 1, true);
 
 	checkSimulationForm(data, source);
+	checkFileOperations(data);
 	free(data);
 destroyWindow:
 	ASSERT_BOOL_EQ(DestroyWindow(window), true);

@@ -88,7 +88,7 @@ add_executable(fm24ctl
 	src/ui/viewer.rc
 )
 target_include_directories(fm24ctl PRIVATE src/runner src/ui)
-target_link_libraries(fm24ctl PRIVATE common comctl32 user32 gdi32 ole32 uuid)
+target_link_libraries(fm24ctl PRIVATE common comctl32 user32 gdi32 ole32 shell32 uuid)
 target_compile_definitions(fm24ctl PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_compile_options(fm24ctl PRIVATE ${warnings})
 target_link_options(fm24ctl PRIVATE -municode -static -static-libgcc)
@@ -107,6 +107,7 @@ if(FM24_BUILD_TESTS)
 		tests/runner_test.c
 		tests/fixture_export_test.c
 		tests/fixture_window_test.c
+		tests/fixture_load_test.c
 		src/ui/fixture_export.c
 		src/runner/fixture_data.c
 		src/runner/json_reader.c
@@ -119,12 +120,12 @@ if(FM24_BUILD_TESTS)
 		src/dll/tactic_flags.c
 	)
 	target_include_directories(fm24_tests PRIVATE src/runner src/ui)
-	target_link_libraries(fm24_tests PRIVATE common comctl32 user32 gdi32 ole32 uuid)
+	target_link_libraries(fm24_tests PRIVATE common comctl32 user32 gdi32 ole32 shell32 uuid)
 	target_compile_definitions(fm24_tests PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 	target_compile_options(fm24_tests PRIVATE ${warnings})
 	target_link_options(fm24_tests PRIVATE -static -static-libgcc)
 	install(TARGETS fm24_tests RUNTIME DESTINATION . COMPONENT Tests)
-	foreach(test job dll fixture_data runner runner_main fixture_export fixture_window)
+	foreach(test job dll fixture_data runner runner_main fixture_export fixture_window fixture_load)
 		add_test(NAME ${test} COMMAND fm24_tests ${test})
 	endforeach()
 	if(CMAKE_BUILD_TYPE STREQUAL "Release" OR "Release" IN_LIST CMAKE_CONFIGURATION_TYPES)

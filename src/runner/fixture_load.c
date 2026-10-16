@@ -4,6 +4,7 @@
 
 #include "client.h"
 #include "files.h"
+#include "match_config.h"
 #include "paths.h"
 #include "protocol.h"
 
@@ -84,6 +85,98 @@ bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t
 	if (ok) {
 		ok = fixtureData_read(buffer_string(&text), text.length, out, error, errorSize);
 	}
+	buffer_free(&text);
+	return ok;
+}
+
+static bool writeFixture(
+	const wchar_t *input,
+	const wchar_t *output,
+	const ByteBuffer *bytes,
+	char *error,
+	size_t errorSize
+) {
+	wchar_t destination[HARNESS_PATH_LENGTH];
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	wchar_t temporary[HARNESS_PATH_LENGTH] = L"";
+	bool ok = paths_absolute(output, destination, HARNESS_PATH_LENGTH);
+	if (ok) {
+		wcscpy(directory, destination);
+		wchar_t *separator = wcsrchr(directory, L'\\');
+		ok = separator != NULL;
+		if (ok) {
+			separator[1] = 0;
+			ok = GetTempFileNameW(directory, L"fms", 0, temporary) != 0;
+		}
+	}
+	if (!ok) {
+		temporary[0] = 0;
+		(void)snprintf(
+			error, errorSize, "Cannot create a save file (Windows error %lu).", GetLastError()
+		);
+	}
+	if (ok) {
+		ok = bytes ? files_write(temporary, bytes->data, bytes->length)
+							 : CopyFileW(input, temporary, FALSE) != 0;
+		if (!ok) {
+			(void)snprintf(
+				error, errorSize, "Cannot write the fixture. The destination was not changed."
+			);
+		} else if (!MoveFileExW(
+								 temporary, destination, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+							 )) {
+			(void)snprintf(
+				error, errorSize, "Cannot replace the destination (Windows error %lu).", GetLastError()
+			);
+			ok = false;
+		} else {
+			temporary[0] = 0;
+		}
+	}
+	if (temporary[0] && !DeleteFileW(temporary)) {
+		fprintf(
+			stderr,
+			"cannot remove save temporary file %ls (Windows error %lu)\n",
+			temporary,
+			GetLastError()
+		);
+	}
+	return ok;
+}
+
+bool fixtureLoad_save(const wchar_t *input, const wchar_t *output, char *error, size_t errorSize) {
+	bool inputBinary = files_hasExtension(input, L".bin");
+	bool outputBinary = files_hasExtension(output, L".bin");
+	if ((!inputBinary && !files_hasExtension(input, L".json")) ||
+			(!outputBinary && !files_hasExtension(output, L".json"))) {
+		(void)snprintf(error, errorSize, "Expected a .json or .bin fixture.");
+		return false;
+	}
+	ByteBuffer text = {0};
+	ByteBuffer encoded = {0};
+	bool ok = true;
+	if (inputBinary != outputBinary) {
+		if (inputBinary) {
+			ok = decodeBinary(input, &text, error, errorSize);
+		} else if (!files_read(input, &text)) {
+			(void)snprintf(error, errorSize, "Cannot read the current fixture.");
+			ok = false;
+		} else {
+			ok = matchConfig_encode(buffer_string(&text), text.length, &encoded, NULL, error, errorSize);
+		}
+	}
+	if (ok) {
+		ok = writeFixture(
+			input,
+			output,
+			inputBinary == outputBinary ? NULL
+			: outputBinary              ? &encoded
+																	: &text,
+			error,
+			errorSize
+		);
+	}
+	buffer_free(&encoded);
 	buffer_free(&text);
 	return ok;
 }

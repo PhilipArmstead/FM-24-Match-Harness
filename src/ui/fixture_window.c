@@ -6,6 +6,7 @@
 #include "client.h"
 #include "commands.h"
 #include "constants.h"
+#include "files.h"
 #include "fixture_data.h"
 #include "fixture_export.h"
 #include "fixture_load.h"
@@ -24,10 +25,13 @@
 // Common controls require the Win32 types above.
 #include <commctrl.h>
 #include <richedit.h>
+#include <shlobj.h>
 #include <shobjidl.h>
 
 
-enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1, REPLACE_TIMER = 2 };
+enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1, REPLACE_TIMER = 2, FILE_TIMER = 3 };
+
+enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
 enum { AWAY_ICON, AWAY_TEAM, AWAY_CONFIRM, AWAY_CANCEL, AWAY_ERROR, AWAY_CONTROL_COUNT };
 
@@ -60,12 +64,22 @@ typedef struct ReplaceAwayJob {
 	FixtureData *data;
 } ReplaceAwayJob;
 
+typedef struct FileJob {
+	wchar_t input[HARNESS_PATH_LENGTH];
+	wchar_t output[HARNESS_PATH_LENGTH];
+	char error[CLIENT_RESULT_LENGTH];
+	FixtureData *data;
+	bool save;
+	bool temporary;
+} FileJob;
+
 typedef struct WindowState {
 	FixtureData *data;
 	const wchar_t *path;
 	const wchar_t *filename;
-	wchar_t savedFilename[FIXTURE_EXPORT_FILENAME_LENGTH];
+	wchar_t savedFilename[HARNESS_PATH_LENGTH];
 	HWND metadata;
+	HWND fileButtons[FILE_CONTROL_COUNT];
 	HWND tabs;
 	HWND progress;
 	HWND headings[2];
@@ -77,12 +91,14 @@ typedef struct WindowState {
 	HWND away[AWAY_CONTROL_COUNT];
 	HANDLE simulationThread;
 	HANDLE replacementThread;
+	HANDLE fileThread;
 	ITaskbarList3 *taskbar;
 	UINT taskbarCreated;
 	UINT progressCompleted;
 	UINT progressTotal;
 	SimulationJob simulationJob;
 	ReplaceAwayJob replacementJob;
+	FileJob fileJob;
 	wchar_t replacementPath[HARNESS_PATH_LENGTH];
 	unsigned long threadLimit;
 	HFONT font;
@@ -101,6 +117,8 @@ typedef struct WindowState {
 } WindowState;
 
 static const wchar_t windowClass[] = L"FM24MatchHarness";
+// fixtureWindow_open reuses the application's existing viewer on its UI thread.
+static HWND activeWindow;
 static const wchar_t pitchClass[] = L"FM24FixturePitch";
 static const wchar_t unsavedPrefix[] = L"This fixture object is not saved. ";
 static const wchar_t exportLink[] = L"Click here";
@@ -131,6 +149,8 @@ static void showError(HWND window, const wchar_t *message) {
 }
 
 static void layout(HWND window, WindowState *state);
+static bool
+startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary);
 
 static void releaseTaskbar(WindowState *state) {
 	if (state->taskbar) {
@@ -249,7 +269,7 @@ static DWORD WINAPI simulateFixture(LPVOID parameter) {
 }
 
 static void startSimulation(HWND window, WindowState *state) {
-	if (state->simulationThread || state->replacementThread) {
+	if (state->simulationThread || state->replacementThread || state->fileThread) {
 		return;
 	}
 	SimulationJob *job = &state->simulationJob;
@@ -307,6 +327,9 @@ static void startSimulation(HWND window, WindowState *state) {
 	}
 	EnableWindow(state->away[AWAY_ICON], FALSE);
 	EnableWindow(state->away[AWAY_CONFIRM], FALSE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], FALSE);
+	}
 	SendMessageW(state->progress, PBM_SETRANGE32, 0, 1);
 	SendMessageW(state->progress, PBM_SETPOS, 0, 0);
 	ShowWindow(state->progress, SW_SHOW);
@@ -353,6 +376,9 @@ static void checkSimulation(HWND window, WindowState *state) {
 	}
 	EnableWindow(state->away[AWAY_ICON], TRUE);
 	EnableWindow(state->away[AWAY_CONFIRM], TRUE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], TRUE);
+	}
 	const wchar_t *message =
 		result == 0
 			? L"Simulation complete. Results were saved beside the fixture; see the console for paths."
@@ -475,6 +501,10 @@ static bool fileMissing(const wchar_t *path) {
 }
 
 static void exportFixture(HWND window, WindowState *state) {
+	if (state->fileThread) {
+		showError(window, L"Please wait for the fixture file operation to finish before exporting.");
+		return;
+	}
 	if (state->replacementThread) {
 		showError(window, L"Please wait for the away team replacement to finish before exporting.");
 		return;
@@ -689,7 +719,7 @@ static void awayError(HWND window, WindowState *state, const char *error) {
 }
 
 static void editAway(HWND window, WindowState *state, bool editing) {
-	if (state->replacementThread || (editing && state->simulationThread)) {
+	if (state->fileThread || state->replacementThread || (editing && state->simulationThread)) {
 		return;
 	}
 	if (editing && !setText(state->away[AWAY_TEAM], state->data->teams[1].name)) {
@@ -741,6 +771,12 @@ static DWORD WINAPI replaceAway(LPVOID parameter) {
 	}
 	wchar_t *arguments[] = {
 		L"fm24ctl.exe", L"replace-away", job->input, job->team, job->output, NULL};
+	if (files_hasExtension(job->input, L".bin")) {
+		if (!fixtureLoad_save(job->input, job->output, job->error, sizeof job->error)) {
+			return 1;
+		}
+		arguments[2] = job->output;
+	}
 	int result = commands_replaceAwayWithResult(5, arguments, job->error, sizeof job->error);
 	if (result == 0 && !fixtureLoad_open(job->output, job->data, job->error, sizeof job->error)) {
 		result = 1;
@@ -749,7 +785,8 @@ static DWORD WINAPI replaceAway(LPVOID parameter) {
 }
 
 static void startReplacement(HWND window, WindowState *state) {
-	if (!state->editingAway || state->simulationThread || state->replacementThread) {
+	if (!state->editingAway || state->simulationThread || state->replacementThread ||
+			state->fileThread) {
 		return;
 	}
 	ReplaceAwayJob *job = &state->replacementJob;
@@ -794,6 +831,9 @@ static void startReplacement(HWND window, WindowState *state) {
 		EnableWindow(state->away[i], FALSE);
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], FALSE);
+	}
 	SetFocus(state->tabs);
 }
 
@@ -820,6 +860,9 @@ static void checkReplacement(HWND window, WindowState *state) {
 		EnableWindow(state->away[i], TRUE);
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], TRUE);
+	}
 	ReplaceAwayJob *job = &state->replacementJob;
 	if (result == 0) {
 		removeReplacement(state->replacementPath);
@@ -853,6 +896,278 @@ static void checkReplacement(HWND window, WindowState *state) {
 	job->output[0] = 0;
 	free(job->data);
 	job->data = NULL;
+}
+
+static const wchar_t *pathFilename(const wchar_t *path) {
+	const wchar_t *filename = path;
+	for (; *path; ++path) {
+		if (*path == L'\\' || *path == L'/') {
+			filename = path + 1;
+		}
+	}
+	return filename;
+}
+
+static void setActivePath(WindowState *state, const wchar_t *path, bool temporary) {
+	if (state->replacementPath[0]) {
+		if (_wcsicmp(state->replacementPath, path) != 0) {
+			removeReplacement(state->replacementPath);
+		}
+		state->replacementPath[0] = 0;
+	}
+	wcscpy(state->savedFilename, path);
+	state->path = state->savedFilename;
+	state->filename = pathFilename(state->savedFilename);
+	state->temporary = temporary;
+	state->missing = false;
+}
+
+static void showFileError(HWND window, const char *error) {
+	fprintf(stderr, "fixture viewer: %s\n", error);
+	wchar_t message[1024];
+	showError(
+		window,
+		widen(error, message, 1024) ? message
+																: L"Fixture file operation failed (invalid UTF-8 in error)."
+	);
+}
+
+static DWORD WINAPI fixtureFile(LPVOID parameter) {
+	FileJob *job = parameter;
+	return !(
+		job->save ? fixtureLoad_save(job->input, job->output, job->error, sizeof job->error)
+							: fixtureLoad_open(job->input, job->data, job->error, sizeof job->error)
+	);
+}
+
+static bool
+startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary) {
+	if (state->simulationThread || state->replacementThread || state->fileThread) {
+		showError(window, L"Please wait for the current fixture operation to finish.");
+		return false;
+	}
+	FileJob *job = &state->fileJob;
+	*job = (FileJob){.save = save, .temporary = temporary};
+	const wchar_t *input =
+		save ? (state->savedFilename[0] ? state->savedFilename : state->path) : path;
+	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH) ||
+			(save && !paths_absolute(path, job->output, HARNESS_PATH_LENGTH))) {
+		showError(window, L"Cannot resolve the fixture path.");
+		return false;
+	}
+	if (!save) {
+		job->data = calloc(1, sizeof *job->data);
+		if (!job->data) {
+			showError(window, L"Out of memory loading the fixture.");
+			return false;
+		}
+	}
+	if (!SetTimer(window, FILE_TIMER, 200, NULL)) {
+		free(job->data);
+		job->data = NULL;
+		showError(window, L"Cannot monitor the fixture file operation.");
+		return false;
+	}
+	state->fileThread = CreateThread(NULL, 0, fixtureFile, job, 0, NULL);
+	if (!state->fileThread) {
+		KillTimer(window, FILE_TIMER);
+		free(job->data);
+		job->data = NULL;
+		showError(window, L"Cannot start the fixture file operation.");
+		return false;
+	}
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], FALSE);
+	}
+	for (unsigned i = AWAY_ICON; i <= AWAY_CANCEL; ++i) {
+		EnableWindow(state->away[i], FALSE);
+	}
+	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
+	SetFocus(state->tabs);
+	return true;
+}
+
+static void checkFileJob(HWND window, WindowState *state) {
+	if (!state->fileThread) {
+		return;
+	}
+	DWORD wait = WaitForSingleObject(state->fileThread, 0);
+	if (wait == WAIT_TIMEOUT) {
+		return;
+	}
+	DWORD result = 1;
+	if (wait != WAIT_OBJECT_0 || !GetExitCodeThread(state->fileThread, &result)) {
+		KillTimer(window, FILE_TIMER);
+		showError(window, L"Cannot read the fixture file operation result.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	KillTimer(window, FILE_TIMER);
+	CloseHandle(state->fileThread);
+	state->fileThread = NULL;
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], TRUE);
+	}
+	for (unsigned i = AWAY_ICON; i <= AWAY_CANCEL; ++i) {
+		EnableWindow(state->away[i], TRUE);
+	}
+	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
+	FileJob *job = &state->fileJob;
+	if (result == 0) {
+		setActivePath(state, job->save ? job->output : job->input, job->temporary);
+		if (!job->save) {
+			*state->data = *job->data;
+			state->editingAway = false;
+			state->progressCompleted = 0;
+			state->progressTotal = 0;
+			SetWindowTextW(state->away[AWAY_ERROR], L"");
+			SetWindowTextW(state->simulation[SIM_SUMMARY], L"");
+			SetWindowTextW(
+				state->simulation[SIM_STATUS],
+				L"Results are saved beside the fixture, using its filename with .csv."
+			);
+		}
+		bool ok = setMetadata(state);
+		if (!job->save) {
+			ok = ok && setHeadings(state) && fillList(state, 0) && fillList(state, 1);
+		}
+		if (!ok) {
+			showError(window, L"Cannot display the fixture.");
+			state->failed = true;
+			DestroyWindow(window);
+		} else {
+			for (unsigned side = 0; side < 2; ++side) {
+				InvalidateRect(state->pitches[side], NULL, TRUE);
+			}
+			selectTab(state);
+			layout(window, state);
+		}
+	} else {
+		showFileError(window, job->error);
+	}
+	free(job->data);
+	job->data = NULL;
+}
+
+static HRESULT configureFileDialog(
+	IFileDialog *dialog,
+	const wchar_t *directory,
+	const wchar_t *filename,
+	bool save,
+	bool binary
+) {
+	static const COMDLG_FILTERSPEC openTypes[] = {
+		{L"Fixture files (*.bin; *.json)", L"*.bin;*.json"},
+		{L"JSON fixture (*.json)", L"*.json"},
+		{L"Binary fixture (*.bin)", L"*.bin"},
+	};
+	static const COMDLG_FILTERSPEC saveTypes[] = {
+		{L"JSON fixture (*.json)", L"*.json"},
+		{L"Binary fixture (*.bin)", L"*.bin"},
+	};
+	HRESULT result = dialog->lpVtbl->SetOptions(
+		dialog,
+		FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR |
+			(save ? FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES : FOS_FILEMUSTEXIST)
+	);
+	if (SUCCEEDED(result)) {
+		result = dialog->lpVtbl->SetFileTypes(dialog, save ? 2 : 3, save ? saveTypes : openTypes);
+	}
+	if (SUCCEEDED(result)) {
+		result = dialog->lpVtbl->SetFileTypeIndex(dialog, save && binary ? 2 : 1);
+	}
+	if (SUCCEEDED(result)) {
+		result = dialog->lpVtbl->SetTitle(dialog, save ? L"Save fixture as" : L"Open fixture");
+	}
+	if (SUCCEEDED(result) && save) {
+		result = dialog->lpVtbl->SetDefaultExtension(dialog, binary ? L"bin" : L"json");
+		if (SUCCEEDED(result)) {
+			result = dialog->lpVtbl->SetFileName(dialog, filename);
+		}
+	}
+	IShellItem *folder = NULL;
+	if (SUCCEEDED(result)) {
+		result = SHCreateItemFromParsingName(directory, NULL, &IID_IShellItem, (void **)&folder);
+	}
+	if (SUCCEEDED(result)) {
+		result = dialog->lpVtbl->SetFolder(dialog, folder);
+	}
+	if (folder) {
+		folder->lpVtbl->Release(folder);
+	}
+	return result;
+}
+
+static void useSelectedFile(HWND window, WindowState *state, const wchar_t *path, bool save) {
+	if (wcslen(path) >= HARNESS_PATH_LENGTH ||
+			(!files_hasExtension(path, L".json") && !files_hasExtension(path, L".bin"))) {
+		showError(window, L"Select a .json or .bin fixture with a path shorter than 1024 characters.");
+	} else if (save) {
+		(void)startFileJob(window, state, path, true, false);
+	} else if (!state->temporary ||
+						 MessageBoxW(
+							 window,
+							 L"The current fixture is not saved. Discard it and open the selected fixture?",
+							 L"Open fixture",
+							 MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+						 ) == IDYES) {
+		(void)fixtureWindow_open(path, false);
+	}
+}
+
+static void chooseFixtureFile(HWND window, WindowState *state, bool save) {
+	if (state->simulationThread || state->replacementThread || state->fileThread) {
+		showError(window, L"Please wait for the current fixture operation to finish.");
+		return;
+	}
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	DWORD length = GetCurrentDirectoryW(HARNESS_PATH_LENGTH, directory);
+	if (!length || length >= HARNESS_PATH_LENGTH) {
+		showError(window, L"Cannot read the current working directory.");
+		return;
+	}
+	const wchar_t *source = state->savedFilename[0] ? state->savedFilename : state->path;
+	bool binary = files_hasExtension(source, L".bin");
+	const wchar_t *filename = pathFilename(source);
+	IFileDialog *dialog = NULL;
+	IShellItem *selected = NULL;
+	wchar_t *path = NULL;
+	HRESULT result = CoCreateInstance(
+		save ? &CLSID_FileSaveDialog : &CLSID_FileOpenDialog,
+		NULL,
+		CLSCTX_INPROC_SERVER,
+		&IID_IFileDialog,
+		(void **)&dialog
+	);
+	if (SUCCEEDED(result)) {
+		result = configureFileDialog(dialog, directory, filename, save, binary);
+	}
+	if (SUCCEEDED(result)) {
+		result = dialog->lpVtbl->Show(dialog, window);
+	}
+	if (SUCCEEDED(result)) {
+		result = dialog->lpVtbl->GetResult(dialog, &selected);
+	}
+	if (SUCCEEDED(result)) {
+		result = selected->lpVtbl->GetDisplayName(selected, SIGDN_FILESYSPATH, &path);
+	}
+	if (SUCCEEDED(result)) {
+		useSelectedFile(window, state, path, save);
+	} else if (result != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+		wchar_t message[128];
+		(void)swprintf(
+			message, 128, L"Cannot use the fixture file dialog (HRESULT 0x%08lx).", (unsigned long)result
+		);
+		showError(window, message);
+	}
+	CoTaskMemFree(path);
+	if (selected) {
+		selected->lpVtbl->Release(selected);
+	}
+	if (dialog) {
+		dialog->lpVtbl->Release(dialog);
+	}
 }
 
 static int CALLBACK
@@ -915,6 +1230,9 @@ static bool setFonts(WindowState *state) {
 		return false;
 	}
 	SendMessageW(state->metadata, WM_SETFONT, (WPARAM)font, TRUE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		SendMessageW(state->fileButtons[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
 	SendMessageW(state->tabs, WM_SETFONT, (WPARAM)font, TRUE);
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
@@ -950,8 +1268,22 @@ static void layout(HWND window, WindowState *state) {
 		state->progress, 0, bounds.bottom - scaled(state, 12), bounds.right, scaled(state, 12), TRUE
 	);
 	MoveWindow(state->metadata, margin, margin, width, state->metadataHeight, FALSE);
+	RECT textBounds;
+	GetClientRect(state->metadata, &textBounds);
+	textBounds.right -= scaled(state, 192);
+	SendMessageW(state->metadata, EM_SETRECTNP, 0, (LPARAM)&textBounds);
 	SendMessageW(state->metadata, EM_REQUESTRESIZE, 0, 0);
 	MoveWindow(state->metadata, margin, margin, width, state->metadataHeight, TRUE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		MoveWindow(
+			state->fileButtons[i],
+			margin + width - scaled(state, 180) + (int)i * scaled(state, 90),
+			margin + scaled(state, 10),
+			scaled(state, 78),
+			scaled(state, 26),
+			TRUE
+		);
+	}
 	int top = margin + state->metadataHeight + margin;
 	MoveWindow(state->tabs, margin, top, width, bounds.bottom - top - margin - progressHeight, TRUE);
 	RECT page;
@@ -1150,11 +1482,32 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 
 static bool createControls(HWND window, WindowState *state) {
 	HINSTANCE instance = GetModuleHandleW(NULL);
+	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
+	// Create these first so the summary clips around them in the sibling Z order.
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		state->fileButtons[i] = CreateWindowExW(
+			0,
+			L"BUTTON",
+			fileLabels[i],
+			WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			instance,
+			NULL
+		);
+		if (!state->fileButtons[i]) {
+			return false;
+		}
+	}
 	state->metadata = CreateWindowExW(
 		WS_EX_CLIENTEDGE,
 		MSFTEDIT_CLASS,
 		L"",
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_READONLY,
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS | ES_MULTILINE | ES_READONLY,
 		0,
 		0,
 		0,
@@ -1670,31 +2023,44 @@ static bool drawEditIcon(WindowState *state, const DRAWITEMSTRUCT *draw) {
 	return ok;
 }
 
+static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
+	if (control == state->fileButtons[FILE_OPEN_BUTTON] ||
+			control == state->fileButtons[FILE_SAVE_BUTTON]) {
+		chooseFixtureFile(window, state, control == state->fileButtons[FILE_SAVE_BUTTON]);
+		return true;
+	}
+	if (control == state->away[AWAY_ICON]) {
+		editAway(window, state, true);
+		return true;
+	}
+	if (control == state->away[AWAY_CONFIRM]) {
+		startReplacement(window, state);
+		return true;
+	}
+	if (control == state->away[AWAY_CANCEL]) {
+		editAway(window, state, false);
+		return true;
+	}
+	if (control == state->simulation[SIM_SUBMIT]) {
+		startSimulation(window, state);
+		return true;
+	}
+	return false;
+}
+
 static LRESULT
 actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
 		case WM_COMMAND:
-			if (HIWORD(wParam) != BN_CLICKED) {
-				break;
-			}
-			if ((HWND)lParam == state->away[AWAY_ICON]) {
-				editAway(window, state, true);
-				return 0;
-			}
-			if ((HWND)lParam == state->away[AWAY_CONFIRM]) {
-				startReplacement(window, state);
-				return 0;
-			}
-			if ((HWND)lParam == state->away[AWAY_CANCEL]) {
-				editAway(window, state, false);
-				return 0;
-			}
-			if ((HWND)lParam == state->simulation[SIM_SUBMIT]) {
-				startSimulation(window, state);
+			if (HIWORD(wParam) == BN_CLICKED && clickFixtureButton(window, state, (HWND)lParam)) {
 				return 0;
 			}
 			break;
 		case WM_TIMER:
+			if (wParam == FILE_TIMER) {
+				checkFileJob(window, state);
+				return 0;
+			}
 			if (wParam == REPLACE_TIMER) {
 				checkReplacement(window, state);
 				return 0;
@@ -1713,6 +2079,10 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 			return metadataNotification(window, state, notification);
 		}
 		case WM_CLOSE:
+			if (state->fileThread) {
+				showError(window, L"A fixture file operation is running. Please wait before closing.");
+				return 0;
+			}
 			if (state->replacementThread) {
 				showError(window, L"An away team replacement is running. Please wait before closing.");
 				return 0;
@@ -1853,6 +2223,11 @@ static bool handleKey(HWND window, WindowState *state, const MSG *message) {
 		return true;
 	}
 	if (message->wParam == VK_RETURN) {
+		if (message->hwnd == state->fileButtons[FILE_OPEN_BUTTON] ||
+				message->hwnd == state->fileButtons[FILE_SAVE_BUTTON]) {
+			SendMessageW(message->hwnd, BM_CLICK, 0, 0);
+			return true;
+		}
 		if (message->hwnd == state->away[AWAY_ICON] || message->hwnd == state->away[AWAY_CANCEL]) {
 			SendMessageW(message->hwnd, BM_CLICK, 0, 0);
 			return true;
@@ -1909,6 +2284,11 @@ static void joinThread(HANDLE thread) {
 }
 
 int fixtureWindow_open(const wchar_t *path, bool temporary) {
+	if (activeWindow) {
+		// NOLINTNEXTLINE(performance-no-int-to-ptr): GWLP_USERDATA stores the viewer's state pointer.
+		WindowState *state = (WindowState *)GetWindowLongPtrW(activeWindow, GWLP_USERDATA);
+		return startFileJob(activeWindow, state, path, false, temporary) ? 0 : 1;
+	}
 	FixtureData *data = calloc(1, sizeof *data);
 	char error[512] = "";
 	if (!data || !fixtureLoad_open(path, data, error, sizeof error)) {
@@ -1937,15 +2317,9 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	definition.lpszClassName = pitchClass;
 	definition.cbWndExtra = sizeof(HFONT);
 	ok = ok && RegisterClassW(&definition);
-	const wchar_t *filename = path;
-	for (const wchar_t *cursor = path; *cursor; ++cursor) {
-		if (*cursor == L'\\' || *cursor == L'/') {
-			filename = cursor + 1;
-		}
-	}
 	WindowState state = {.data = data,
 		.path = path,
-		.filename = filename,
+		.filename = pathFilename(path),
 		.dpi = GetDpiForSystem(),
 		.temporary = temporary};
 	HRESULT comResult = E_FAIL;
@@ -1987,15 +2361,19 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 		);
 		showError(NULL, message);
 	} else {
+		activeWindow = window;
 		result = runMessageLoop(window, &state);
+		activeWindow = NULL;
 	}
 	joinThread(state.simulationThread);
 	joinThread(state.replacementThread);
+	joinThread(state.fileThread);
 	releaseTaskbar(&state);
 	if (SUCCEEDED(comResult)) {
 		CoUninitialize();
 	}
 	free(state.replacementJob.data);
+	free(state.fileJob.data);
 	removeReplacement(state.replacementJob.output);
 	removeReplacement(state.replacementPath);
 	if (state.font) {
