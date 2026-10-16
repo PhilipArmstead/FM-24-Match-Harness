@@ -76,21 +76,21 @@ rest of the header is information. `game_build` is the PE timestamp of the
 
 Each field has exactly one value key:
 
-| Key | Meaning |
-|---|---|
-| `u8`, `u16`, `u32`, `u64` | an unsigned whole number of 1, 2, 4 or 8 bytes |
-| `str` | text (UTF-8) |
-| `hex` | raw bytes, two hex digits per byte |
-| `u8map` | a player's 69 ratings, one byte each (see [Ratings](#ratings)) |
+| Key                       | Meaning                                                        |
+|---------------------------|----------------------------------------------------------------|
+| `u8`, `u16`, `u32`, `u64` | an unsigned whole number of 1, 2, 4 or 8 bytes                 |
+| `str`                     | text (UTF-8)                                                   |
+| `hex`                     | raw bytes, two hex digits per byte                             |
+| `u8map`                   | a player's 69 ratings, one byte each (see [Ratings](#ratings)) |
 
 And some notes:
 
-| Key | Meaning |
-|---|---|
-| `name` | where you are: set on the first field of each block, and on every field whose meaning is known |
-| `player` | the player's name, on the first field of each player block |
-| `flags` | the names of the bits set in a bit-set value (tactics) |
-| `role` | `"seed"` on the seed field |
+| Key      | Meaning                                                                                        |
+|----------|------------------------------------------------------------------------------------------------|
+| `name`   | where you are: set on the first field of each block, and on every field whose meaning is known |
+| `player` | the player's name, on the first field of each player block                                     |
+| `flags`  | the names of the bits set in a bit-set value (tactics)                                         |
+| `role`   | `"seed"` on the seed field                                                                     |
 
 ## Research keys (`--full`)
 
@@ -99,12 +99,12 @@ each value comes from in the game. They make the file about 3.5 times as
 large, change nothing when it is played, and are mainly useful for working
 out what unnamed fields mean:
 
-| Key | Meaning |
-|---|---|
-| `member` | the game object member the value came from, e.g. `MATCH_PLAYER_DATA+0x108`. `(computed)` is a value the game calculated while saving, `(constant)` a fixed byte, `fn_<address>+0xNN` a member of an object not named yet |
-| `site` | the addresses (in `fm.exe`) of the code that wrote the value and of its caller |
-| `p` | an index into the header's `paths` list: the chain of calls that led to the write |
-| `bytes`, `paths` (header) | the size of the match data the file encodes to, and the call chains `p` refers to |
+| Key                       | Meaning                                                                                                                                                                                                                  |
+|---------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `member`                  | the game object member the value came from, e.g. `MATCH_PLAYER_DATA+0x108`. `(computed)` is a value the game calculated while saving, `(constant)` a fixed byte, `fn_<address>+0xNN` a member of an object not named yet |
+| `site`                    | the addresses (in `fm.exe`) of the code that wrote the value and of its caller                                                                                                                                           |
+| `p`                       | an index into the header's `paths` list: the chain of calls that led to the write                                                                                                                                        |
+| `bytes`, `paths` (header) | the size of the match data the file encodes to, and the call chains `p` refers to                                                                                                                                        |
 
 A few places below refer to a `member`. To find those fields, export with
 `--full`. Fields are in the same order in both kinds of export, so a field's
@@ -113,20 +113,20 @@ position in `fields` is the same in both.
 A field without a `name` belongs to the block named above it. Search the file
 for a `name` to jump to a block. The blocks, in file order:
 
-| Block | What it is |
-|---|---|
-| `match` | the match header. The seed is a few fields in |
-| `official[0..3]`, `referee` | the match officials |
-| `venue` | the stadium, attendance and weather |
-| `fixture`, `fixture_extra` | the competition and fixture details |
-| `home.team`, `home.team_info` | the home club |
-| `home.manager` | the home manager, including `home.manager.tactic` |
-| `home.staff[0..2]` | other staff, each optional (`home.has_staff[1]`, `home.has_staff[2]`) |
-| `home.player_count` | how many players the squad has (don't change it) |
-| `home.player[0..]` | the players, one block each |
-| `home.team_extra` | a default tactic and other data |
-| `home.backroom[0..]` | backroom staff (`home.backroom_count`), each with a default tactic |
-| `away.*` | the same for the away side |
+| Block                         | What it is                                                                                             |
+|-------------------------------|--------------------------------------------------------------------------------------------------------|
+| `match`                       | the match header. The seed is a few fields in                                                          |
+| `official[0..3]`, `referee`   | the match officials                                                                                    |
+| `venue`                       | the stadium, attendance and weather                                                                    |
+| `fixture`, `fixture_extra`    | the competition and fixture details                                                                    |
+| `home.team`, `home.team_info` | the home club                                                                                          |
+| `home.manager`                | the home manager, including `home.manager.tactic`                                                      |
+| `home.staff[0..2]`            | other staff, each optional (`home.has_staff[1]`, `home.has_staff[2]`)                                  |
+| `home.player_count`           | how many players the squad has (don't change it)                                                       |
+| `home.player[0..]`            | the players, one block each                                                                            |
+| `home.team_extra`             | a default tactic and other data, including one more staff member's attributes and person record        |
+| `home.backroom[0..]`          | backroom staff (`home.backroom_count`), each with [attributes](#staff-attributes) and a default tactic |
+| `away.*`                      | the same for the away side                                                                             |
 
 Every manager, backroom entry and `team_extra` carries a tactic. **Only the
 managers' tactics are the real ones.** The others are defaults. Edit
@@ -137,7 +137,7 @@ managers' tactics are the real ones.** The others are defaults. Edit
 The seed is the field with `"role": "seed"`, near the top:
 
 ```json
-{"u32": 42, "role": "seed"},
+{"u32": 42, "role": "seed"}
 ```
 
 You don't need to edit it. `fm24ctl run <file> 1-100` plays the file once per
@@ -150,7 +150,7 @@ seed. With no seeds given, `run` plays this one.
 Each player block starts with a field carrying the player's name:
 
 ```json
-{"name": "home.player[0]", "player": "Emiliano Martínez", "u8": 255},
+{"name": "home.player[0]", "player": "Emiliano Martínez", "u8": 255}
 ```
 
 Further in are `home.player[0].person_uid` (the player's unique ID in the
@@ -190,12 +190,12 @@ player with 15 Dribbling has `"dribbling": 75`. The game shows
 `(value + 2) / 5`, rounded down, from 1 to 20:
 
 | Shown in game | Stored values |
-|---|---|
-| 1 | 1-7 |
-| 2 | 8-12 |
-| 10 | 48-52 |
-| 15 | 73-77 |
-| 20 | 98-100 |
+|---------------|---------------|
+| 1             | 1-7           |
+| 2             | 8-12          |
+| 10            | 48-52         |
+| 15            | 73-77         |
+| 20            | 98-100        |
 
 The game's own data has values between the steps too (about one attribute in
 eight in a typical file isn't a multiple of 5). Use multiples of 5 to set a
@@ -204,31 +204,31 @@ apart hasn't been tested.
 
 The attributes, in file order:
 
-| Group | Keys |
-|---|---|
-| Technical | `crossing`, `dribbling`, `finishing`, `heading`, `long_shots`, `marking`, `off_the_ball`, `passing`, `penalty_taking`, `tackling`, `vision` |
-| Goalkeeping | `handling`, `aerial_reach`, `command_of_area`, `communication`, `kicking`, `throwing` |
-| Mental and goalkeeping | `anticipation`, `decisions`, `one_on_ones`, `positioning`, `reflexes` |
-| Technical | `first_touch`, `technique` |
-| Feet | `left_foot`, `right_foot` |
-| Mental | `flair` |
-| Set pieces | `corners` |
-| Mental | `teamwork`, `work_rate` |
-| Set pieces | `long_throws` |
-| Goalkeeping | `eccentricity`, `rushing_out`, `punching` |
-| Physical | `acceleration` |
-| Set pieces | `free_kicks` |
-| Physical | `strength`, `stamina`, `pace`, `jumping_reach` |
-| Mental | `leadership` |
-| Hidden | `dirtiness` |
-| Physical | `balance` |
-| Mental | `bravery` |
-| Hidden | `consistency` |
-| Mental | `aggression` |
-| Physical | `agility` |
-| Hidden | `important_matches`, `injury_proneness`, `versatility` |
-| Physical | `natural_fitness` |
-| Mental | `determination`, `composure`, `concentration` |
+| Group                  | Keys                                                                                                                                        |
+|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| Technical              | `crossing`, `dribbling`, `finishing`, `heading`, `long_shots`, `marking`, `off_the_ball`, `passing`, `penalty_taking`, `tackling`, `vision` |
+| Goalkeeping            | `handling`, `aerial_reach`, `command_of_area`, `communication`, `kicking`, `throwing`                                                       |
+| Mental and goalkeeping | `anticipation`, `decisions`, `one_on_ones`, `positioning`, `reflexes`                                                                       |
+| Technical              | `first_touch`, `technique`                                                                                                                  |
+| Feet                   | `left_foot`, `right_foot`                                                                                                                   |
+| Mental                 | `flair`                                                                                                                                     |
+| Set pieces             | `corners`                                                                                                                                   |
+| Mental                 | `teamwork`, `work_rate`                                                                                                                     |
+| Set pieces             | `long_throws`                                                                                                                               |
+| Goalkeeping            | `eccentricity`, `rushing_out`, `punching`                                                                                                   |
+| Physical               | `acceleration`                                                                                                                              |
+| Set pieces             | `free_kicks`                                                                                                                                |
+| Physical               | `strength`, `stamina`, `pace`, `jumping_reach`                                                                                              |
+| Mental                 | `leadership`                                                                                                                                |
+| Hidden                 | `dirtiness`                                                                                                                                 |
+| Physical               | `balance`                                                                                                                                   |
+| Mental                 | `bravery`                                                                                                                                   |
+| Hidden                 | `consistency`                                                                                                                               |
+| Mental                 | `aggression`                                                                                                                                |
+| Physical               | `agility`                                                                                                                                   |
+| Hidden                 | `important_matches`, `injury_proneness`, `versatility`                                                                                      |
+| Physical               | `natural_fitness`                                                                                                                           |
+| Mental                 | `determination`, `composure`, `concentration`                                                                                               |
 
 `left_foot` and `right_foot` are the player's footedness on the same scale.
 The hidden attributes are ones the game doesn't show normally. For
@@ -272,34 +272,34 @@ with the ratings, editing a field changes only the match, not your save.
 
 In every `<side>.player[i]` block:
 
-| Name | Type | Meaning | Database (player record) |
-|---|---|---|---|
-| `.condition` | `u16` | physical condition: 0-10000, where 10000 is 100% | `+0x1F8` |
-| `.sharpness[0]`, `.sharpness[1]` | `u16` | match sharpness, same scale. The game writes the same value twice | `+0x1F4` |
-| `.fatigue` | `u16` | fatigue (FMRTE's "jadedness"), stored as a negative number: 0 is fresh, 65394 is -142 (65536 minus the value) | `+0x1F6` |
-| `.home_reputation` | `u16` | reputation in the player's home nation, 0-10000 | `+0x1FA` |
-| `.current_reputation` | `u16` | current reputation, 0-10000 | `+0x1FC` |
-| `.world_reputation` | `u16` | world reputation, 0-10000 | `+0x1FE` |
-| `.current_ability` | `u16` | current ability (CA), 1-200 | `+0x200` |
-| `.morale` | `u8` | morale: 11 "fairly good", 12 "quite good", 13 "good" (the other levels aren't mapped yet) | `+0x25F` |
-| `.squad_number` | `u8` | shirt number. A player whose contract has no number (255) gets one for the match | contract `+0x55` |
-| `.last_transfer_fee` | `u32` | the fee of the player's last transfer, in pounds (0 for a free transfer or academy player) | `+0x1E0` |
-| `.traits` | `u64` | player traits (preferred moves), one bit per trait; the `flags` note names them. See [Traits](#traits) | person record `+0xF0` |
-| `.preferred_position` | `u8` | where the player prefers to be when he shares a position with teammates; see the table below | `+0x266` |
+| Name                             | Type  | Meaning                                                                                                       | Database (player record) |
+|----------------------------------|-------|---------------------------------------------------------------------------------------------------------------|--------------------------|
+| `.condition`                     | `u16` | physical condition: 0-10000, where 10000 is 100%                                                              | `+0x1F8`                 |
+| `.sharpness[0]`, `.sharpness[1]` | `u16` | match sharpness, same scale. The game writes the same value twice                                             | `+0x1F4`                 |
+| `.fatigue`                       | `u16` | fatigue (FMRTE's "jadedness"), stored as a negative number: 0 is fresh, 65394 is -142 (65536 minus the value) | `+0x1F6`                 |
+| `.home_reputation`               | `u16` | reputation in the player's home nation, 0-10000                                                               | `+0x1FA`                 |
+| `.current_reputation`            | `u16` | current reputation, 0-10000                                                                                   | `+0x1FC`                 |
+| `.world_reputation`              | `u16` | world reputation, 0-10000                                                                                     | `+0x1FE`                 |
+| `.current_ability`               | `u16` | current ability (CA), 1-200                                                                                   | `+0x200`                 |
+| `.morale`                        | `u8`  | morale: 11 "fairly good", 12 "quite good", 13 "good" (the other levels aren't mapped yet)                     | `+0x25F`                 |
+| `.squad_number`                  | `u8`  | shirt number. A player whose contract has no number (255) gets one for the match                              | contract `+0x55`         |
+| `.last_transfer_fee`             | `u32` | the fee of the player's last transfer, in pounds (0 for a free transfer or academy player)                    | `+0x1E0`                 |
+| `.traits`                        | `u64` | player traits (preferred moves), one bit per trait; the `flags` note names them. See [Traits](#traits)        | person record `+0xF0`    |
+| `.preferred_position`            | `u8`  | where the player prefers to be when he shares a position with teammates; see the table below                  | `+0x266`                 |
 
 `.preferred_position` codes, as the game's position tooltip words them. Codes
 1, 4 and 6 were checked in the game; the others come from FM-Player-Rater's
 notes:
 
-| Value | Preference |
-|---|---|
-| 0 | none (the most common) |
-| 1 | "on the right in a two-man pairing" (Tielemans) |
-| 2 | probably on the left in a two-man pairing |
-| 3 | probably on the right in a two-man pairing or in the middle in a three-man grouping |
-| 4 | "on the left in a two-man pairing or in the middle in a three-man grouping" (Sanson) |
-| 5 | probably in the middle |
-| 6 | "on the right in a two-man pairing or on the right or middle in a three-man grouping" (Bailey) |
+| Value | Preference                                                                                     |
+|-------|------------------------------------------------------------------------------------------------|
+| 0     | none (the most common)                                                                         |
+| 1     | "on the right in a two-man pairing" (Tielemans)                                                |
+| 2     | probably on the left in a two-man pairing                                                      |
+| 3     | probably on the right in a two-man pairing or in the middle in a three-man grouping            |
+| 4     | "on the left in a two-man pairing or in the middle in a three-man grouping" (Sanson)           |
+| 5     | probably in the middle                                                                         |
+| 6     | "on the right in a two-man pairing or on the right or middle in a three-man grouping" (Bailey) |
 
 `.ability` (see [above](#values-derived-from-ratings)) is current ability
 adjusted for the match, e.g. 158 for a player whose `.current_ability` is
@@ -316,70 +316,70 @@ list, read across the rows (left, right, left, ...), is in bit order. The
 names checked against six players' trait lists in the game are in **bold**.
 The rest follow from that order.
 
-| Bit | Value | Trait |
-|---|---|---|
-| 0 | 1 | runs with ball down left |
-| 1 | 2 | runs with ball down right |
-| 2 | 4 | runs with ball through centre |
-| 3 | 8 | gets into opposition area |
-| 4 | 16 | **moves into channels** |
-| 5 | 32 | **gets forward whenever possible** |
-| 6 | 64 | plays short simple passes |
-| 7 | 128 | **tries killer balls often** |
-| 8 | 256 | **shoots from distance** |
-| 9 | 512 | shoots with power |
-| 10 | 1024 | places shots |
-| 11 | 2048 | **curls ball** |
-| 12 | 4096 | likes to round keeper |
-| 13 | 8192 | **likes to try to beat offside trap** |
-| 14 | 16384 | **uses outside of foot** |
-| 15 | 32768 | marks opponent tightly |
-| 16 | 65536 | **winds up opponents** |
-| 17 | 131072 | **argues with officials** |
-| 18 | 262144 | plays with back to goal |
-| 19 | 524288 | comes deep to get ball |
-| 20 | 1048576 | **plays one-twos** |
-| 21 | 2097152 | likes to lob keeper |
-| 22 | 4194304 | dictates tempo |
-| 23 | 8388608 | attempts overhead kicks |
-| 24 | 16777216 | looks for pass rather than attempting to score |
-| 25 | 33554432 | plays no through balls |
-| 26 | 67108864 | stops play |
-| 27 | 134217728 | **knocks ball past opponent** |
-| 28 | 268435456 | moves ball to right foot before dribble attempt |
-| 29 | 536870912 | **moves ball to left foot before dribble attempt** |
-| 30 | 1073741824 | dwells on ball |
-| 31 | 2147483648 | arrives late in opponents area |
-| 32 | 4294967296 | **tries to play way out of trouble** |
-| 33 | 8589934592 | stays back at all times |
-| 34 | 17179869184 | avoids using weaker foot |
-| 35 | 34359738368 | **tries tricks** |
-| 36 | 68719476736 | tries long range free kicks |
-| 37 | 137438953472 | dives into tackles |
-| 38 | 274877906944 | does not dive into tackles |
-| 39 | 549755813888 | **cuts inside from both wings** (FMRTE: "cuts inside") |
-| 40 | 1099511627776 | hugs line |
-| 41 | 2199023255552 | gets crowd going |
-| 42 | 4398046511104 | **tries first time shots** |
-| 43 | 8796093022208 | tries long range passes |
-| 44 | 17592186044416 | **likes ball played into feet** |
-| 45 | 35184372088832 | hits free kick with power |
-| 46 | 70368744177664 | likes to beat man repeatedly |
-| 47 | 140737488355328 | likes to switch ball to other flank |
-| 48 | 281474976710656 | will retire at top |
-| 49 | 562949953421312 | will play football as long as possible |
-| 50 | 1125899906842624 | possesses long flat throw |
-| 51 | 2251799813685248 | **runs with ball often** |
-| 52 | 4503599627370496 | runs with ball rarely |
-| 53 | 9007199254740992 | attempts to develop weaker foot |
-| 54 | 18014398509481984 | static target man |
-| 55 | 36028797018963968 | uses long throw to start counter attack |
-| 56 | 72057594037927936 | refrains from taking long shots |
-| 57 | 144115188075855872 | cuts inside from left wing |
-| 58 | 288230376151711744 | **cuts inside from right wing** |
-| 59 | 576460752303423488 | crosses early |
-| 60 | 1152921504606846976 | brings ball out of defence |
-| 61 | 2305843009213693952 | plays ball with feet |
+| Bit | Value               | Trait                                                  |
+|-----|---------------------|--------------------------------------------------------|
+| 0   | 1                   | runs with ball down left                               |
+| 1   | 2                   | runs with ball down right                              |
+| 2   | 4                   | runs with ball through centre                          |
+| 3   | 8                   | gets into opposition area                              |
+| 4   | 16                  | **moves into channels**                                |
+| 5   | 32                  | **gets forward whenever possible**                     |
+| 6   | 64                  | plays short simple passes                              |
+| 7   | 128                 | **tries killer balls often**                           |
+| 8   | 256                 | **shoots from distance**                               |
+| 9   | 512                 | shoots with power                                      |
+| 10  | 1024                | places shots                                           |
+| 11  | 2048                | **curls ball**                                         |
+| 12  | 4096                | likes to round keeper                                  |
+| 13  | 8192                | **likes to try to beat offside trap**                  |
+| 14  | 16384               | **uses outside of foot**                               |
+| 15  | 32768               | marks opponent tightly                                 |
+| 16  | 65536               | **winds up opponents**                                 |
+| 17  | 131072              | **argues with officials**                              |
+| 18  | 262144              | plays with back to goal                                |
+| 19  | 524288              | comes deep to get ball                                 |
+| 20  | 1048576             | **plays one-twos**                                     |
+| 21  | 2097152             | likes to lob keeper                                    |
+| 22  | 4194304             | dictates tempo                                         |
+| 23  | 8388608             | attempts overhead kicks                                |
+| 24  | 16777216            | looks for pass rather than attempting to score         |
+| 25  | 33554432            | plays no through balls                                 |
+| 26  | 67108864            | stops play                                             |
+| 27  | 134217728           | **knocks ball past opponent**                          |
+| 28  | 268435456           | moves ball to right foot before dribble attempt        |
+| 29  | 536870912           | **moves ball to left foot before dribble attempt**     |
+| 30  | 1073741824          | dwells on ball                                         |
+| 31  | 2147483648          | arrives late in opponents area                         |
+| 32  | 4294967296          | **tries to play way out of trouble**                   |
+| 33  | 8589934592          | stays back at all times                                |
+| 34  | 17179869184         | avoids using weaker foot                               |
+| 35  | 34359738368         | **tries tricks**                                       |
+| 36  | 68719476736         | tries long range free kicks                            |
+| 37  | 137438953472        | dives into tackles                                     |
+| 38  | 274877906944        | does not dive into tackles                             |
+| 39  | 549755813888        | **cuts inside from both wings** (FMRTE: "cuts inside") |
+| 40  | 1099511627776       | hugs line                                              |
+| 41  | 2199023255552       | gets crowd going                                       |
+| 42  | 4398046511104       | **tries first time shots**                             |
+| 43  | 8796093022208       | tries long range passes                                |
+| 44  | 17592186044416      | **likes ball played into feet**                        |
+| 45  | 35184372088832      | hits free kick with power                              |
+| 46  | 70368744177664      | likes to beat man repeatedly                           |
+| 47  | 140737488355328     | likes to switch ball to other flank                    |
+| 48  | 281474976710656     | will retire at top                                     |
+| 49  | 562949953421312     | will play football as long as possible                 |
+| 50  | 1125899906842624    | possesses long flat throw                              |
+| 51  | 2251799813685248    | **runs with ball often**                               |
+| 52  | 4503599627370496    | runs with ball rarely                                  |
+| 53  | 9007199254740992    | attempts to develop weaker foot                        |
+| 54  | 18014398509481984   | static target man                                      |
+| 55  | 36028797018963968   | uses long throw to start counter attack                |
+| 56  | 72057594037927936   | refrains from taking long shots                        |
+| 57  | 144115188075855872  | cuts inside from left wing                             |
+| 58  | 288230376151711744  | **cuts inside from right wing**                        |
+| 59  | 576460752303423488  | crosses early                                          |
+| 60  | 1152921504606846976 | brings ball out of defence                             |
+| 61  | 2305843009213693952 | plays ball with feet                                   |
 
 Whether the engine reads traits during a match hasn't been tested.
 
@@ -388,21 +388,21 @@ Whether the engine reads traits during a match hasn't been tested.
 Every player, manager, staff member, backroom entry and official has these.
 Except for the referee (above), their values come from the person record:
 
-| Name | Type | Meaning | Database (person record) |
-|---|---|---|---|
-| `.person_uid` | `u32` | the person's unique ID | `+0x0C` |
-| `.nationality` | `u32` | the unique ID of the person's nation, e.g. 765 for England | `+0x70` (a pointer to the nation; its unique ID is at `+0x0C`) |
-| `.personality.adaptability` | `u8` | 1-20 | `+0x78` |
-| `.personality.ambition` | `u8` | 1-20 | `+0x79` |
-| `.personality.loyalty` | `u8` | 1-20 | `+0x7A` |
-| `.personality.pressure` | `u8` | 1-20 | `+0x7B` |
-| `.personality.professionalism` | `u8` | 1-20 | `+0x7C` |
-| `.personality.sportsmanship` | `u8` | 1-20 | `+0x7D` |
-| `.personality.temperament` | `u8` | 1-20 | `+0x7E` |
-| `.age` | `u8` | age in years on the match date | from the date of birth at `+0x44` |
-| `.caps` | `u32` | international caps (senior) | matches the game's player screen for 3 players; no single database offset found |
-| `.height` | `u32` | height in metres, as a 32-bit float (below) | player record `+0x14E` (`u16`, centimetres) |
-| `.weight` | `u8` | weight in kilograms | player record `+0x14C` |
+| Name                           | Type  | Meaning                                                    | Database (person record)                                                        |
+|--------------------------------|-------|------------------------------------------------------------|---------------------------------------------------------------------------------|
+| `.person_uid`                  | `u32` | the person's unique ID                                     | `+0x0C`                                                                         |
+| `.nationality`                 | `u32` | the unique ID of the person's nation, e.g. 765 for England | `+0x70` (a pointer to the nation; its unique ID is at `+0x0C`)                  |
+| `.personality.adaptability`    | `u8`  | 1-20                                                       | `+0x78`                                                                         |
+| `.personality.ambition`        | `u8`  | 1-20                                                       | `+0x79`                                                                         |
+| `.personality.loyalty`         | `u8`  | 1-20                                                       | `+0x7A`                                                                         |
+| `.personality.pressure`        | `u8`  | 1-20                                                       | `+0x7B`                                                                         |
+| `.personality.professionalism` | `u8`  | 1-20                                                       | `+0x7C`                                                                         |
+| `.personality.sportsmanship`   | `u8`  | 1-20                                                       | `+0x7D`                                                                         |
+| `.personality.temperament`     | `u8`  | 1-20                                                       | `+0x7E`                                                                         |
+| `.age`                         | `u8`  | age in years on the match date                             | from the date of birth at `+0x44`                                               |
+| `.caps`                        | `u32` | international caps (senior)                                | matches the game's player screen for 3 players; no single database offset found |
+| `.height`                      | `u32` | height in metres, as a 32-bit float (below)                | player record `+0x14E` (`u16`, centimetres)                                     |
+| `.weight`                      | `u8`  | weight in kilograms                                        | player record `+0x14C`                                                          |
 
 Height and weight come from the player record, so only players have their
 real values. Everyone else has a default, usually 1.82 m and 75 kg.
@@ -420,11 +420,100 @@ Controversy (`+0x7F`) isn't copied. A player block's `.person_uid` is
 written in a different place from other people's, so a player block has it
 only once.
 
+## Staff attributes
+
+The manager, every backroom entry and `team_extra` carry a staff member's
+attributes. `home.staff[0..2]` don't: they have only a person record. Each
+attribute is a `u8` named `<block>.attributes.<attribute>`, followed by the
+staff member's reputation and ability:
+
+```json
+{"name": "home.backroom[5].attributes.tactical_attacking", "u8": 12},
+...
+{"name": "home.backroom[5].attributes.coaching_set_pieces", "u8": 40},
+{"name": "home.backroom[5].home_reputation", "u16": 6250},
+{"name": "home.backroom[5].current_reputation", "u16": 6500},
+{"name": "home.backroom[5].world_reputation", "u16": 5250},
+{"name": "home.backroom[5].current_ability", "u16": 130},
+{"name": "home.backroom[5].potential_ability", "u16": 140},
+```
+
+Reputations are 0-10000 and abilities 1-200. The 52 attributes are a copy of
+the staff record that starts `0xE0` bytes before the person record in the
+game's memory (`MATCH_STAFF+0x60` to `+0x93`), in this order. The first 27
+are on the game's 1-20 scale. The other 25 are on the 1-100 scale that the
+game shows as `(value + 2) / 5`, like a player's ratings: a Motivating of 16
+is stored as 80.
+
+| #  | Scale | Name                                            | #  | Scale | Name                             |
+|----|-------|-------------------------------------------------|----|-------|----------------------------------|
+| 0  | 1-20  | `tactical_attacking`                            | 26 | 1-20  | `unknown_26`                     |
+| 1  | 1-20  | `business`                                      | 27 | 1-100 | `coaching_gk_shot_stopping`      |
+| 2  | 1-20  | `unknown_2`                                     | 28 | 1-100 | `man_management_or_judging_ca_a` |
+| 3  | 1-20  | `tactical_directness`                           | 29 | 1-100 | `judging_pa`                     |
+| 4  | 1-20  | `determination_or_discipline`                   | 30 | 1-100 | `man_management_or_judging_ca_b` |
+| 5  | 1-20  | `tactical_free_roles`                           | 31 | 1-100 | `motivating`                     |
+| 6  | 1-20  | `interference`                                  | 32 | 1-100 | `physiotherapy`                  |
+| 7  | 1-20  | `tactical_marking`                              | 33 | 1-100 | `tactical_knowledge`             |
+| 8  | 1-20  | `tactical_offside`                              | 34 | 1-100 | `coaching_attacking`             |
+| 9  | 1-20  | `patience`                                      | 35 | 1-100 | `coaching_defending`             |
+| 10 | 1-20  | `pressing_or_hardness_of_training_a`            | 36 | 1-100 | `coaching_fitness`               |
+| 11 | 1-20  | `resources`                                     | 37 | 1-100 | `coaching_mental`                |
+| 12 | 1-20  | `working_with_youngsters`                       | 38 | 1-100 | `coaching_technical`             |
+| 13 | 1-20  | `unknown_13` (74, 66 and 100 in the files seen) | 39 | 1-100 | `coaching_tactical`              |
+| 14 | 1-20  | `buying_players`                                | 40 | 1-100 | `coaching_dirtiness_allowance`   |
+| 15 | 1-20  | `mind_games`                                    | 41 | 1-100 | `coaching_gk_handling`           |
+| 16 | 1-20  | `tactical_sitting_back`                         | 42 | 1-100 | `coaching_gk_distribution`       |
+| 17 | 1-20  | `tactical_use_of_playmaker`                     | 43 | 1-100 | `coaching_versatility`           |
+| 18 | 1-20  | `tactical_use_of_substitutions`                 | 44 | 1-100 | `judging_player_data`            |
+| 19 | 1-20  | `tactical_depth`                                | 45 | 1-100 | `judging_team_data`              |
+| 20 | 1-20  | `tactical_flamboyancy`                          | 46 | 1-100 | `presenting_data`                |
+| 21 | 1-20  | `tactical_flexibility`                          | 47 | 1-100 | `sports_science`                 |
+| 22 | 1-20  | `pressing_or_hardness_of_training_b`            | 48 | 1-100 | `unknown_48`                     |
+| 23 | 1-20  | `squad_rotation`                                | 49 | 1-100 | `negotiating`                    |
+| 24 | 1-20  | `tactical_tempo`                                | 50 | 1-100 | `judging_staff_ability`          |
+| 25 | 1-20  | `tactical_width`                                | 51 | 1-100 | `coaching_set_pieces`            |
+
+The names come from matching two staff members' FMRTE profiles (Pako
+Ayestarán and Josep Gombau) against their values. The `tactical_*` ones are
+FMRTE's "tactical attributes" (the staff member's preferred style), not the
+coaching ones. The two profiles had the same values for man management and
+judging CA, and for pressing and hardness of training, so which of each
+`_a`/`_b` pair is which isn't known. Only one of determination and level of
+discipline is stored here. FMRTE's coaching attribute "player" isn't stored.
+
+**Only the manager's attributes reach the engine.** In one fixture (Aston
+Villa against Bristol City, seeds 1-50), maxing every known attribute of the
+manager changed every seed's match and turned Villa's 46 wins and 4 draws
+into 50 wins. Maxing those of any backroom entry or `team_extra`, alone or
+all 20 together, played every seed exactly as before. That includes the
+assistant manager, who makes the substitutions under `run`.
+
+Maxing the manager's attributes one at a time in the same fixture (seeds
+1-20, baseline 18 wins and 2 draws, 3.70-1.50 on average) changed matches for
+five of them:
+
+| Attribute                        | From | To  | Seeds changed | Result                              |
+|----------------------------------|------|-----|---------------|-------------------------------------|
+| `motivating`                     | 80   | 100 | 20 of 20      | 20 wins, 3.80-0.85                  |
+| `man_management_or_judging_ca_b` | 50   | 100 | 20 of 20      | 15 wins, 4 draws, 1 loss, 3.35-1.35 |
+| `working_with_youngsters`        | 12   | 20  | 14 of 20      | 18 wins, 2 draws, 3.75-1.50         |
+| `determination_or_discipline`    | 16   | 20  | 8 of 20       | 18 wins, 2 draws, 3.50-1.30         |
+| `tactical_attacking`             | 10   | 20  | 3 of 20       | 18 wins, 2 draws, 3.55-1.35         |
+
+"Seeds changed" counts seeds whose final random-number state differed, so it
+shows that the engine read the value, not that results improved. The other
+41 known attributes changed nothing; `coaching_fitness` and
+`coaching_mental` were already at their maximum and weren't tested. Twenty
+seeds are too few to say how much each one helps. Judging CA is a scouting
+attribute, so `_b`, which the engine reads, is probably man management, but
+that hasn't been confirmed in the game.
+
 ## Teams
 
-| Name | Type | Meaning | Database (team record) |
-|---|---|---|---|
-| `<side>.team.reputation` | `u16` | the team's reputation, 0-10000 | `+0xA8` |
+| Name                     | Type  | Meaning                        | Database (team record) |
+|--------------------------|-------|--------------------------------|------------------------|
+| `<side>.team.reputation` | `u16` | the team's reputation, 0-10000 | `+0xA8`                |
 
 ## Where these are in a `--full` export
 
@@ -432,55 +521,55 @@ In a `--full` export these fields carry a `member`. The table maps each one
 to its database field. A player record starts `0x278` bytes before its person
 record (`0x368` for a player who is also staff).
 
-| `member` | Name | Database field |
-|---|---|---|
-| `MATCH_PLAYER_DATA+0x4a` | `.condition` | player `+0x1F8` |
-| `MATCH_PLAYER_DATA+0x4c`, `+0x4e` | `.sharpness[0]`, `.sharpness[1]` | player `+0x1F4` |
-| `MATCH_PLAYER_DATA+0x50` | `.fatigue` | player `+0x1F6` |
-| `MATCH_PLAYER_DATA+0x56` | `.home_reputation` | player `+0x1FA` |
-| `MATCH_PLAYER_DATA+0x58` | `.current_reputation` | player `+0x1FC` |
-| `MATCH_PLAYER_DATA+0x5a` | `.world_reputation` | player `+0x1FE` |
-| `MATCH_PLAYER_DATA+0x5c` | `.current_ability` | player `+0x200` |
-| `MATCH_PLAYER_DATA+0x74` | `.morale` | player `+0x25F` (constants.h calls it happiness) |
-| `MATCH_PLAYER_DATA+0x68` | `.last_transfer_fee` | player `+0x1E0` |
-| `MATCH_PLAYER_DATA+0xf4` | `.preferred_position` | player `+0x266` |
-| `MATCH_PLAYER_DATA+0x49` | `.squad_number` | contract `+0x55` |
-| `MATCH_PLAYER_DATA+0x100` | `.traits` | person `+0xF0` |
-| `fn_1a7fdc0+0x48` | `.caps` | not found |
-| `fn_1a7fdc0+0x69` | `.age` | person `+0x44` (date of birth) |
-| `MATCH_PLAYER_DATA+0x108` | `.ratings` | player `+0x208` to `+0x24C` (69 bytes) |
-| `fn_1a7fdc0+0x40` | `.person_uid` | person `+0x0C` |
-| `fn_1a7fdc0+0x54` | `.nationality` | person `+0x70`, then nation `+0x0C` |
-| `fn_1a7fdc0+0x62` to `+0x68` | `.personality.*` | person `+0x78` to `+0x7E` (order above) |
-| `(computed)` at site `1a8004e` | `.height` | player `+0x14E`, divided by 100 and stored as a float |
-| none, at site `1a80064` | `.weight` | player `+0x14C` |
-| `MATCH_TEAM_BASE+0x112` | `.team.reputation` | team `+0xA8` |
+| `member`                          | Name                             | Database field                                        |
+|-----------------------------------|----------------------------------|-------------------------------------------------------|
+| `MATCH_PLAYER_DATA+0x4a`          | `.condition`                     | player `+0x1F8`                                       |
+| `MATCH_PLAYER_DATA+0x4c`, `+0x4e` | `.sharpness[0]`, `.sharpness[1]` | player `+0x1F4`                                       |
+| `MATCH_PLAYER_DATA+0x50`          | `.fatigue`                       | player `+0x1F6`                                       |
+| `MATCH_PLAYER_DATA+0x56`          | `.home_reputation`               | player `+0x1FA`                                       |
+| `MATCH_PLAYER_DATA+0x58`          | `.current_reputation`            | player `+0x1FC`                                       |
+| `MATCH_PLAYER_DATA+0x5a`          | `.world_reputation`              | player `+0x1FE`                                       |
+| `MATCH_PLAYER_DATA+0x5c`          | `.current_ability`               | player `+0x200`                                       |
+| `MATCH_PLAYER_DATA+0x74`          | `.morale`                        | player `+0x25F` (constants.h calls it happiness)      |
+| `MATCH_PLAYER_DATA+0x68`          | `.last_transfer_fee`             | player `+0x1E0`                                       |
+| `MATCH_PLAYER_DATA+0xf4`          | `.preferred_position`            | player `+0x266`                                       |
+| `MATCH_PLAYER_DATA+0x49`          | `.squad_number`                  | contract `+0x55`                                      |
+| `MATCH_PLAYER_DATA+0x100`         | `.traits`                        | person `+0xF0`                                        |
+| `fn_1a7fdc0+0x48`                 | `.caps`                          | not found                                             |
+| `fn_1a7fdc0+0x69`                 | `.age`                           | person `+0x44` (date of birth)                        |
+| `MATCH_PLAYER_DATA+0x108`         | `.ratings`                       | player `+0x208` to `+0x24C` (69 bytes)                |
+| `fn_1a7fdc0+0x40`                 | `.person_uid`                    | person `+0x0C`                                        |
+| `fn_1a7fdc0+0x54`                 | `.nationality`                   | person `+0x70`, then nation `+0x0C`                   |
+| `fn_1a7fdc0+0x62` to `+0x68`      | `.personality.*`                 | person `+0x78` to `+0x7E` (order above)               |
+| `(computed)` at site `1a8004e`    | `.height`                        | player `+0x14E`, divided by 100 and stored as a float |
+| none, at site `1a80064`           | `.weight`                        | player `+0x14C`                                       |
+| `MATCH_TEAM_BASE+0x112`           | `.team.reputation`               | team `+0xA8`                                          |
 
 Some other members match a database field that has no name yet (for the
 players; `MATCH_PLAYER_DATA+0x52` in 43 of 47):
 
-| `member` | Database field |
-|---|---|
-| `MATCH_PLAYER_DATA+0x52` | player `+0xFC` |
-| `MATCH_PLAYER_DATA+0x54` | player `+0x16D` |
-| `fn_1a7fdc0+0x61` | person `+0x169` |
-| `fn_19ba6e0+0x30` | person `+0x18` (`u64`) |
-| `fn_19ba6e0+0x38` | person `+0x0C`: the unique ID again |
-| `fn_19ba6e0+0x45` | person `+0x91` |
-| `fn_5305f90+0x4`, `+0x8` | person `+0x92` |
+| `member`                 | Database field                      |
+|--------------------------|-------------------------------------|
+| `MATCH_PLAYER_DATA+0x52` | player `+0xFC`                      |
+| `MATCH_PLAYER_DATA+0x54` | player `+0x16D`                     |
+| `fn_1a7fdc0+0x61`        | person `+0x169`                     |
+| `fn_19ba6e0+0x30`        | person `+0x18` (`u64`)              |
+| `fn_19ba6e0+0x38`        | person `+0x0C`: the unique ID again |
+| `fn_19ba6e0+0x45`        | person `+0x91`                      |
+| `fn_5305f90+0x4`, `+0x8` | person `+0x92`                      |
 
 # Tactics
 
 Each manager's tactic is in `<side>.manager.tactic`:
 
-| Part | What it is |
-|---|---|
-| `takers` | captains and set-piece takers |
-| `part_4240` | opposition instructions |
-| `plan[0]` | **the tactic in use** |
-| `plan[1]` | a second tactic (a default 4-4-2 in the files seen) |
-| `set_pieces` | set-piece routines |
-| `formation[0..25]` | a copy of each slot's position. Leave it alone |
+| Part               | What it is                                          |
+|--------------------|-----------------------------------------------------|
+| `takers`           | captains and set-piece takers                       |
+| `part_4240`        | opposition instructions                             |
+| `plan[0]`          | **the tactic in use**                               |
+| `plan[1]`          | a second tactic (a default 4-4-2 in the files seen) |
+| `set_pieces`       | set-piece routines                                  |
+| `formation[0..25]` | a copy of each slot's position. Leave it alone      |
 
 **What the engine reads.** For the side you manage, the engine reads
 `plan[0]`'s mentality and team instructions. For the side the game's AI
@@ -496,15 +585,15 @@ change results hasn't been measured yet, though they are stored the same way.
 
 `<side>.manager.tactic.plan[0].mentality` (`u8`):
 
-| Value | Mentality |
-|---|---|
-| 1 | very defensive |
-| 2 | defensive |
-| 3 | cautious |
-| 4 | balanced |
-| 5 | positive |
-| 6 | attacking |
-| 7 | very attacking |
+| Value | Mentality      |
+|-------|----------------|
+| 1     | very defensive |
+| 2     | defensive      |
+| 3     | cautious       |
+| 4     | balanced       |
+| 5     | positive       |
+| 6     | attacking      |
+| 7     | very attacking |
 
 ## Bit sets
 
@@ -536,79 +625,79 @@ is 8. To make it "much shorter", subtract 8 and add 16.
 `u32` bit sets. In the table, *word* is which of the three, and *value* is what
 the option adds.
 
-| Word | Bit | Value | Option |
-|---|---|---|---|
-| 0 | 1 | 2 | passing directness: much more direct |
-| 0 | 2 | 4 | passing directness: more direct |
-| 0 | 3 | 8 | passing directness: shorter |
-| 0 | 4 | 16 | passing directness: much shorter |
-| 0 | 5 | 32 | pass into space |
-| 0 | 6 | 64 | play out of defence |
-| 0 | 7 | 128 | hit early crosses |
-| 0 | 8 | 256 | crosses: floated |
-| 0 | 9 | 512 | crosses: whipped |
-| 0 | 10 | 1024 | crosses: low |
-| 0 | 11 | 2048 | run at defence |
-| 0 | 12 | 4096 | dribble less |
-| 0 | 13 | 8192 | shoot on sight |
-| 0 | 14 | 16384 | work ball into box |
-| 0 | 15 | 32768 | play for set pieces |
-| 0 | 16 | 65536 | be more expressive |
-| 0 | 17 | 131072 | be more disciplined |
-| 0 | 18 | 262144 | focus play: down the left |
-| 0 | 19 | 524288 | focus play: down the right |
-| 0 | 20 | 1048576 | focus play: through the middle |
-| 0 | 23 | 8388608 | overlap left |
-| 0 | 24 | 16777216 | overlap right |
-| 0 | 26 | 67108864 | underlap left |
-| 0 | 27 | 134217728 | underlap right |
-| 0 | 28 | 268435456 | goalkeeper: roll it out |
-| 0 | 29 | 536870912 | goalkeeper: throw it long |
-| 0 | 30 | 1073741824 | goalkeeper: take short kicks |
-| 0 | 31 | 2147483648 | goalkeeper: take long kicks |
-| 1 | 0 | 1 | distribute to centre-backs |
-| 1 | 1 | 2 | distribute to full-backs |
-| 1 | 2 | 4 | distribute to flanks |
-| 1 | 3 | 8 | distribute over opposition defence |
-| 1 | 4 | 16 | distribute to playmaker |
-| 1 | 5 | 32 | distribute to target forward |
-| 1 | 7 | 128 | goalkeeper: distribute quickly |
-| 1 | 8 | 256 | goalkeeper: slow pace down |
-| 1 | 9 | 512 | tempo: much higher |
-| 1 | 10 | 1024 | tempo: higher |
-| 1 | 11 | 2048 | tempo: lower |
-| 1 | 12 | 4096 | tempo: much lower |
-| 1 | 13 | 8192 | attacking width: wide |
-| 1 | 14 | 16384 | attacking width: fairly wide |
-| 1 | 15 | 32768 | attacking width: fairly narrow |
-| 1 | 16 | 65536 | attacking width: narrow |
-| 1 | 17 | 131072 | when possession won: counter |
-| 1 | 18 | 262144 | when possession won: hold shape |
-| 1 | 21 | 2097152 | defensive line: much higher |
-| 1 | 22 | 4194304 | defensive line: higher |
-| 1 | 23 | 8388608 | defensive line: lower |
-| 1 | 24 | 16777216 | defensive line: much lower |
-| 1 | 26 | 67108864 | line of engagement: high press |
-| 1 | 27 | 134217728 | line of engagement: mid block |
-| 1 | 28 | 268435456 | line of engagement: low block |
-| 1 | 30 | 1073741824 | trigger press: much more often |
-| 1 | 31 | 2147483648 | trigger press: more often |
-| 2 | 0 | 1 | trigger press: less often |
-| 2 | 1 | 2 | trigger press: much less often |
-| 2 | 2 | 4 | prevent short goalkeeper distribution |
-| 2 | 3 | 8 | when possession lost: counter-press |
-| 2 | 4 | 16 | when possession lost: regroup |
-| 2 | 5 | 32 | tackling: get stuck in |
-| 2 | 6 | 64 | tackling: stay on feet |
-| 2 | 8 | 256 | legacy, probably "use offside trap". FM24 can't change it and the engine never reads it |
-| 2 | 9 | 512 | step up more |
-| 2 | 10 | 1024 | drop off more |
-| 2 | 11 | 2048 | time wasting: often |
-| 2 | 12 | 4096 | time wasting: sometimes |
-| 2 | 13 | 8192 | trap inside |
-| 2 | 14 | 16384 | trap outside |
-| 2 | 15 | 32768 | stop crosses |
-| 2 | 16 | 65536 | invite crosses |
+| Word | Bit | Value      | Option                                                                                  |
+|------|-----|------------|-----------------------------------------------------------------------------------------|
+| 0    | 1   | 2          | passing directness: much more direct                                                    |
+| 0    | 2   | 4          | passing directness: more direct                                                         |
+| 0    | 3   | 8          | passing directness: shorter                                                             |
+| 0    | 4   | 16         | passing directness: much shorter                                                        |
+| 0    | 5   | 32         | pass into space                                                                         |
+| 0    | 6   | 64         | play out of defence                                                                     |
+| 0    | 7   | 128        | hit early crosses                                                                       |
+| 0    | 8   | 256        | crosses: floated                                                                        |
+| 0    | 9   | 512        | crosses: whipped                                                                        |
+| 0    | 10  | 1024       | crosses: low                                                                            |
+| 0    | 11  | 2048       | run at defence                                                                          |
+| 0    | 12  | 4096       | dribble less                                                                            |
+| 0    | 13  | 8192       | shoot on sight                                                                          |
+| 0    | 14  | 16384      | work ball into box                                                                      |
+| 0    | 15  | 32768      | play for set pieces                                                                     |
+| 0    | 16  | 65536      | be more expressive                                                                      |
+| 0    | 17  | 131072     | be more disciplined                                                                     |
+| 0    | 18  | 262144     | focus play: down the left                                                               |
+| 0    | 19  | 524288     | focus play: down the right                                                              |
+| 0    | 20  | 1048576    | focus play: through the middle                                                          |
+| 0    | 23  | 8388608    | overlap left                                                                            |
+| 0    | 24  | 16777216   | overlap right                                                                           |
+| 0    | 26  | 67108864   | underlap left                                                                           |
+| 0    | 27  | 134217728  | underlap right                                                                          |
+| 0    | 28  | 268435456  | goalkeeper: roll it out                                                                 |
+| 0    | 29  | 536870912  | goalkeeper: throw it long                                                               |
+| 0    | 30  | 1073741824 | goalkeeper: take short kicks                                                            |
+| 0    | 31  | 2147483648 | goalkeeper: take long kicks                                                             |
+| 1    | 0   | 1          | distribute to centre-backs                                                              |
+| 1    | 1   | 2          | distribute to full-backs                                                                |
+| 1    | 2   | 4          | distribute to flanks                                                                    |
+| 1    | 3   | 8          | distribute over opposition defence                                                      |
+| 1    | 4   | 16         | distribute to playmaker                                                                 |
+| 1    | 5   | 32         | distribute to target forward                                                            |
+| 1    | 7   | 128        | goalkeeper: distribute quickly                                                          |
+| 1    | 8   | 256        | goalkeeper: slow pace down                                                              |
+| 1    | 9   | 512        | tempo: much higher                                                                      |
+| 1    | 10  | 1024       | tempo: higher                                                                           |
+| 1    | 11  | 2048       | tempo: lower                                                                            |
+| 1    | 12  | 4096       | tempo: much lower                                                                       |
+| 1    | 13  | 8192       | attacking width: wide                                                                   |
+| 1    | 14  | 16384      | attacking width: fairly wide                                                            |
+| 1    | 15  | 32768      | attacking width: fairly narrow                                                          |
+| 1    | 16  | 65536      | attacking width: narrow                                                                 |
+| 1    | 17  | 131072     | when possession won: counter                                                            |
+| 1    | 18  | 262144     | when possession won: hold shape                                                         |
+| 1    | 21  | 2097152    | defensive line: much higher                                                             |
+| 1    | 22  | 4194304    | defensive line: higher                                                                  |
+| 1    | 23  | 8388608    | defensive line: lower                                                                   |
+| 1    | 24  | 16777216   | defensive line: much lower                                                              |
+| 1    | 26  | 67108864   | line of engagement: high press                                                          |
+| 1    | 27  | 134217728  | line of engagement: mid block                                                           |
+| 1    | 28  | 268435456  | line of engagement: low block                                                           |
+| 1    | 30  | 1073741824 | trigger press: much more often                                                          |
+| 1    | 31  | 2147483648 | trigger press: more often                                                               |
+| 2    | 0   | 1          | trigger press: less often                                                               |
+| 2    | 1   | 2          | trigger press: much less often                                                          |
+| 2    | 2   | 4          | prevent short goalkeeper distribution                                                   |
+| 2    | 3   | 8          | when possession lost: counter-press                                                     |
+| 2    | 4   | 16         | when possession lost: regroup                                                           |
+| 2    | 5   | 32         | tackling: get stuck in                                                                  |
+| 2    | 6   | 64         | tackling: stay on feet                                                                  |
+| 2    | 8   | 256        | legacy, probably "use offside trap". FM24 can't change it and the engine never reads it |
+| 2    | 9   | 512        | step up more                                                                            |
+| 2    | 10  | 1024       | drop off more                                                                           |
+| 2    | 11  | 2048       | time wasting: often                                                                     |
+| 2    | 12  | 4096       | time wasting: sometimes                                                                 |
+| 2    | 13  | 8192       | trap inside                                                                             |
+| 2    | 14  | 16384      | trap outside                                                                            |
+| 2    | 15  | 32768      | stop crosses                                                                            |
+| 2    | 16  | 65536      | invite crosses                                                                          |
 
 Groups where only one option can be on, as in the game: each "passing
 directness", "crosses", "tempo", "attacking width", "defensive line", "line
@@ -640,24 +729,24 @@ For your side, `slot[i]` is played by `player[i]`.
 **Position**: one position bit, plus a side bit when the formation has two of
 that position (two centre-backs, two strikers):
 
-| Bit | Value | Position |
-|---|---|---|
-| 0 | 1 | GK |
-| 2 | 4 | DR |
-| 3 | 8 | DL |
-| 4 | 16 | DC |
-| 5 | 32 | WBR |
-| 6 | 64 | WBL |
-| 7 | 128 | DM |
-| 8 | 256 | MR |
-| 9 | 512 | ML |
-| 10 | 1024 | MC |
-| 11 | 2048 | AMR |
-| 12 | 4096 | AML |
-| 13 | 8192 | AMC |
-| 14 | 16384 | ST |
-| 20 | 1048576 | the left one of a pair |
-| 21 | 2097152 | the right one of a pair |
+| Bit | Value   | Position                |
+|-----|---------|-------------------------|
+| 0   | 1       | GK                      |
+| 2   | 4       | DR                      |
+| 3   | 8       | DL                      |
+| 4   | 16      | DC                      |
+| 5   | 32      | WBR                     |
+| 6   | 64      | WBL                     |
+| 7   | 128     | DM                      |
+| 8   | 256     | MR                      |
+| 9   | 512     | ML                      |
+| 10  | 1024    | MC                      |
+| 11  | 2048    | AMR                     |
+| 12  | 4096    | AML                     |
+| 13  | 8192    | AMC                     |
+| 14  | 16384   | ST                      |
+| 20  | 1048576 | the left one of a pair  |
+| 21  | 2097152 | the right one of a pair |
 
 For example, the right-hand of two centre-backs is 16 + 2097152 = `2097168`,
 and FM's "DMCL" is DM + left = 128 + 1048576 = `1048704`. This order differs
@@ -669,60 +758,60 @@ instructions with them. `formation[i]` holds a copy of each slot's position.
 
 **Role and duty**: one role bit plus one duty bit:
 
-| Bit | Value | Duty |
-|---|---|---|
-| 21 | 2097152 | defend |
-| 22 | 4194304 | support |
-| 23 | 8388608 | attack |
-| 34 | 17179869184 | automatic |
+| Bit | Value       | Duty      |
+|-----|-------------|-----------|
+| 21  | 2097152     | defend    |
+| 22  | 4194304     | support   |
+| 23  | 8388608     | attack    |
+| 34  | 17179869184 | automatic |
 
-| Bit | Value | Role |
-|---|---|---|
-| 0 | 1 | goalkeeper |
-| 1 | 2 | central_defender |
-| 2 | 4 | full_back |
-| 3 | 8 | wing_back |
-| 4 | 16 | defensive_midfielder |
-| 5 | 32 | central_midfielder |
-| 6 | 64 | wide_midfielder |
-| 7 | 128 | winger |
-| 9 | 512 | attacking_midfielder |
-| 10 | 1024 | deep_lying_forward |
-| 11 | 2048 | advanced_forward |
-| 12 | 4096 | sweeper_keeper |
-| 14 | 16384 | libero |
-| 15 | 32768 | deep_lying_playmaker |
-| 16 | 65536 | box_to_box_midfielder |
-| 17 | 131072 | advanced_playmaker |
-| 18 | 262144 | target_man (target forward) |
-| 19 | 524288 | poacher |
-| 20 | 1048576 | complete_forward |
-| 24 | 16777216 | ball_playing_defender |
-| 27 | 134217728 | inside_forward |
-| 28 | 268435456 | ball_winning_midfielder |
-| 29 | 536870912 | no_nonsense_centre_back |
-| 30 | 1073741824 | defensive_winger |
-| 31 | 2147483648 | pressing_forward |
-| 32 | 4294967296 | trequartista |
-| 33 | 8589934592 | anchor_man |
-| 35 | 34359738368 | half_back |
-| 36 | 68719476736 | no_nonsense_full_back |
-| 37 | 137438953472 | enganche |
-| 38 | 274877906944 | complete_wing_back |
-| 39 | 549755813888 | regista |
-| 40 | 1099511627776 | false_nine |
-| 41 | 2199023255552 | shadow_striker |
-| 42 | 4398046511104 | wide_target_man |
-| 43 | 8796093022208 | wide_playmaker |
-| 44 | 17592186044416 | inverted_wing_back |
-| 45 | 35184372088832 | raumdeuter |
-| 46 | 70368744177664 | roaming_playmaker |
-| 47 | 140737488355328 | mezzala |
-| 48 | 281474976710656 | carrilero |
-| 49 | 562949953421312 | inverted_winger |
-| 50 | 1125899906842624 | segundo_volante |
-| 51 | 2251799813685248 | wide_centre_back |
-| 52 | 4503599627370496 | inverted_full_back |
+| Bit | Value            | Role                        |
+|-----|------------------|-----------------------------|
+| 0   | 1                | goalkeeper                  |
+| 1   | 2                | central_defender            |
+| 2   | 4                | full_back                   |
+| 3   | 8                | wing_back                   |
+| 4   | 16               | defensive_midfielder        |
+| 5   | 32               | central_midfielder          |
+| 6   | 64               | wide_midfielder             |
+| 7   | 128              | winger                      |
+| 9   | 512              | attacking_midfielder        |
+| 10  | 1024             | deep_lying_forward          |
+| 11  | 2048             | advanced_forward            |
+| 12  | 4096             | sweeper_keeper              |
+| 14  | 16384            | libero                      |
+| 15  | 32768            | deep_lying_playmaker        |
+| 16  | 65536            | box_to_box_midfielder       |
+| 17  | 131072           | advanced_playmaker          |
+| 18  | 262144           | target_man (target forward) |
+| 19  | 524288           | poacher                     |
+| 20  | 1048576          | complete_forward            |
+| 24  | 16777216         | ball_playing_defender       |
+| 27  | 134217728        | inside_forward              |
+| 28  | 268435456        | ball_winning_midfielder     |
+| 29  | 536870912        | no_nonsense_centre_back     |
+| 30  | 1073741824       | defensive_winger            |
+| 31  | 2147483648       | pressing_forward            |
+| 32  | 4294967296       | trequartista                |
+| 33  | 8589934592       | anchor_man                  |
+| 35  | 34359738368      | half_back                   |
+| 36  | 68719476736      | no_nonsense_full_back       |
+| 37  | 137438953472     | enganche                    |
+| 38  | 274877906944     | complete_wing_back          |
+| 39  | 549755813888     | regista                     |
+| 40  | 1099511627776    | false_nine                  |
+| 41  | 2199023255552    | shadow_striker              |
+| 42  | 4398046511104    | wide_target_man             |
+| 43  | 8796093022208    | wide_playmaker              |
+| 44  | 17592186044416   | inverted_wing_back          |
+| 45  | 35184372088832   | raumdeuter                  |
+| 46  | 70368744177664   | roaming_playmaker           |
+| 47  | 140737488355328  | mezzala                     |
+| 48  | 281474976710656  | carrilero                   |
+| 49  | 562949953421312  | inverted_winger             |
+| 50  | 1125899906842624 | segundo_volante             |
+| 51  | 2251799813685248 | wide_centre_back            |
+| 52  | 4503599627370496 | inverted_full_back          |
 
 Example: a sweeper keeper on defend is 4096 + 2097152 = `2101248`; a
 pressing forward on support is 2147483648 + 4194304 = `2151677952`.
@@ -750,38 +839,38 @@ instructions. When you set an instruction in the game, it is stored in
 that, make the same edit in all of the slot's sets. Which set the engine reads
 (probably the one for the slot's current role) hasn't been tested.
 
-| Word | Bit | Value | Instruction |
-|---|---|---|---|
-| 0 | 1 | 2 | unknown (seen once; perhaps "shorter passing", which otherwise sets no bit) |
-| 0 | 2 | 4 | more direct passing |
-| 0 | 3 | 8 | take more risks |
-| 0 | 4 | 16 | take fewer risks |
-| 0 | 5 | 32 | cross more often |
-| 0 | 6 | 64 | cross less often |
-| 0 | 7 | 128 | cross from deep |
-| 0 | 8 | 256 | cross from byline |
-| 0 | 9 | 512 | cross to near post |
-| 0 | 10 | 1024 | cross to far post |
-| 0 | 11 | 2048 | cross to centre |
-| 0 | 12 | 4096 | cross to target forward |
-| 0 | 13 | 8192 | dribble more |
-| 0 | 14 | 16384 | dribble less |
-| 0 | 15 | 32768 | run wide with ball |
-| 0 | 16 | 65536 | cut inside with ball |
-| 0 | 18 | 262144 | shoot more often |
-| 0 | 19 | 524288 | shoot less often |
-| 0 | 22 | 4194304 | get further forward |
-| 0 | 23 | 8388608 | hold position |
-| 0 | 24 | 16777216 | roam from position |
-| 0 | 25 | 33554432 | stay wider |
-| 0 | 26 | 67108864 | sit narrower |
-| 0 | 27 | 134217728 | move into channels |
-| 0 | 30 | 1073741824 | trigger press less often (the only option besides balanced) |
-| 0 | 31 | 2147483648 | tackle harder |
-| 1 | 0 | 1 | ease off tackles |
-| 1 | 1 | 2 | mark tighter |
-| 1 | 2 | 4 | mark a specific player |
-| 1 | 3 | 8 | mark a specific position |
+| Word | Bit | Value      | Instruction                                                                 |
+|------|-----|------------|-----------------------------------------------------------------------------|
+| 0    | 1   | 2          | unknown (seen once; perhaps "shorter passing", which otherwise sets no bit) |
+| 0    | 2   | 4          | more direct passing                                                         |
+| 0    | 3   | 8          | take more risks                                                             |
+| 0    | 4   | 16         | take fewer risks                                                            |
+| 0    | 5   | 32         | cross more often                                                            |
+| 0    | 6   | 64         | cross less often                                                            |
+| 0    | 7   | 128        | cross from deep                                                             |
+| 0    | 8   | 256        | cross from byline                                                           |
+| 0    | 9   | 512        | cross to near post                                                          |
+| 0    | 10  | 1024       | cross to far post                                                           |
+| 0    | 11  | 2048       | cross to centre                                                             |
+| 0    | 12  | 4096       | cross to target forward                                                     |
+| 0    | 13  | 8192       | dribble more                                                                |
+| 0    | 14  | 16384      | dribble less                                                                |
+| 0    | 15  | 32768      | run wide with ball                                                          |
+| 0    | 16  | 65536      | cut inside with ball                                                        |
+| 0    | 18  | 262144     | shoot more often                                                            |
+| 0    | 19  | 524288     | shoot less often                                                            |
+| 0    | 22  | 4194304    | get further forward                                                         |
+| 0    | 23  | 8388608    | hold position                                                               |
+| 0    | 24  | 16777216   | roam from position                                                          |
+| 0    | 25  | 33554432   | stay wider                                                                  |
+| 0    | 26  | 67108864   | sit narrower                                                                |
+| 0    | 27  | 134217728  | move into channels                                                          |
+| 0    | 30  | 1073741824 | trigger press less often (the only option besides balanced)                 |
+| 0    | 31  | 2147483648 | tackle harder                                                               |
+| 1    | 0   | 1          | ease off tackles                                                            |
+| 1    | 1   | 2          | mark tighter                                                                |
+| 1    | 2   | 4          | mark a specific player                                                      |
+| 1    | 3   | 8          | mark a specific position                                                    |
 
 Unnamed bits (e.g. `bit 29`) appear in some role sets the game made itself.
 Leave them as they are.
@@ -797,11 +886,11 @@ position bit set (see the position table).
 values followed by six `u8`. In the one case mapped (marking Bristol City's
 goalkeeper), four consecutive fields changed, most likely these four `u32`:
 
-| Field | Values |
-|---|---|
-| 1st: tight marking | 0 none, 1 never, 2 always |
-| 2nd: trigger press | 0 none, 1 never, 2 always |
-| 3rd: tackling | 0 none, 1 normal, 2 easy, 3 hard |
+| Field               | Values                            |
+|---------------------|-----------------------------------|
+| 1st: tight marking  | 0 none, 1 never, 2 always         |
+| 2nd: trigger press  | 0 none, 1 never, 2 always         |
+| 3rd: tackling       | 0 none, 1 normal, 2 easy, 3 hard  |
 | 4th: show onto foot | 0 none, 1 left, 2 right, 3 weaker |
 
 Which record belongs to which opponent isn't mapped yet.
@@ -934,6 +1023,9 @@ name used above is unique.
   database](#values-copied-from-the-games-database) (condition, sharpness,
   personality, ...).
 - Player instruction bit 0:1, and the other unnamed bits.
+- The [staff attributes](#staff-attributes) named `unknown_*`, which of each
+  `_a`/`_b` pair is which, and how much each of the manager's attributes the
+  engine reads changes results.
 - Which set-piece routine is which, which takers list is which set piece, and
   which opposition record is which opponent.
 

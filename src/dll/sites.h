@@ -56,6 +56,7 @@ enum PlayerField {
 	SITE_PLAYER_UID = 0x437495A,        // person unique ID (also other IDs; the first DB match wins)
 	SITE_PLAYER_RATINGS = 0x1A808F5,    // 69 bytes: 15 positions (1-20) + 54 attributes (1-100)
 	SITE_BACKROOM_FIRST = 0x1A83EEB,    // first write of each backroom/manager entry
+	SITE_STAFF_ATTRIBUTES = 0x1A83FDF,  // MATCH_STAFF+0x60: 52 bytes of staff attributes
 	SITE_PLAYER_ABILITY = 0x1A80A2B,    // MATCH_PLAYER_DATA+0x60: ability, caps every role rating
 	SITE_PLAYER_LEADERSHIP = 0x1A80AD4, // MATCH_PLAYER_DATA+0x70: driven by leadership
 	SITE_ROLE_RATING = 0x1A80FAC,       // role rating entries {u16 rating, u8 role, u8 position}:

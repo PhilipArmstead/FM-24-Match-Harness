@@ -19,6 +19,7 @@
 // <value> is one of u8/u16/u32/u64 (unsigned integers), str (a u32 byte length followed by
 // that many UTF-8 bytes: the two writes merged into one editable string), hex (raw bytes) or u8map
 // (a player's ratings: 15 positions 1-20, then 54 attributes 1-100 = in-game value x 5).
+// A staff member's 52-byte attributes write is split into 52 named u8 fields.
 #pragma once
 
 #include "database.h"

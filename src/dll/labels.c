@@ -128,6 +128,64 @@ static const char *const ratingNames[69] = {
 	"concentration",
 };
 
+// MATCH_STAFF+0x60, byte by byte, matched against two staff members' FMRTE profiles
+// (docs/FIXTURE.md#staff-attributes). Bytes 0-26 are on the 1-20 scale, 27-51 on 1-100. "_a"/"_b"
+// pairs held the same value in both profiles, so which is which is unknown.
+static const char *const staffAttributeNames[STAFF_ATTRIBUTE_COUNT] = {
+	"tactical_attacking",
+	"business",
+	"unknown_2",
+	"tactical_directness",
+	"determination_or_discipline",
+	"tactical_free_roles",
+	"interference",
+	"tactical_marking",
+	"tactical_offside",
+	"patience",
+	"pressing_or_hardness_of_training_a",
+	"resources",
+	"working_with_youngsters",
+	"unknown_13",
+	"buying_players",
+	"mind_games",
+	"tactical_sitting_back",
+	"tactical_use_of_playmaker",
+	"tactical_use_of_substitutions",
+	"tactical_depth",
+	"tactical_flamboyancy",
+	"tactical_flexibility",
+	"pressing_or_hardness_of_training_b",
+	"squad_rotation",
+	"tactical_tempo",
+	"tactical_width",
+	"unknown_26",
+	"coaching_gk_shot_stopping",
+	"man_management_or_judging_ca_a",
+	"judging_pa",
+	"man_management_or_judging_ca_b",
+	"motivating",
+	"physiotherapy",
+	"tactical_knowledge",
+	"coaching_attacking",
+	"coaching_defending",
+	"coaching_fitness",
+	"coaching_mental",
+	"coaching_technical",
+	"coaching_tactical",
+	"coaching_dirtiness_allowance",
+	"coaching_gk_handling",
+	"coaching_gk_distribution",
+	"coaching_versatility",
+	"judging_player_data",
+	"judging_team_data",
+	"presenting_data",
+	"sports_science",
+	"unknown_48",
+	"negotiating",
+	"judging_staff_ability",
+	"coaching_set_pieces",
+};
+
 // Player trait (preferred move) bits, in FMRTE's order (docs/PLAN.md Phase 21). Bit 39 is shown in
 // game as "cuts inside from both wings".
 static const char *const traitNames[] = {
@@ -231,6 +289,12 @@ static const MemberName memberNames[] = {
 	{"fn_1a7fdc0+0x67", "personality.ambition", FLAGS_NONE},        // PERSON+0x79
 	{"fn_1a7fdc0+0x68", "personality.adaptability", FLAGS_NONE},    // PERSON+0x78
 	{"MATCH_TEAM_BASE+0x112", "reputation", FLAGS_NONE},            // TEAM+0xA8
+	// Staff (manager, backroom and team_extra entries), matched against FMRTE profiles.
+	{"MATCH_STAFF+0x98", "home_reputation", FLAGS_NONE},
+	{"MATCH_STAFF+0x9a", "current_reputation", FLAGS_NONE},
+	{"MATCH_STAFF+0x9c", "world_reputation", FLAGS_NONE},
+	{"MATCH_STAFF+0x9e", "current_ability", FLAGS_NONE},
+	{"MATCH_STAFF+0xa0", "potential_ability", FLAGS_NONE},
 };
 
 // Extra bits of tactic position and role masks (docs/PLAN.md Phase 15, 17).
@@ -291,6 +355,10 @@ static void labelRecord(Walk *walk, size_t i);
 
 const char *labels_ratingName(size_t index) {
 	return index < sizeof ratingNames / sizeof ratingNames[0] ? ratingNames[index] : "?";
+}
+
+const char *labels_staffAttributeName(size_t index) {
+	return index < STAFF_ATTRIBUTE_COUNT ? staffAttributeNames[index] : "?";
 }
 
 const char *labels_flagName(const FieldLabel *label, unsigned bit) {
@@ -678,6 +746,11 @@ static void labelRecord(Walk *walk, size_t i) {
 	label->member = siteMembers_find(record->site);
 	labelMemberField(walk, label);
 	labelPersonField(walk, label, record);
+	if (record->site == SITE_STAFF_ATTRIBUTES && record->length == STAFF_ATTRIBUTE_COUNT) {
+		// The writer names each byte "<name>.<attribute>".
+		(void)snprintf(label->name, sizeof label->name, "%s.attributes", walk->block);
+		label->staffAttributes = true;
+	}
 	if (strcmp(walk->block, walk->previousBlock) != 0 && label->name[0] == 0) {
 		(void)snprintf(label->name, sizeof label->name, "%s", walk->block);
 	}

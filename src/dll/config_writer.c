@@ -13,7 +13,10 @@
 #include <string.h>
 
 
-enum { MAX_MERGED_STRING = 4096 };
+enum {
+	MAX_MERGED_STRING = 4096,
+	STAFF_ATTRIBUTES_MEMBER = 0x60, // MATCH_STAFF offset of the staff attributes (SITE_STAFF_ATTRIBUTES)
+};
 
 static void writeEscaped(FILE *file, const uint8_t *text, size_t length);
 static void writeEscapedString(FILE *file, const char *text);
@@ -21,6 +24,13 @@ static size_t sequenceLength(uint8_t lead);
 static bool isText(const uint8_t *text, size_t length);
 static bool isStringPair(const Serialised *serialised, size_t i);
 static void writeRatings(FILE *file, const uint8_t *value);
+static void writeStaffAttributes(
+	FILE *file,
+	const TraceRecord *record,
+	const FieldLabel *label,
+	const uint8_t *value,
+	bool full
+);
 static void writeScalar(FILE *file, const uint8_t *value, uint32_t length);
 static void writeFlags(FILE *file, const FieldLabel *label, const uint8_t *value, uint32_t length);
 static size_t writeField(
@@ -144,6 +154,33 @@ static void writeRatings(FILE *file, const uint8_t *value) {
 	fputc('}', file);
 }
 
+// Writes a staff attributes record as one named u8 field per byte; the encoder writes them back
+// as consecutive bytes, so the record is unchanged. Leaves the last field's object open.
+static void writeStaffAttributes(
+	FILE *file,
+	const TraceRecord *record,
+	const FieldLabel *label,
+	const uint8_t *value,
+	bool full
+) {
+	for (size_t k = 0; k < STAFF_ATTRIBUTE_COUNT; ++k) {
+		if (k) {
+			fprintf(file, "},\n    {");
+		}
+		if (full) {
+			fprintf(file, "\"site\": \"%x/%x\", \"p\": %u, ", record->site, record->caller, record->path);
+		}
+		char name[LABEL_LENGTH + 48];
+		(void)snprintf(name, sizeof name, "%s.%s", label->name, labels_staffAttributeName(k));
+		fprintf(file, "\"name\": ");
+		writeEscapedString(file, name);
+		if (full) {
+			fprintf(file, ", \"member\": \"MATCH_STAFF+0x%zx\"", STAFF_ATTRIBUTES_MEMBER + k);
+		}
+		fprintf(file, ", \"u8\": %u", value[k]);
+	}
+}
+
 static void writeScalar(FILE *file, const uint8_t *value, uint32_t length) {
 	switch (length) {
 		case 1: fprintf(file, "\"u8\": %u", value[0]); break;
@@ -198,6 +235,11 @@ static size_t writeField(
 	const FieldLabel *label = &labels[i];
 	size_t consumed = 1;
 	fprintf(file, "    {");
+	if (label->staffAttributes) {
+		writeStaffAttributes(file, record, label, value, full);
+		fprintf(file, "}%s\n", i + 1 < serialised->recordCount ? "," : "");
+		return consumed;
+	}
 	if (full) {
 		fprintf(file, "\"site\": \"%x/%x\", \"p\": %u, ", record->site, record->caller, record->path);
 	}

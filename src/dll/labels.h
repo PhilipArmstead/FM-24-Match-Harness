@@ -31,6 +31,7 @@ typedef struct FieldLabel {
 	char name[LABEL_LENGTH];         // "" except on the first field of a block and key fields
 	char player[PLAYER_NAME_LENGTH]; // the player's name, on the first field of a player block
 	bool ratings;                    // the 69-byte positions + attributes field
+	bool staffAttributes;            // the 52-byte staff attributes field, written one u8 each
 	const char *member;              // the struct member written (site_members.h), or NULL
 	FlagKind flags;                  // how to name the field's set bits, if it is a bit set
 	unsigned flagWord;               // which word of a multi-word bit set
@@ -44,3 +45,6 @@ const char *labels_flagName(const FieldLabel *label, unsigned bit);
 
 // The names of a ratings field's 69 values: 15 positions, then 54 attributes (database order).
 const char *labels_ratingName(size_t index);
+
+// The names of a staff attributes field's 52 bytes: 0-26 on the 1-20 scale, 27-51 on 1-100.
+const char *labels_staffAttributeName(size_t index);

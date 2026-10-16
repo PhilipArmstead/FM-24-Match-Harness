@@ -15,7 +15,7 @@
 // same version (from another folder) cannot create the pipe and stays idle.
 #pragma once
 
-#define HARNESS_PROTOCOL L"1.0.16"
+#define HARNESS_PROTOCOL L"1.0.18"
 #define HARNESS_DLL_NAME (L"fm24-harness-" HARNESS_PROTOCOL L".dll")
 // Injected when HARNESS_DLL_NAME is missing (e.g. a renamed release copy). It must have been built
 // with the same HARNESS_PROTOCOL, or the runner never sees its pipe.

@@ -109,7 +109,7 @@ enum ThreadRngLayout {
 	TLS_PCG = 352,      // object: +8 state, +16 increment
 };
 
-enum { PLAYER_RATING_COUNT = 69 };
+enum { PLAYER_RATING_COUNT = 69, STAFF_ATTRIBUTE_COUNT = 52 };
 
 // Second argument of GAME_MATCH__init_from_fixture, as laid out on MatchBuilder_Create's stack.
 typedef struct InitArgs {

@@ -484,6 +484,65 @@ TEST(labels_instruction_runs_in_order) {
 	free(labels);
 }
 
+TEST(labels_staff_attributes_byte_by_byte) {
+	uint8_t bytes[4 + STAFF_ATTRIBUTE_COUNT] = {0};
+	for (size_t k = 0; k < STAFF_ATTRIBUTE_COUNT; ++k) {
+		bytes[4 + k] = (uint8_t)(k + 1);
+	}
+	TraceRecord records[] = {
+		{.site = SITE_BACKROOM_FIRST, .offset = 0, .length = 4},
+		{.site = SITE_STAFF_ATTRIBUTES, .offset = 4, .length = STAFF_ATTRIBUTE_COUNT},
+	};
+	char *paths[] = {"1ac77d5>1b6f51f>1ae992a"};
+	Serialised serialised = {
+		.bytes = {.data = bytes, .length = sizeof bytes},
+		.records = records,
+		.recordCount = 2,
+		.paths = paths,
+		.pathCount = 1,
+	};
+	PeopleIndex people = {0};
+	FieldLabel *labels = labels_compute(&serialised, &people);
+	ASSERT_BOOL_EQ(labels != NULL, true);
+	if (!labels) {
+		return;
+	}
+	ASSERT_BOOL_EQ(labels[1].staffAttributes, true);
+	ASSERT_BOOL_EQ(strcmp(labels[1].name, "home.backroom[0].attributes") == 0, true);
+	wchar_t directory[MAX_PATH] = {0};
+	wchar_t path[MAX_PATH] = {0};
+	DWORD length = GetTempPathW(MAX_PATH, directory);
+	ASSERT_BOOL_EQ(length > 0 && length < MAX_PATH, true);
+	ASSERT_BOOL_EQ(length && length < MAX_PATH && GetTempFileNameW(directory, L"fma", 0, path), true);
+	FILE *file = path[0] ? _wfopen(path, L"w+b") : NULL;
+	ASSERT_BOOL_EQ(file != NULL, true);
+	if (file) {
+		ASSERT_INT_EQ((int)writeField(file, &serialised, labels, 1, SIZE_MAX, false), 1);
+		rewind(file);
+		char line[256];
+		size_t fields = 0;
+		while (fgets(line, sizeof line, file)) {
+			if (fields == 0) {
+				ASSERT_BOOL_EQ(
+					strstr(line, "\"name\": \"home.backroom[0].attributes.tactical_attacking\", \"u8\": 1}") !=
+						NULL,
+					true
+				);
+			}
+			if (fields == STAFF_ATTRIBUTE_COUNT - 1) {
+				ASSERT_BOOL_EQ(strstr(line, ".attributes.coaching_set_pieces\", \"u8\": 52}") != NULL, true);
+			}
+			++fields;
+		}
+		ASSERT_INT_EQ((int)fields, STAFF_ATTRIBUTE_COUNT);
+		(void)fclose(file);
+	}
+	if (path[0]) {
+		(void)DeleteFileW(path);
+	}
+	free(labels);
+}
+
 TEST(only_merges_valid_utf8_text) {
 	static const char *const valid[] = {
 		"text",
@@ -544,6 +603,9 @@ void registerDllTests(void) {
 	);
 	test_run("DLL rejects truncated detailed-report paths", test_rejects_truncated_statistics_paths);
 	test_run("DLL numbers instruction runs consistently", test_labels_instruction_runs_in_order);
+	test_run(
+		"DLL exports staff attributes as one named u8 each", test_labels_staff_attributes_byte_by_byte
+	);
 	test_run("DLL only exports valid UTF-8 as JSON text", test_only_merges_valid_utf8_text);
 	buffer_free(&engineOutput);
 }
