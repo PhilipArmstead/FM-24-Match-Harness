@@ -10,10 +10,10 @@
 //              ["member": game object member,] ["player": name,] ["flags": [...],] <value>
 //              [, "role": "seed"]}
 //
-// "away_team" (written when `awayTeam` is not 0) is the unique ID of a team that replaced the
-// fixture's away team (job_replace.c); `run` rebuilds the input against it.
+// "home_team"/"away_team" (written for nonzero `teams` IDs) identify teams replacing the
+// fixture's original sides (job_replace.c); `run` rebuilds the input with them.
 //
-// Only "format", "away_team" and each field's <value> are read back. The research keys (bytes,
+// Only "format", team overrides and each field's <value> are read back. The research keys (bytes,
 // paths, site, p, member) are written only with `full`.
 //
 // <value> is one of u8/u16/u32/u64 (unsigned integers), str (a u32 byte length followed by
@@ -34,6 +34,6 @@ bool configWriter_write(
 	const Serialised *serialised,
 	const char *source,
 	const PeopleIndex *people,
-	uint32_t awayTeam,
+	const uint32_t teams[2],
 	bool full
 );

@@ -332,6 +332,9 @@ TEST(rejects_invalid_configs) {
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":-1}",
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":1.0}",
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"away_team\":1",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"home_team\":4294967296}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"home_team\":-1}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[],\"home_team\":1.0}",
 	};
 	FixtureData *data = malloc(sizeof *data);
 	ASSERT_BOOL_EQ(data != NULL, true);
@@ -498,20 +501,31 @@ TEST(reads_replacement_metadata_during_encoding) {
 		"{\"format\":\"fm24-match-config/1\",\"away_team\":677,\"fields\":[{\"u8\":42}]}",
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}],\"away_team\":4294967295}",
 		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}]}",
+		"{\"format\":\"fm24-match-config/1\",\"home_team\":678,\"fields\":[{\"u8\":42}]}",
+		"{\"format\":\"fm24-match-config/"
+		"1\",\"home_team\":678,\"fields\":[{\"u8\":42}],\"away_team\":677}",
 	};
-	static const uint32_t expected[] = {677, UINT32_MAX, 0};
+	static const uint32_t expected[][2] = {{0, 677}, {0, UINT32_MAX}, {0, 0}, {678, 0}, {678, 677}};
 	for (size_t i = 0; i < sizeof configs / sizeof configs[0]; ++i) {
 		ByteBuffer bytes = {0};
 		char error[256] = "";
-		uint32_t awayTeam = 123;
+		uint32_t teams[2] = {123, 456};
 		ASSERT_BOOL_EQ(
-			matchConfig_encode(configs[i], strlen(configs[i]), &bytes, &awayTeam, error, sizeof error),
-			true
+			matchConfig_encode(configs[i], strlen(configs[i]), &bytes, teams, error, sizeof error), true
 		);
-		ASSERT_BOOL_EQ(awayTeam == expected[i], true);
+		ASSERT_BOOL_EQ(teams[0] == expected[i][0] && teams[1] == expected[i][1], true);
 		ASSERT_BOOL_EQ(bytes.length == 1 && bytes.data[0] == 42, true);
 		buffer_free(&bytes);
 	}
+	ByteBuffer bytes = {0};
+	char error[256] = "";
+	uint32_t teams[2] = {123, 456};
+	const char invalid[] = "{\"format\":\"fm24-match-config/1\",\"home_team\":678,\"away_team\":-1}";
+	ASSERT_BOOL_EQ(
+		matchConfig_encode(invalid, sizeof invalid - 1, &bytes, teams, error, sizeof error), false
+	);
+	ASSERT_BOOL_EQ(teams[0] == 0 && teams[1] == 0 && error[0] != 0, true);
+	buffer_free(&bytes);
 }
 
 TEST(reads_baseline_fixture) {

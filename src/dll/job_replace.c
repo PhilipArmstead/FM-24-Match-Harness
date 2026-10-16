@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Job "replace_away": an input rebuilt by the game against another away team, written as a JSON
-// config. The input's edits are re-applied (seed_build.h), except those to the away team it
-// replaces. The config's "away_team" names the new team, so that `run` rebuilds it the same way.
+// Rebuilds either side with another team, keeping edits outside the replaced team's block.
+// The config's home/away overrides let `run` reproduce both replacements for every seed.
 
 #include "database.h"
 #include "files.h"
@@ -22,11 +21,12 @@
 
 enum { TEAM_NAME_LENGTH = 64 };
 
-static bool findTeams(const Job *job, uint8_t **current, uint8_t **team, char *error, size_t size);
+static bool
+findTeams(const Job *job, uint8_t *current[2], uint8_t **team, char *error, size_t size);
 static bool reserialise(ByteBuffer *bytes, Serialised *out);
 static void writeConfig(const Job *job, SeedBuilder *builder, uint8_t *team, uint32_t seed);
 
-void jobs_replaceAway(const Job *job) {
+void jobs_replaceTeam(const Job *job) {
 	ByteBuffer input = {0};
 	size_t seedOffset = 0;
 	if (!output_wantsJson(job->output)) {
@@ -40,14 +40,17 @@ void jobs_replaceAway(const Job *job) {
 	}
 	uint32_t seed = memory_loadU32(input.data + seedOffset);
 	char error[512] = "";
-	uint8_t *current = NULL;
+	uint8_t *current[2] = {0};
 	uint8_t *team = NULL;
 	SeedBuilder builder;
-	bool ok = findTeams(job, &current, &team, error, sizeof error) &&
-						seedBuilder_open(&builder, &input, seed, current, error, sizeof error);
+	bool ok =
+		findTeams(job, current, &team, error, sizeof error) &&
+		seedBuilder_open(
+			&builder, &input, seed, (const uint8_t *[]){current[0], current[1]}, error, sizeof error
+		);
 	buffer_free(&input);
 	if (!ok) {
-		log_message("replace_away: %s", error);
+		log_message("replace team: %s", error);
 		job_writeResult("error: %s", error);
 		return;
 	}
@@ -55,10 +58,15 @@ void jobs_replaceAway(const Job *job) {
 	seedBuilder_close(&builder);
 }
 
-// The team the input was built against (NULL: the fixture's own) and the new one.
-static bool findTeams(const Job *job, uint8_t **current, uint8_t **team, char *error, size_t size) {
-	return (!job->awayTeam[0] || database_findTeam(job->awayTeam, current, error, size)) &&
-				 database_findTeam(job->team, team, error, size);
+// The input's team overrides (NULL: the fixture's own) and the new team.
+static bool
+findTeams(const Job *job, uint8_t *current[2], uint8_t **team, char *error, size_t size) {
+	for (unsigned side = 0; side < 2; ++side) {
+		if (job->teams[side][0] && !database_findTeam(job->teams[side], &current[side], error, size)) {
+			return false;
+		}
+	}
+	return database_findTeam(job->team, team, error, size);
 }
 
 // Loads serialised match bytes and serialises them again with their write records.
@@ -73,54 +81,63 @@ static bool reserialise(ByteBuffer *bytes, Serialised *out) {
 
 // Builds the fixture against the new team with the input's seed and edits, and writes it.
 static void writeConfig(const Job *job, SeedBuilder *builder, uint8_t *team, uint32_t seed) {
-	uint8_t *home = NULL;
-	uint8_t *fixtureAway = NULL;
-	(void)memory_readPointer(builder->next.fixture, FIXTURE_HOME, &home);
-	(void)memory_readPointer(builder->next.fixture, FIXTURE_AWAY, &fixtureAway);
-	if (team == home) {
-		job_writeResult("error: that is the home team");
+	unsigned side = job->command == JOB_REPLACE_AWAY;
+	const char *sideName = side ? "away" : "home";
+	uint8_t *original[2] = {0};
+	if (!memory_readPointer(builder->next.fixture, FIXTURE_HOME, &original[0]) ||
+			!memory_readPointer(builder->next.fixture, FIXTURE_AWAY, &original[1]) || !original[0] ||
+			!original[1]) {
+		job_writeResult("error: cannot read the fixture's teams");
 		return;
 	}
-	if (fixtureAway == database_findHumanTeam()) {
-		job_writeResult("error: your team is the away side; only an opponent can be replaced");
+	const uint8_t *opponent =
+		builder->teams[1 - side] ? builder->teams[1 - side] : original[1 - side];
+	if (team == opponent) {
+		job_writeResult("error: that is the %s team", side ? "home" : "away");
 		return;
 	}
 	size_t dropped = 0;
-	if (!seedBuilder_dropAwayEdits(builder, &dropped)) {
-		job_writeResult("error: cannot identify the away team's edits; see harness.log");
+	if (!seedBuilder_dropTeamEdits(builder, side, &dropped)) {
+		job_writeResult("error: cannot identify the %s team's edits; see harness.log", sideName);
 		return;
 	}
 	size_t kept = seedBuilder_editCount(builder);
-	builder->awayTeam = team == fixtureAway ? NULL : team;
+	builder->teams[side] = team == original[side] ? NULL : team;
+	const uint8_t *selected[2] = {builder->teams[0] ? builder->teams[0] : original[0],
+		builder->teams[1] ? builder->teams[1] : original[1]};
+	uint32_t teamIds[2] = {builder->teams[0] ? database_teamUniqueId(builder->teams[0]) : 0,
+		builder->teams[1] ? database_teamUniqueId(builder->teams[1]) : 0};
 	char homeName[TEAM_NAME_LENGTH];
 	char awayName[TEAM_NAME_LENGTH];
-	database_clubShortName(home, homeName, sizeof homeName);
-	database_clubShortName(team, awayName, sizeof awayName);
+	database_clubShortName(selected[0], homeName, sizeof homeName);
+	database_clubShortName(selected[1], awayName, sizeof awayName);
 	char source[256];
 	(void)snprintf(
 		source, sizeof source, "%s vs %s, %s, seed %u", homeName, awayName, builder->next.when, seed
 	);
-	log_message("replace_away: %s; %zu edits kept, %zu away edits dropped", source, kept, dropped);
+	log_message(
+		"replace_%s: %s; %zu edits kept, %zu %s edits dropped",
+		sideName,
+		source,
+		kept,
+		dropped,
+		sideName
+	);
 	ByteBuffer merged = {0};
 	Serialised serialised = {0};
 	if (!seedBuilder_build(builder, seed, &merged)) {
 		job_writeResult("error: the input's edits cannot be placed in the new build; see harness.log");
 	} else if (!reserialise(&merged, &serialised) ||
-						 !output_write(
-							 job->output,
-							 &serialised,
-							 source,
-							 builder->awayTeam ? database_teamUniqueId(team) : 0,
-							 job->full
-						 )) {
+						 !output_write(job->output, &serialised, source, teamIds, job->full)) {
 		job_writeResult("error: serialise or write failed; see harness.log");
 	} else {
 		job_writeResult(
-			"ok: %s (team %u); %zu edits kept, %zu edits to the old away team dropped",
+			"ok: %s (team %u); %zu edits kept, %zu edits to the old %s team dropped",
 			source,
 			database_teamUniqueId(team),
 			kept,
-			dropped
+			dropped,
+			sideName
 		);
 	}
 	trace_free(&serialised);

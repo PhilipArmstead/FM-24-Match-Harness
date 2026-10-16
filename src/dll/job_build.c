@@ -42,7 +42,7 @@ void jobs_buildNext(const Job *job) {
 	match_freeBuilt(match);
 	char source[256];
 	(void)snprintf(source, sizeof source, "%s, %s, seed %u", next.description, next.when, seed);
-	if (ok && output_write(job->output, &serialised, source, 0, job->full)) {
+	if (ok && output_write(job->output, &serialised, source, NULL, job->full)) {
 		log_message("build_next: wrote %zu bytes", serialised.bytes.length);
 		job_writeResult("ok: %s, %zu bytes", source, serialised.bytes.length);
 	} else {

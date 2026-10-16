@@ -56,12 +56,12 @@ static bool absolutePath(const wchar_t *argument, Path *out);
 static bool jobInputPath(Path *out);
 static void removeJobInput(const Path *path);
 static int submitAndReport(const char *job);
-static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t *awayTeam);
-static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t *awayTeam);
+static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t teams[2]);
+static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t teams[2]);
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away);
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
 static int printSummary(const Path *csvPath);
-static bool prepareInput(Path *input, uint32_t *awayTeam, bool *encoded);
+static bool prepareInput(Path *input, uint32_t teams[2], bool *encoded);
 static bool isSeedList(const wchar_t *text);
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options);
 static bool placeRunArgument(const wchar_t *argument, RunOptions *options);
@@ -89,13 +89,12 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 	Path output;
 	Path profile = {0};
 	char seeds[256];
-	uint32_t awayTeam = 0;
+	uint32_t teams[2] = {0};
 	bool encoded = false;
 	if (!absolutePath(options.input, &input) ||
 			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
 			(options.profile && !absolutePath(options.profile, &profile)) ||
-			!paths_toUtf8(options.seeds, seeds, sizeof seeds) ||
-			!prepareInput(&input, &awayTeam, &encoded)) {
+			!paths_toUtf8(options.seeds, seeds, sizeof seeds) || !prepareInput(&input, teams, &encoded)) {
 		return EXIT_FAILED;
 	}
 	printf("results: %s\n", output.utf8);
@@ -104,7 +103,7 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 		job,
 		sizeof job,
 		"command=run\ninput=%s\nseeds=%s\noutput=%s\nthreads=%lu\nprofile=%s\ndetailed=%d\n"
-		"human_control=%d\nkeep_build=%d\naway_team=%.0u\nprogress_window=%llu\n",
+		"human_control=%d\nkeep_build=%d\nhome_team=%.0u\naway_team=%.0u\nprogress_window=%llu\n",
 		input.utf8,
 		seeds,
 		output.utf8,
@@ -113,7 +112,8 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 		options.detailed,
 		options.humanControl,
 		options.keepBuild,
-		awayTeam,
+		teams[0],
+		teams[1],
 		(unsigned long long)progressWindow
 	);
 	printf("job submitted; waiting...\n");
@@ -153,19 +153,21 @@ int commands_getNextFixture(int argc, wchar_t **argv) {
 	return submitAndReport(job);
 }
 
-int commands_replaceAway(int argc, wchar_t **argv) {
+int commands_replaceTeam(int argc, wchar_t **argv) {
 	char result[CLIENT_RESULT_LENGTH];
-	return commands_replaceAwayWithResult(argc, argv, result, sizeof result);
+	return commands_replaceTeamWithResult(argc, argv, result, sizeof result);
 }
 
-int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	bool home = argc > 1 && wcscmp(argv[1], L"replace-home") == 0;
 	bool full = argc == 6 && wcscmp(argv[5], L"--full") == 0;
 	if ((argc != 5 && !full) || !files_hasExtension(argv[2], L".json") ||
 			!files_hasExtension(argv[4], L".json")) {
-		(void)snprintf(result, resultSize, "Replace away requires a .json fixture and output.");
+		(void)snprintf(result, resultSize, "Team replacement requires a .json fixture and output.");
 		fprintf(
 			stderr,
-			"usage: fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
+			"usage: fm24ctl replace-%s <input.json> <team ID or club name> <output.json> [--full]\n",
+			home ? "home" : "away"
 		);
 		return EXIT_USAGE;
 	}
@@ -174,7 +176,7 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 	Path bin;
 	char team[256];
 	size_t size = 0;
-	uint32_t awayTeam = 0;
+	uint32_t teams[2] = {0};
 	if (!paths_toUtf8(argv[3], team, sizeof team) || !team[0] || strpbrk(team, "\r\n") ||
 			wcsspn(argv[3], L" \t") == wcslen(argv[3])) {
 		(void)snprintf(
@@ -187,7 +189,7 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) || !jobInputPath(&bin)) {
 		return EXIT_FAILED;
 	}
-	if (!encodeToFile(&input, &bin, &size, &awayTeam)) {
+	if (!encodeToFile(&input, &bin, &size, teams)) {
 		removeJobInput(&bin);
 		return EXIT_FAILED;
 	}
@@ -195,17 +197,19 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 	(void)snprintf(
 		job,
 		sizeof job,
-		"command=replace_away\ninput=%s\nteam=%s\naway_team=%.0u\noutput=%s\nfull=%d\n",
+		"command=replace_%s\ninput=%s\nteam=%s\nhome_team=%.0u\naway_team=%.0u\noutput=%s\nfull=%d\n",
+		home ? "home" : "away",
 		bin.utf8,
 		team,
-		awayTeam,
+		teams[0],
+		teams[1],
 		output.utf8,
 		full
 	);
 	(void)snprintf(
 		result,
 		resultSize,
-		"Cannot replace away team; FM24 must be running and idle. See the console and harness.log."
+		"Cannot replace team; FM24 must be running and idle. See the console and harness.log."
 	);
 	bool submitted = client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize);
 	removeJobInput(&bin);
@@ -281,14 +285,14 @@ static int submitAndReport(const char *job) {
 }
 
 // Encodes a JSON config into match bytes.
-static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t *awayTeam) {
+static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t teams[2]) {
 	ByteBuffer text = {0};
 	char error[256] = "";
 	bool ok = files_read(json->wide, &text);
 	if (!ok) {
 		fprintf(stderr, "cannot read %s\n", json->utf8);
 	} else if (!(ok = matchConfig_encode(
-								 buffer_string(&text), text.length, bytes, awayTeam, error, sizeof error
+								 buffer_string(&text), text.length, bytes, teams, error, sizeof error
 							 ))) {
 		fprintf(stderr, "%s: %s\n", json->utf8, error);
 	}
@@ -296,9 +300,9 @@ static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t *awayTeam
 	return ok;
 }
 
-static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t *awayTeam) {
+static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t teams[2]) {
 	ByteBuffer bytes = {0};
-	bool ok = encodeConfig(json, &bytes, awayTeam);
+	bool ok = encodeConfig(json, &bytes, teams);
 	if (ok && !(ok = files_write(output->wide, bytes.data, bytes.length))) {
 		fprintf(stderr, "cannot write %s\n", output->utf8);
 	}
@@ -378,10 +382,11 @@ static int printSummary(const Path *csvPath) {
 	return EXIT_OK;
 }
 
-// Turns a .json config into the .bin the DLL plays, and reads its "away_team"; a .bin is played
+// Turns a .json config into the .bin the DLL plays, and reads its team overrides; a .bin is played
 // as it is.
-static bool prepareInput(Path *input, uint32_t *awayTeam, bool *encoded) {
-	*awayTeam = 0;
+static bool prepareInput(Path *input, uint32_t teams[2], bool *encoded) {
+	teams[0] = 0;
+	teams[1] = 0;
 	*encoded = false;
 	if (!files_hasExtension(input->wide, L".json")) {
 		return true;
@@ -391,7 +396,7 @@ static bool prepareInput(Path *input, uint32_t *awayTeam, bool *encoded) {
 	if (!jobInputPath(&bin)) {
 		return false;
 	}
-	if (!encodeToFile(input, &bin, &size, awayTeam)) {
+	if (!encodeToFile(input, &bin, &size, teams)) {
 		removeJobInput(&bin);
 		return false;
 	}

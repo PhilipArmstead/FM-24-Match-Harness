@@ -12,6 +12,7 @@
 //   fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]
 //   fm24ctl encode <input.json> <output.bin>
 //   fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]
+//   fm24ctl replace-home <input.json> <team ID or club name> <output.json> [--full]
 //       the input rebuilt against another away team, keeping its other edits
 //   fm24ctl probe [path to fm.exe]
 //       where another build of fm.exe has the code the harness uses (writes probe.txt)
@@ -37,6 +38,7 @@ static const char usage[] =
 	"  fm24ctl get-next-fixture <output.json|.bin> [--seed N] [--full]\n"
 	"  fm24ctl encode <input.json> <output.bin>\n"
 	"  fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
+	"  fm24ctl replace-home <input.json> <team ID or club name> <output.json> [--full]\n"
 	"  fm24ctl probe [path to fm.exe]\n";
 
 int wmain(int argc, wchar_t **argv);
@@ -72,7 +74,8 @@ int wmain(int argc, wchar_t **argv) {
 		{L"run", commands_run},
 		{L"get-next-fixture", commands_getNextFixture},
 		{L"encode", commands_encode},
-		{L"replace-away", commands_replaceAway},
+		{L"replace-away", commands_replaceTeam},
+		{L"replace-home", commands_replaceTeam},
 		{L"probe", commands_probe},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {

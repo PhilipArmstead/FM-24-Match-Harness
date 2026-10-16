@@ -13,12 +13,12 @@
 // True if `path` wants a JSON config (and therefore a traced serialisation).
 bool output_wantsJson(const wchar_t *path);
 
-// `awayTeam`: the unique ID of a team that replaced the fixture's away team, or 0; `full`: also
+// `teams`: optional home/away replacement IDs (0 for unchanged); `full`: also
 // write the research keys. Both apply to a JSON config only (see config_writer.h).
 bool output_write(
 	const wchar_t *path,
 	const Serialised *serialised,
 	const char *source,
-	uint32_t awayTeam,
+	const uint32_t teams[2],
 	bool full
 );

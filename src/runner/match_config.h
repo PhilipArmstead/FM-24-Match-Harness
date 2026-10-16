@@ -44,12 +44,13 @@ typedef struct ConfigVisitor {
 	void (*source)(void *context, const char *source);
 } ConfigVisitor;
 
-// Fills `out` with the encoded bytes. On failure returns false with a message in `error`.
+// Fills `out` and optional home/away replacement IDs (`teams`, 0 for unchanged).
+// On failure clears both IDs and returns false with a message in `error`.
 bool matchConfig_encode(
 	const char *json,
 	size_t length,
 	ByteBuffer *out,
-	uint32_t *awayTeam,
+	uint32_t teams[2],
 	char *error,
 	size_t errorSize
 );

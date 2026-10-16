@@ -72,7 +72,7 @@ int commands_encode(int argc, wchar_t **argv) {
 	return 11;
 }
 
-int commands_replaceAway(int argc, wchar_t **argv) {
+int commands_replaceTeam(int argc, wchar_t **argv) {
 	(void)argc;
 	(void)argv;
 	return 0;
@@ -116,6 +116,10 @@ TEST(exports_next_fixture_and_dispatches_commands) {
 	ASSERT_INT_EQ(runnerMain(2, arguments), 11);
 	arguments[1] = L"probe";
 	ASSERT_INT_EQ(runnerMain(2, arguments), 12);
+	arguments[1] = L"replace-home";
+	ASSERT_INT_EQ(runnerMain(2, arguments), 0);
+	arguments[1] = L"replace-away";
+	ASSERT_INT_EQ(runnerMain(2, arguments), 0);
 	arguments[1] = exportedPath;
 	expectTemporary = false;
 	ASSERT_INT_EQ(runnerMain(2, arguments), 9);

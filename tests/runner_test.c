@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "client.h"
 #include "files.h"
 #include "test.h"
 #include "tests.h"
@@ -12,20 +13,23 @@
 
 static bool readConfig(const wchar_t *path, ByteBuffer *out);
 static bool writeConfig(const wchar_t *path, const void *bytes, size_t length);
+static bool submitJob(const char *job, unsigned timeout, char *result, size_t resultSize);
 
 #define commands_defaultThreads runnerTest_defaultThreads
 #define commands_run runnerTest_run
 #define commands_runWithProgress runnerTest_runWithProgress
 #define commands_getNextFixture runnerTest_getNextFixture
-#define commands_replaceAway runnerTest_replaceAway
-#define commands_replaceAwayWithResult runnerTest_replaceAwayWithResult
+#define commands_replaceTeam runnerTest_replaceTeam
+#define commands_replaceTeamWithResult runnerTest_replaceTeamWithResult
 #define commands_encode runnerTest_encode
 #define commands_probe runnerTest_probe
 #define files_read readConfig
 #define files_write writeConfig
+#define client_submit submitJob
 #include "../src/runner/commands.c" // NOLINT(bugprone-suspicious-include): exercise private parsers.
 #undef files_read
 #undef files_write
+#undef client_submit
 
 #include "../src/runner/client.c" // NOLINT(bugprone-suspicious-include): check result replies.
 #include "../src/runner/probe.c"  // NOLINT(bugprone-suspicious-include): test in-memory PE images.
@@ -33,12 +37,20 @@ static bool writeConfig(const wchar_t *path, const void *bytes, size_t length);
 
 static unsigned configReads;
 static ByteBuffer writtenConfig;
+static char submittedJob[HARNESS_JOB_LENGTH];
+
+static bool submitJob(const char *job, unsigned timeout, char *result, size_t resultSize) {
+	ASSERT_BOOL_EQ(timeout == CLIENT_SHORT_TIMEOUT_MS, true);
+	(void)snprintf(submittedJob, sizeof submittedJob, "%s", job);
+	(void)snprintf(result, resultSize, "ok");
+	return true;
+}
 
 static bool readConfig(const wchar_t *path, ByteBuffer *out) {
 	(void)path;
 	++configReads;
-	static const char json[] =
-		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}],\"away_team\":677}";
+	static const char json[] = "{\"format\":\"fm24-match-config/"
+														 "1\",\"fields\":[{\"u8\":42}],\"home_team\":678,\"away_team\":677}";
 	return buffer_append(out, json, sizeof json - 1);
 }
 
@@ -58,14 +70,38 @@ unsigned long inject_findGame(void) {
 TEST(encodes_input_and_metadata_in_one_read) {
 	Path input = {.wide = L"input.json", .utf8 = "input.json"};
 	Path output = {.wide = L"output.bin", .utf8 = "output.bin"};
-	uint32_t awayTeam = 0;
+	uint32_t teams[2] = {0};
 	size_t size = 0;
 	configReads = 0;
-	ASSERT_BOOL_EQ(encodeToFile(&input, &output, &size, &awayTeam), true);
+	ASSERT_BOOL_EQ(encodeToFile(&input, &output, &size, teams), true);
 	ASSERT_INT_EQ(configReads, 1);
 	ASSERT_BOOL_EQ(size == 1 && writtenConfig.length == 1 && writtenConfig.data[0] == 42, true);
-	ASSERT_BOOL_EQ(awayTeam == 677, true);
+	ASSERT_BOOL_EQ(teams[0] == 678 && teams[1] == 677, true);
 	buffer_free(&writtenConfig);
+}
+
+TEST(replaces_either_team_and_preserves_both_overrides) {
+	for (unsigned side = 0; side < 2; ++side) {
+		wchar_t *arguments[] = {L"fm24ctl.exe",
+			side ? L"replace-away" : L"replace-home",
+			L"input.json",
+			L"Norwich City",
+			L"output.json",
+			L"--full",
+			NULL};
+		configReads = 0;
+		char result[CLIENT_RESULT_LENGTH];
+		ASSERT_INT_EQ(commands_replaceTeamWithResult(6, arguments, result, sizeof result), EXIT_OK);
+		ASSERT_INT_EQ(configReads, 1);
+		ASSERT_BOOL_EQ(
+			strstr(submittedJob, side ? "command=replace_away\n" : "command=replace_home\n") != NULL, true
+		);
+		ASSERT_BOOL_EQ(
+			strstr(submittedJob, "\nteam=Norwich City\nhome_team=678\naway_team=677\n") != NULL, true
+		);
+		ASSERT_BOOL_EQ(strstr(submittedJob, "\nfull=1\n") != NULL, true);
+		buffer_free(&writtenConfig);
+	}
 }
 
 TEST(rejects_malformed_cli_numbers) {
@@ -270,6 +306,10 @@ TEST(preserves_jump_candidate_overflow) {
 }
 
 void registerRunnerTests(void) {
+	test_run(
+		"runner replaces either team and preserves both overrides",
+		test_replaces_either_team_and_preserves_both_overrides
+	);
 	test_run(
 		"runner encodes input and metadata in one read", test_encodes_input_and_metadata_in_one_read
 	);

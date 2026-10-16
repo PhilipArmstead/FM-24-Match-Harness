@@ -77,10 +77,10 @@ of a `run` command and check the extra CSVs generated: one for players and one
 for teams, with each statistic averaged over all the seeds. They match the
 game's own match statistics screens.
 
-## Replace the away team
+## Replace either team
 
-Have the game build your next fixture against another opponent, keeping the
-edits you made to the rest of the file:
+Have the game rebuild either side of your next fixture, keeping the edits
+you made to the rest of the file:
 
 ```
 .m24ctl replace-away next-fixture.json "Luton Town" luton.json
@@ -88,10 +88,12 @@ edits you made to the rest of the file:
 .m24ctl run luton.json 1-100
 ```
 
-Name the team by its club's short name as the game shows it ("Man City") or by
-its unique ID. The new side is picked by the game, your side keeps your
-line-up and tactic, and `run` plays the new opponent for every seed. See
-[docs/FIXTURE.md](docs/FIXTURE.md#changing-the-opponent) for the details.
+Use `fm24ctl replace-home next-fixture.json "Norwich City" norwich.json` to
+replace the home team instead. Name the team by its club's short name as the
+game shows it ("Man City") or by its unique ID. The game picks the new side's
+squad and tactic; the other side and its edits are kept. Both replacements
+are retained when you replace the other side or run another seed. See
+[docs/FIXTURE.md](docs/FIXTURE.md#changing-teams) for the details.
 
 ## View a fixture
 

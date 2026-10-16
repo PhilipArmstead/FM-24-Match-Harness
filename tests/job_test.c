@@ -85,6 +85,21 @@ TEST(parses_job_messages) {
 	ASSERT_BOOL_EQ(job_parse(build, &job), true);
 	ASSERT_BOOL_EQ(job.command == JOB_BUILD_NEXT, true);
 	job_free(&job);
+	char replaceHome[] =
+		"command=replace_home\ninput=C:/in.bin\noutput=C:/out.json\nteam=Norwich City\n"
+		"home_team=678\naway_team=677\n";
+	ASSERT_BOOL_EQ(job_parse(replaceHome, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_REPLACE_HOME, true);
+	ASSERT_INT_EQ(strcmp(job.team, "Norwich City"), 0);
+	ASSERT_INT_EQ(strcmp(job.teams[0], "678"), 0);
+	ASSERT_INT_EQ(strcmp(job.teams[1], "677"), 0);
+	job_free(&job);
+	char replaceAway[] = "command=replace_away\ninput=C:/in.bin\noutput=C:/out.json\nteam=677\n";
+	ASSERT_BOOL_EQ(job_parse(replaceAway, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_REPLACE_AWAY, true);
+	job_free(&job);
+	char missingTeam[] = "command=replace_home\ninput=C:/in.bin\noutput=C:/out.json\n";
+	ASSERT_BOOL_EQ(job_parse(missingTeam, &job), false);
 	char incomplete[] = "command=run\ninput=C:/in.bin\nseeds=1\n";
 	ASSERT_BOOL_EQ(job_parse(incomplete, &job), false);
 	char bad[] = "command=inspect\ninput=C:/in.bin\noutput=C:/out.json\nseeds=x\n";

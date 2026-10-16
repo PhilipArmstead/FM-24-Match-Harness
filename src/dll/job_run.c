@@ -96,9 +96,17 @@ void jobs_run(const Job *job) {
 	SeedBuilder seedBuilder;
 	if (!job->keepSeed && !job->keepBuild) {
 		char error[512] = "";
-		uint8_t *awayTeam = NULL;
-		if ((job->awayTeam[0] && !database_findTeam(job->awayTeam, &awayTeam, error, sizeof error)) ||
-				!seedBuilder_open(&seedBuilder, &input, run.fileSeed, awayTeam, error, sizeof error)) {
+		uint8_t *teams[2] = {0};
+		if ((job->teams[0][0] && !database_findTeam(job->teams[0], &teams[0], error, sizeof error)) ||
+				(job->teams[1][0] && !database_findTeam(job->teams[1], &teams[1], error, sizeof error)) ||
+				!seedBuilder_open(
+					&seedBuilder,
+					&input,
+					run.fileSeed,
+					(const uint8_t *[]){teams[0], teams[1]},
+					error,
+					sizeof error
+				)) {
 			log_message("cannot rebuild per seed: %s", error);
 			job_writeResult("error: %s (--keep-build plays the input with only its seed changed)", error);
 			(void)closeRun(&run);

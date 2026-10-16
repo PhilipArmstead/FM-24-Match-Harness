@@ -17,7 +17,7 @@ typedef struct Encoder {
 	ByteBuffer name;
 	ByteBuffer player;
 	const ConfigVisitor *visitor;
-	uint32_t awayTeam;
+	uint32_t teams[2];
 	size_t field; // index of the field being read, for messages
 } Encoder;
 
@@ -45,14 +45,15 @@ bool matchConfig_encode(
 	const char *json,
 	size_t length,
 	ByteBuffer *out,
-	uint32_t *awayTeam,
+	uint32_t teams[2],
 	char *error,
 	size_t errorSize
 ) {
 	Encoder encoder = {.out = out};
 	bool ok = parseConfig(&encoder, json, length, error, errorSize);
-	if (awayTeam) {
-		*awayTeam = ok ? encoder.awayTeam : 0;
+	if (teams) {
+		teams[0] = ok ? encoder.teams[0] : 0;
+		teams[1] = ok ? encoder.teams[1] : 0;
 	}
 	return ok;
 }
@@ -284,16 +285,16 @@ static bool readTopMember(Encoder *encoder, const char *key, bool *formatOk, boo
 		encoder->visitor->source(encoder->visitor->context, buffer_string(&encoder->scratch));
 		return true;
 	}
-	if (strcmp(key, "away_team") == 0) {
+	if (strcmp(key, "home_team") == 0 || strcmp(key, "away_team") == 0) {
 		unsigned long long value = 0;
 		bool isUnsigned = false;
 		if (!jsonReader_readNumber(reader, &value, &isUnsigned)) {
 			return false;
 		}
 		if (!isUnsigned || value > UINT32_MAX) {
-			return jsonReader_fail(reader, "away_team must be an unsigned 32-bit integer");
+			return jsonReader_fail(reader, "team override must be an unsigned 32-bit integer");
 		}
-		encoder->awayTeam = (uint32_t)value;
+		encoder->teams[strcmp(key, "away_team") == 0] = (uint32_t)value;
 		return true;
 	}
 	return jsonReader_skipValue(reader);

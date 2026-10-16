@@ -30,6 +30,9 @@ static bool usedTrace;
 static bool hasFixture;
 static unsigned serialisations;
 static unsigned tracedSerialisations;
+static uint8_t *humanMatchesHolder;
+static const uint8_t *expectedBuildTeams[2];
+static bool failBuild;
 
 static void *traceRealloc(void *pointer, size_t size) {
 	if (traceAllocationsUntilFailure == 0) {
@@ -77,6 +80,9 @@ VoidFn game_functionAt(const void *address) {
 }
 
 void *game_address(uint32_t rva) {
+	if (rva == RVA_HUMAN_MATCHES_HOLDER) {
+		return &humanMatchesHolder;
+	}
 	return (void *)(uintptr_t)rva; // NOLINT(performance-no-int-to-ptr): synthetic engine address.
 }
 
@@ -114,9 +120,15 @@ size_t stream_outputSize(const DataBuffer *buffer) {
 }
 
 uint8_t *match_build(uint8_t *fixture, uint32_t seed) {
-	(void)fixture;
+	for (unsigned side = 0; side < 2; ++side) {
+		if (expectedBuildTeams[side]) {
+			uint8_t *team = NULL;
+			ASSERT_BOOL_EQ(memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &team), true);
+			ASSERT_BOOL_EQ(team == expectedBuildTeams[side], true);
+		}
+	}
 	builtSeed = seed;
-	return (uint8_t *)&builtSeed;
+	return failBuild ? NULL : (uint8_t *)&builtSeed;
 }
 
 void match_freeBuilt(uint8_t *match) {
@@ -269,21 +281,149 @@ TEST(only_traces_setup_round_trips) {
 	}
 }
 
-TEST(drops_only_away_edits) {
+TEST(drops_only_replaced_team_edits) {
 	TraceRecord records[] = {{.path = 0}, {.path = 1}, {.path = 1}};
 	char *paths[] = {"1ac77d5", "1ac77e8"};
-	bool edited[] = {true, true, true};
+	bool edited[3];
 	SeedBuilder builder = {
 		.input = {.records = records, .recordCount = 3, .paths = paths, .pathCount = 2},
 		.edited = edited,
-		.editCount = 3};
+	};
 	size_t dropped = 0;
-	ASSERT_BOOL_EQ(seedBuilder_dropAwayEdits(&builder, &dropped), true);
-	ASSERT_BOOL_EQ(dropped == 2 && seedBuilder_editCount(&builder) == 1, true);
-	ASSERT_BOOL_EQ(edited[0] && !edited[1] && !edited[2], true);
+	for (unsigned side = 0; side < 2; ++side) {
+		edited[0] = edited[1] = edited[2] = true;
+		builder.editCount = 3;
+		ASSERT_BOOL_EQ(seedBuilder_dropTeamEdits(&builder, side, &dropped), true);
+		ASSERT_BOOL_EQ(dropped == (side ? 2u : 1u), true);
+		ASSERT_BOOL_EQ(seedBuilder_editCount(&builder) == (side ? 1u : 2u), true);
+		ASSERT_BOOL_EQ(
+			edited[0] == (side != 0) && edited[1] == (side == 0) && edited[2] == (side == 0), true
+		);
+	}
 	records[0].path = 2;
-	ASSERT_BOOL_EQ(seedBuilder_dropAwayEdits(&builder, &dropped), false);
+	ASSERT_BOOL_EQ(seedBuilder_dropTeamEdits(&builder, 1, &dropped), false);
 	ASSERT_BOOL_EQ(dropped == 0 && seedBuilder_editCount(&builder) == 1, true);
+}
+
+static void storePointer(uint8_t *base, size_t offset, const void *value) {
+	memcpy(base + offset, &value, sizeof value);
+}
+
+TEST(swaps_either_or_both_teams_and_restores_game_state) {
+	uint8_t fixture[FIXTURE_AWAY + sizeof(void *)] = {0};
+	uint8_t copies[8][sizeof fixture];
+	uint8_t teams[2][TEAM_IN_GAME_DATA + sizeof(void *)] = {0};
+	uint8_t nextMatch[2][NEXT_MATCH_OPPONENT + sizeof(void *)] = {0};
+	uint8_t replacements[2] = {0};
+	uint8_t holder[HUMAN_MATCHES + 2 * sizeof(void *)] = {0};
+	uint8_t *copyPointers[8];
+	uint8_t **entries[8];
+	for (unsigned side = 0; side < 2; ++side) {
+		storePointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, teams[side]);
+		storePointer(teams[side], TEAM_IN_GAME_DATA, nextMatch[side]);
+		storePointer(nextMatch[side], NEXT_MATCH_OPPONENT, teams[1 - side]);
+	}
+	for (unsigned i = 0; i < 8; ++i) {
+		memcpy(copies[i], fixture, sizeof fixture);
+		copyPointers[i] = copies[i];
+		entries[i] = &copyPointers[i];
+	}
+	storePointer(holder, HUMAN_MATCHES, entries);
+	storePointer(holder, HUMAN_MATCHES + sizeof(void *), entries + 1);
+	humanMatchesHolder = holder;
+	const uint8_t *overrides[][2] = {{&replacements[0], NULL},
+		{NULL, &replacements[1]},
+		{&replacements[0], &replacements[1]},
+		{teams[1], &replacements[1]},
+		{&replacements[0], teams[0]},
+		{teams[1], teams[0]}};
+	const uint8_t *opponents[][2] = {{teams[1], &replacements[0]},
+		{&replacements[1], teams[0]},
+		{&replacements[1], &replacements[0]},
+		{&replacements[1], &replacements[1]},
+		{&replacements[0], &replacements[0]},
+		{teams[1], teams[0]}};
+	for (unsigned scenario = 0; scenario < sizeof overrides / sizeof overrides[0]; ++scenario) {
+		SeedBuilder builder = {.next = {.fixture = fixture}};
+		for (unsigned side = 0; side < 2; ++side) {
+			builder.teams[side] = overrides[scenario][side];
+			expectedBuildTeams[side] = builder.teams[side] ? builder.teams[side] : teams[side];
+		}
+		Swap swaps[MAX_SWAPS];
+		size_t count = 0;
+		ASSERT_BOOL_EQ(swapTeams(&builder, swaps, &count), true);
+		for (unsigned side = 0; side < 2; ++side) {
+			uint8_t *value = NULL;
+			ASSERT_BOOL_EQ(memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true);
+			ASSERT_BOOL_EQ(value == expectedBuildTeams[side], true);
+			ASSERT_BOOL_EQ(
+				memory_readPointer(copies[0], side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true
+			);
+			ASSERT_BOOL_EQ(value == expectedBuildTeams[side], true);
+			ASSERT_BOOL_EQ(memory_readPointer(nextMatch[side], NEXT_MATCH_OPPONENT, &value), true);
+			ASSERT_BOOL_EQ(value == opponents[scenario][side], true);
+		}
+		restoreSwaps(swaps, count);
+		for (unsigned failure = 0; failure < 2; ++failure) {
+			Serialised serialised = {0};
+			failBuild = failure != 0;
+			ASSERT_BOOL_EQ(buildSerialised(&builder, 99, &serialised, false), !failBuild);
+			trace_free(&serialised);
+			for (unsigned side = 0; side < 2; ++side) {
+				uint8_t *value = NULL;
+				ASSERT_BOOL_EQ(
+					memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true
+				);
+				ASSERT_BOOL_EQ(value == teams[side], true);
+				ASSERT_BOOL_EQ(
+					memory_readPointer(copies[0], side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true
+				);
+				ASSERT_BOOL_EQ(value == teams[side], true);
+				ASSERT_BOOL_EQ(memory_readPointer(nextMatch[side], NEXT_MATCH_OPPONENT, &value), true);
+				ASSERT_BOOL_EQ(value == teams[1 - side], true);
+			}
+		}
+	}
+	SeedBuilder builder = {
+		.next = {.fixture = fixture}, .teams = {&replacements[0], &replacements[1]}};
+	storePointer(holder, HUMAN_MATCHES + sizeof(void *), entries + 8);
+	Swap swaps[MAX_SWAPS];
+	size_t count = 0;
+	ASSERT_BOOL_EQ(swapTeams(&builder, swaps, &count), false);
+	for (unsigned i = 0; i < 8; ++i) {
+		ASSERT_INT_EQ(memcmp(copies[i], fixture, sizeof fixture), 0);
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		uint8_t *value = NULL;
+		ASSERT_BOOL_EQ(memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true);
+		ASSERT_BOOL_EQ(value == teams[side], true);
+	}
+	builder.teams[0] = teams[1];
+	builder.teams[1] = NULL;
+	ASSERT_BOOL_EQ(swapTeams(&builder, swaps, &count), false);
+	ASSERT_BOOL_EQ(count == 0, true);
+	expectedBuildTeams[0] = expectedBuildTeams[1] = NULL;
+	humanMatchesHolder = NULL;
+	failBuild = false;
+}
+
+TEST(writes_both_team_overrides) {
+	uint8_t bytes[6] = {0};
+	Serialised serialised = {.bytes = {.data = bytes, .length = sizeof bytes}};
+	FILE *file = tmpfile();
+	ASSERT_BOOL_EQ(file != NULL, true);
+	if (!file) {
+		return;
+	}
+	uint32_t teams[2] = {678, 677};
+	writeHeader(file, &serialised, "test", teams, false);
+	ASSERT_INT_EQ(fflush(file), 0);
+	rewind(file);
+	char text[512] = {0};
+	ASSERT_BOOL_EQ(fread(text, 1, sizeof text - 1, file) > 0, true);
+	ASSERT_BOOL_EQ(strstr(text, "\"home_team\": 678") != NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "\"away_team\": 677") != NULL, true);
+	ASSERT_INT_EQ(fclose(file), 0);
 }
 
 TEST(skips_tracing_unedited_builds) {
@@ -524,13 +664,16 @@ TEST(labels_staff_attributes_byte_by_byte) {
 		while (fgets(line, sizeof line, file)) {
 			if (fields == 0) {
 				ASSERT_BOOL_EQ(
-					strstr(line, "\"name\": \"home.backroom[0].attributes.tactical_attacking\", \"u8\": 1}") !=
-						NULL,
+					strstr(
+						line, "\"name\": \"home.backroom[0].attributes.tactical_attacking\", \"u8\": 1}"
+					) != NULL,
 					true
 				);
 			}
 			if (fields == STAFF_ATTRIBUTE_COUNT - 1) {
-				ASSERT_BOOL_EQ(strstr(line, ".attributes.coaching_set_pieces\", \"u8\": 52}") != NULL, true);
+				ASSERT_BOOL_EQ(
+					strstr(line, ".attributes.coaching_set_pieces\", \"u8\": 52}") != NULL, true
+				);
 			}
 			++fields;
 		}
@@ -584,7 +727,15 @@ void registerDllTests(void) {
 		"DLL only traces setup serialisations whose records are used",
 		test_only_traces_setup_round_trips
 	);
-	test_run("DLL drops only the away team's edits and reports failures", test_drops_only_away_edits);
+	test_run(
+		"DLL drops only the replaced team's edits and reports failures",
+		test_drops_only_replaced_team_edits
+	);
+	test_run(
+		"DLL swaps either or both teams and restores game state",
+		test_swaps_either_or_both_teams_and_restores_game_state
+	);
+	test_run("DLL writes both team overrides", test_writes_both_team_overrides);
 	test_run("DLL interns call chains without repeated text formatting", test_interns_numeric_paths);
 	test_run(
 		"DLL rejects incomplete or invalid serialisation traces", test_rejects_incomplete_traces

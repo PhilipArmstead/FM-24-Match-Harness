@@ -23,37 +23,36 @@
 
 typedef struct SeedBuilder {
 	NextFixture next;        // the human manager's next fixture (the input's)
-	const uint8_t *awayTeam; // a db::TEAM played instead of the fixture's away team, or NULL
+	const uint8_t *teams[2]; // home/away db::TEAM overrides, or NULL for the fixture's own
 	Serialised input;        // the input, deserialised and serialised again (traced)
 	bool *edited;            // per input record: differs from a build with the input's own seed
 	size_t editCount;
 	CRITICAL_SECTION lock; // builds share the game's fixture and the trace hooks
 } SeedBuilder;
 
-// Prepares to rebuild `input` (serialised match bytes built with `inputSeed`), against `awayTeam`
-// instead of the fixture's own away team unless it is NULL. Fails, with a message in `error`,
+// Prepares to rebuild `input` (serialised match bytes built with `inputSeed`), with optional
+// home/away team overrides. Fails, with a message in `error`,
 // unless the input is the human manager's next fixture with the same layout as a fresh build.
 // Must run on the job thread (it loads matches through stream slot 0).
 bool seedBuilder_open(
 	SeedBuilder *builder,
 	const ByteBuffer *input,
 	uint32_t inputSeed,
-	const uint8_t *awayTeam,
+	const uint8_t *const teams[2],
 	char *error,
 	size_t errorSize
 );
 
-// Forgets the input's edits to the away team's block. For replacing
-// the away team: those edits belong to the team being replaced.
-bool seedBuilder_dropAwayEdits(SeedBuilder *builder, size_t *dropped);
+// Forgets the input's edits to the selected team's block (0: home, 1: away).
+bool seedBuilder_dropTeamEdits(SeedBuilder *builder, unsigned side, size_t *dropped);
 
 // How many of the input's fields are re-applied to each build.
 size_t seedBuilder_editCount(const SeedBuilder *builder);
 
-// The match input for `seed`: the game's build with `seed` (against builder->awayTeam, which may
-// be changed between builds), with the input's edits re-applied. Thread-safe (builds one at a
+// The match input for `seed`: the game's build with `seed` (with builder->teams, which may be
+// changed between builds), with the input's edits re-applied. Thread-safe (builds one at a
 // time). The build and the input are aligned part by part (see seed_build.c), so their structures
-// may differ, e.g. another away team; an edit in a part that cannot be aligned fails the build.
+// may differ, e.g. another team; an edit in a part that cannot be aligned fails the build.
 bool seedBuilder_build(SeedBuilder *builder, uint32_t seed, ByteBuffer *out);
 
 void seedBuilder_close(SeedBuilder *builder);

@@ -163,6 +163,7 @@ static bool parseCommand(Job *job, const char *value) {
 		{"build_next", JOB_BUILD_NEXT},
 		{"inspect", JOB_INSPECT},
 		{"replace_away", JOB_REPLACE_AWAY},
+		{"replace_home", JOB_REPLACE_HOME},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -189,8 +190,9 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "team") == 0) {
 		return copyText(value, job->team, sizeof job->team);
 	}
-	if (strcmp(key, "away_team") == 0) {
-		return copyText(value, job->awayTeam, sizeof job->awayTeam);
+	if (strcmp(key, "home_team") == 0 || strcmp(key, "away_team") == 0) {
+		unsigned side = strcmp(key, "away_team") == 0;
+		return copyText(value, job->teams[side], sizeof job->teams[side]);
 	}
 	if (strcmp(key, "input") == 0) {
 		return widen(value, job->input, HARNESS_PATH_LENGTH);
@@ -265,7 +267,8 @@ static bool isComplete(const Job *job) {
 		case JOB_RUN: return hasInput && hasOutput && (job->keepSeed || job->seedCount > 0);
 		case JOB_BUILD_NEXT: return hasOutput;
 		case JOB_INSPECT: return hasInput && hasOutput;
-		case JOB_REPLACE_AWAY: return hasInput && hasOutput && job->team[0] != 0;
+		case JOB_REPLACE_AWAY:
+		case JOB_REPLACE_HOME: return hasInput && hasOutput && job->team[0] != 0;
 	}
 	return false;
 }

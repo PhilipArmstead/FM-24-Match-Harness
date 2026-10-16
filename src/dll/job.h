@@ -18,6 +18,7 @@ typedef enum JobCommand {
 	JOB_BUILD_NEXT,   // build the human manager's next fixture to .bin or .json
 	JOB_INSPECT,      // decode existing binary input to JSON without preparing or playing it
 	JOB_REPLACE_AWAY, // rebuild an input against another away team, keeping its other edits
+	JOB_REPLACE_HOME, // rebuild an input with another home team, keeping its other edits
 } JobCommand;
 
 enum { JOB_TEAM_LENGTH = 256 };
@@ -36,10 +37,10 @@ typedef struct Job {
 	bool humanControl; // run: keep the input's "human in control" flags (no AI in-match changes)
 	bool keepBuild;    // run: patch each seed into the input instead of rebuilding it per seed
 	bool hasSeed;      // build_next: use `seed` instead of a clock value
-	bool full;         // build_next, replace_away: also write the research keys in a JSON config
+	bool full;         // build_next, replace: also write the research keys in a JSON config
 	uint32_t seed;
-	char team[JOB_TEAM_LENGTH];     // replace_away: the new away team (database_findTeam's spec)
-	char awayTeam[JOB_TEAM_LENGTH]; // run, replace_away: the input's "away_team" ("": the fixture's)
+	char team[JOB_TEAM_LENGTH];     // replace: the new team (database_findTeam's spec)
+	char teams[2][JOB_TEAM_LENGTH]; // run, replace: input's home/away overrides ("": the fixture's)
 } Job;
 
 // Parses a job's key=value lines (modifying `text`); logs and returns false if it is malformed.
@@ -55,4 +56,4 @@ const char *job_takeResult(void);
 void jobs_run(const Job *job);
 void jobs_buildNext(const Job *job);
 void jobs_inspect(const Job *job);
-void jobs_replaceAway(const Job *job);
+void jobs_replaceTeam(const Job *job);

@@ -33,7 +33,7 @@ enum { WM_FIXTURE_LAYOUT = WM_APP + 1, SIMULATION_TIMER = 1, REPLACE_TIMER = 2, 
 
 enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
-enum { AWAY_ICON, AWAY_TEAM, AWAY_CONFIRM, AWAY_CANCEL, AWAY_ERROR, AWAY_CONTROL_COUNT };
+enum { TEAM_ICON, TEAM_INPUT, TEAM_CONFIRM, TEAM_CANCEL, TEAM_ERROR, TEAM_CONTROL_COUNT };
 
 enum {
 	SIM_THREADS_LABEL,
@@ -56,13 +56,14 @@ typedef struct SimulationJob {
 	bool detailed;
 } SimulationJob;
 
-typedef struct ReplaceAwayJob {
+typedef struct ReplaceTeamJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t output[HARNESS_PATH_LENGTH];
 	wchar_t team[256];
 	char error[CLIENT_RESULT_LENGTH];
 	FixtureData *data;
-} ReplaceAwayJob;
+	unsigned side;
+} ReplaceTeamJob;
 
 typedef struct FileJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
@@ -87,7 +88,7 @@ typedef struct WindowState {
 	HWND pitches[2];
 	HWND lists[2];
 	HWND simulation[SIM_CONTROL_COUNT];
-	HWND away[AWAY_CONTROL_COUNT];
+	HWND teamControls[2][TEAM_CONTROL_COUNT];
 	HANDLE simulationThread;
 	HANDLE replacementThread;
 	HANDLE fileThread;
@@ -96,7 +97,7 @@ typedef struct WindowState {
 	UINT progressCompleted;
 	UINT progressTotal;
 	SimulationJob simulationJob;
-	ReplaceAwayJob replacementJob;
+	ReplaceTeamJob replacementJob;
 	FileJob fileJob;
 	wchar_t replacementPath[HARNESS_PATH_LENGTH];
 	unsigned long threadLimit;
@@ -112,7 +113,7 @@ typedef struct WindowState {
 	bool failed;
 	bool temporary;
 	bool missing;
-	bool editingAway;
+	bool editingTeam[2];
 } WindowState;
 
 static const wchar_t windowClass[] = L"FM24MatchHarness";
@@ -324,8 +325,10 @@ static void startSimulation(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
 		EnableWindow(state->simulation[i], FALSE);
 	}
-	EnableWindow(state->away[AWAY_ICON], FALSE);
-	EnableWindow(state->away[AWAY_CONFIRM], FALSE);
+	for (unsigned side = 0; side < 2; ++side) {
+		EnableWindow(state->teamControls[side][TEAM_ICON], FALSE);
+		EnableWindow(state->teamControls[side][TEAM_CONFIRM], FALSE);
+	}
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], FALSE);
 	}
@@ -373,8 +376,10 @@ static void checkSimulation(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < SIM_STATUS; ++i) {
 		EnableWindow(state->simulation[i], TRUE);
 	}
-	EnableWindow(state->away[AWAY_ICON], TRUE);
-	EnableWindow(state->away[AWAY_CONFIRM], TRUE);
+	for (unsigned side = 0; side < 2; ++side) {
+		EnableWindow(state->teamControls[side][TEAM_ICON], TRUE);
+		EnableWindow(state->teamControls[side][TEAM_CONFIRM], TRUE);
+	}
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
@@ -398,10 +403,13 @@ static void selectTab(WindowState *state) {
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		ShowWindow(state->simulation[i], simulation ? SW_SHOW : SW_HIDE);
 	}
-	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
-		bool visible = !simulation && (i == AWAY_ICON ? !state->editingAway : state->editingAway) &&
-									 (i != AWAY_ERROR || GetWindowTextLengthW(state->away[i]) > 0);
-		ShowWindow(state->away[i], visible ? SW_SHOW : SW_HIDE);
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = 0; i < TEAM_CONTROL_COUNT; ++i) {
+			bool visible = !simulation &&
+										 (i == TEAM_ICON ? !state->editingTeam[side] : state->editingTeam[side]) &&
+										 (i != TEAM_ERROR || GetWindowTextLengthW(state->teamControls[side][i]) > 0);
+			ShowWindow(state->teamControls[side][i], visible ? SW_SHOW : SW_HIDE);
+		}
 	}
 }
 
@@ -511,7 +519,7 @@ static void exportFixture(HWND window, WindowState *state) {
 		return;
 	}
 	if (state->replacementThread) {
-		showError(window, L"Please wait for the away team replacement to finish before exporting.");
+		showError(window, L"Please wait for the team replacement to finish before exporting.");
 		return;
 	}
 	if (!state->temporary || state->missing) {
@@ -581,8 +589,8 @@ static bool setHeadings(WindowState *state) {
 			team->tactic[0] ? team->tactic : "Unnamed tactic",
 			team->formation[0] ? team->formation : "Formation unknown"
 		);
-		if (side == 1 && state->editingAway) {
-			(void)snprintf(text, sizeof text, "Away: ");
+		if (state->editingTeam[side]) {
+			(void)snprintf(text, sizeof text, "%s: ", side ? "Away" : "Home");
 		}
 		if (!widen(text, state->headingText[side], sizeof state->headingText[side] / sizeof(wchar_t))) {
 			return false;
@@ -706,25 +714,32 @@ static void removeReplacement(const wchar_t *path) {
 	}
 }
 
-static void awayError(HWND window, WindowState *state, const char *error) {
+static void teamError(HWND window, WindowState *state, unsigned side, const char *error) {
 	fprintf(stderr, "fixture viewer: %s\n", error);
-	if (!setText(state->away[AWAY_ERROR], error)) {
-		SetWindowTextW(state->away[AWAY_ERROR], L"Cannot display replacement error (invalid UTF-8).");
+	if (!setText(state->teamControls[side][TEAM_ERROR], error)) {
+		SetWindowTextW(
+			state->teamControls[side][TEAM_ERROR], L"Cannot display replacement error (invalid UTF-8)."
+		);
 	}
-	ShowWindow(state->away[AWAY_ERROR], TabCtrl_GetCurSel(state->tabs) == 0 ? SW_SHOW : SW_HIDE);
+	ShowWindow(
+		state->teamControls[side][TEAM_ERROR], TabCtrl_GetCurSel(state->tabs) == 0 ? SW_SHOW : SW_HIDE
+	);
 	layout(window, state);
 }
 
-static void editAway(HWND window, WindowState *state, bool editing) {
+static void editTeam(HWND window, WindowState *state, unsigned side, bool editing) {
 	if (state->fileThread || state->replacementThread || (editing && state->simulationThread)) {
 		return;
 	}
-	if (editing && !setText(state->away[AWAY_TEAM], state->data->teams[1].name)) {
-		showError(window, L"Cannot display the away team name.");
+	if (editing && !setText(state->teamControls[side][TEAM_INPUT], state->data->teams[side].name)) {
+		showError(window, L"Cannot display the team name.");
 		return;
 	}
-	state->editingAway = editing;
-	SetWindowTextW(state->away[AWAY_ERROR], L"");
+	state->editingTeam[side] = editing;
+	if (editing) {
+		state->editingTeam[1 - side] = false;
+	}
+	SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
 	if (!setHeadings(state)) {
 		showError(window, L"Cannot update team headings.");
 		state->failed = true;
@@ -733,14 +748,14 @@ static void editAway(HWND window, WindowState *state, bool editing) {
 	}
 	selectTab(state);
 	layout(window, state);
-	SetFocus(state->away[editing ? AWAY_TEAM : AWAY_ICON]);
+	SetFocus(state->teamControls[side][editing ? TEAM_INPUT : TEAM_ICON]);
 	if (editing) {
-		SendMessageW(state->away[AWAY_TEAM], EM_SETSEL, 0, -1);
+		SendMessageW(state->teamControls[side][TEAM_INPUT], EM_SETSEL, 0, -1);
 	}
 }
 
-static DWORD WINAPI replaceAway(LPVOID parameter) {
-	ReplaceAwayJob *job = parameter;
+static DWORD WINAPI replaceTeam(LPVOID parameter) {
+	ReplaceTeamJob *job = parameter;
 	wchar_t directory[HARNESS_PATH_LENGTH];
 	wchar_t temporary[HARNESS_PATH_LENGTH];
 	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
@@ -766,44 +781,49 @@ static DWORD WINAPI replaceAway(LPVOID parameter) {
 		job->output[0] = 0;
 		return 1;
 	}
-	wchar_t *arguments[] = {
-		L"fm24ctl.exe", L"replace-away", job->input, job->team, job->output, NULL};
+	wchar_t *arguments[] = {L"fm24ctl.exe",
+		job->side ? L"replace-away" : L"replace-home",
+		job->input,
+		job->team,
+		job->output,
+		NULL};
 	if (files_hasExtension(job->input, L".bin")) {
 		if (!fixtureLoad_save(job->input, job->output, job->error, sizeof job->error)) {
 			return 1;
 		}
 		arguments[2] = job->output;
 	}
-	int result = commands_replaceAwayWithResult(5, arguments, job->error, sizeof job->error);
+	int result = commands_replaceTeamWithResult(5, arguments, job->error, sizeof job->error);
 	if (result == 0 && !fixtureLoad_open(job->output, job->data, job->error, sizeof job->error)) {
 		result = 1;
 	}
 	return (DWORD)result;
 }
 
-static void startReplacement(HWND window, WindowState *state) {
-	if (!state->editingAway || state->simulationThread || state->replacementThread ||
+static void startReplacement(HWND window, WindowState *state, unsigned side) {
+	if (!state->editingTeam[side] || state->simulationThread || state->replacementThread ||
 			state->fileThread) {
 		return;
 	}
-	ReplaceAwayJob *job = &state->replacementJob;
-	int length = GetWindowTextW(state->away[AWAY_TEAM], job->team, 256);
+	ReplaceTeamJob *job = &state->replacementJob;
+	job->side = side;
+	int length = GetWindowTextW(state->teamControls[side][TEAM_INPUT], job->team, 256);
 	char team[256];
-	if (!length || GetWindowTextLengthW(state->away[AWAY_TEAM]) >= 256 ||
+	if (!length || GetWindowTextLengthW(state->teamControls[side][TEAM_INPUT]) >= 256 ||
 			wcsspn(job->team, L" \t") == (size_t)length || wcspbrk(job->team, L"\r\n") ||
 			!paths_toUtf8(job->team, team, sizeof team)) {
-		awayError(window, state, "Enter a team ID or club short name (up to 255 UTF-8 bytes).");
-		SetFocus(state->away[AWAY_TEAM]);
+		teamError(window, state, side, "Enter a team ID or club short name (up to 255 UTF-8 bytes).");
+		SetFocus(state->teamControls[side][TEAM_INPUT]);
 		return;
 	}
 	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
-		awayError(window, state, "Cannot resolve the fixture path.");
+		teamError(window, state, side, "Cannot resolve the fixture path.");
 		return;
 	}
 	job->data = malloc(sizeof *job->data);
 	if (!job->data) {
-		awayError(window, state, "Out of memory loading the replacement fixture.");
+		teamError(window, state, side, "Out of memory loading the replacement fixture.");
 		return;
 	}
 	job->output[0] = 0;
@@ -811,21 +831,23 @@ static void startReplacement(HWND window, WindowState *state) {
 	if (!SetTimer(window, REPLACE_TIMER, 200, NULL)) {
 		free(job->data);
 		job->data = NULL;
-		awayError(window, state, "Cannot monitor the away team replacement.");
+		teamError(window, state, side, "Cannot monitor the team replacement.");
 		return;
 	}
-	state->replacementThread = CreateThread(NULL, 0, replaceAway, job, 0, NULL);
+	state->replacementThread = CreateThread(NULL, 0, replaceTeam, job, 0, NULL);
 	if (!state->replacementThread) {
 		KillTimer(window, REPLACE_TIMER);
 		free(job->data);
 		job->data = NULL;
-		awayError(window, state, "Cannot start the away team replacement.");
+		teamError(window, state, side, "Cannot start the team replacement.");
 		return;
 	}
-	SetWindowTextW(state->away[AWAY_ERROR], L"");
-	ShowWindow(state->away[AWAY_ERROR], SW_HIDE);
-	for (unsigned i = AWAY_TEAM; i <= AWAY_CANCEL; ++i) {
-		EnableWindow(state->away[i], FALSE);
+	SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
+	ShowWindow(state->teamControls[side][TEAM_ERROR], SW_HIDE);
+	for (unsigned teamSide = 0; teamSide < 2; ++teamSide) {
+		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
+			EnableWindow(state->teamControls[teamSide][i], FALSE);
+		}
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
@@ -845,7 +867,7 @@ static void checkReplacement(HWND window, WindowState *state) {
 	DWORD result = 1;
 	if (wait != WAIT_OBJECT_0 || !GetExitCodeThread(state->replacementThread, &result)) {
 		KillTimer(window, REPLACE_TIMER);
-		showError(window, L"Cannot read the away team replacement result.");
+		showError(window, L"Cannot read the team replacement result.");
 		state->failed = true;
 		DestroyWindow(window);
 		return;
@@ -853,14 +875,17 @@ static void checkReplacement(HWND window, WindowState *state) {
 	KillTimer(window, REPLACE_TIMER);
 	CloseHandle(state->replacementThread);
 	state->replacementThread = NULL;
-	for (unsigned i = AWAY_TEAM; i <= AWAY_CANCEL; ++i) {
-		EnableWindow(state->away[i], TRUE);
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
+			EnableWindow(state->teamControls[side][i], TRUE);
+		}
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
-	ReplaceAwayJob *job = &state->replacementJob;
+	ReplaceTeamJob *job = &state->replacementJob;
+	unsigned side = job->side;
 	if (result == 0) {
 		removeReplacement(state->replacementPath);
 		wcscpy(state->replacementPath, job->output);
@@ -870,23 +895,26 @@ static void checkReplacement(HWND window, WindowState *state) {
 		state->temporary = true;
 		state->missing = false;
 		*state->data = *job->data;
-		state->editingAway = false;
+		state->editingTeam[0] = false;
+		state->editingTeam[1] = false;
 		if (!setMetadata(state) || !setHeadings(state) || !fillList(state, 0) || !fillList(state, 1)) {
 			showError(window, L"Cannot display the replacement fixture.");
 			state->failed = true;
 			DestroyWindow(window);
 		} else {
-			for (unsigned side = 0; side < 2; ++side) {
-				InvalidateRect(state->pitches[side], NULL, TRUE);
+			for (unsigned teamSide = 0; teamSide < 2; ++teamSide) {
+				InvalidateRect(state->pitches[teamSide], NULL, TRUE);
 			}
 			selectTab(state);
 			layout(window, state);
-			SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? state->away[AWAY_ICON] : state->tabs);
+			SetFocus(
+				TabCtrl_GetCurSel(state->tabs) == 0 ? state->teamControls[side][TEAM_ICON] : state->tabs
+			);
 		}
 	} else {
-		awayError(window, state, job->error);
+		teamError(window, state, side, job->error);
 		if (TabCtrl_GetCurSel(state->tabs) == 0) {
-			SetFocus(state->away[AWAY_TEAM]);
+			SetFocus(state->teamControls[side][TEAM_INPUT]);
 		}
 	}
 	removeReplacement(job->output);
@@ -976,8 +1004,10 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], FALSE);
 	}
-	for (unsigned i = AWAY_ICON; i <= AWAY_CANCEL; ++i) {
-		EnableWindow(state->away[i], FALSE);
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
+			EnableWindow(state->teamControls[side][i], FALSE);
+		}
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
 	SetFocus(state->tabs);
@@ -1006,8 +1036,10 @@ static void checkFileJob(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
-	for (unsigned i = AWAY_ICON; i <= AWAY_CANCEL; ++i) {
-		EnableWindow(state->away[i], TRUE);
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
+			EnableWindow(state->teamControls[side][i], TRUE);
+		}
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
 	FileJob *job = &state->fileJob;
@@ -1015,10 +1047,12 @@ static void checkFileJob(HWND window, WindowState *state) {
 		setActivePath(state, job->save ? job->output : job->input, job->temporary);
 		if (!job->save) {
 			*state->data = *job->data;
-			state->editingAway = false;
+			for (unsigned side = 0; side < 2; ++side) {
+				state->editingTeam[side] = false;
+				SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
+			}
 			state->progressCompleted = 0;
 			state->progressTotal = 0;
-			SetWindowTextW(state->away[AWAY_ERROR], L"");
 			SetWindowTextW(state->simulation[SIM_SUMMARY], L"");
 			SetWindowTextW(
 				state->simulation[SIM_STATUS],
@@ -1234,10 +1268,10 @@ static bool setFonts(WindowState *state) {
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
-	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
-		SendMessageW(state->away[i], WM_SETFONT, (WPARAM)font, TRUE);
-	}
 	for (unsigned i = 0; i < 2; ++i) {
+		for (unsigned control = 0; control < TEAM_CONTROL_COUNT; ++control) {
+			SendMessageW(state->teamControls[i][control], WM_SETFONT, (WPARAM)font, TRUE);
+		}
 		SendMessageW(state->headings[i], WM_SETFONT, (WPARAM)heading, TRUE);
 		SendMessageW(state->lists[i], WM_SETFONT, (WPARAM)font, TRUE);
 		SendMessageW(state->pitches[i], WM_SETFONT, (WPARAM)font, TRUE);
@@ -1316,56 +1350,55 @@ static void layout(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < 2; ++i) {
 		int y = top + (int)i * (panelHeight + margin);
 		int header = scaled(state, 27);
-		int headingWidth = width;
-		if (i == 1) {
-			HDC dc = GetDC(window);
-			HGDIOBJ oldFont = SelectObject(dc, state->headingFont);
-			SIZE extent = {0};
-			GetTextExtentPoint32W(dc, state->headingText[i], (int)wcslen(state->headingText[i]), &extent);
+		HDC dc = GetDC(window);
+		HGDIOBJ oldFont = SelectObject(dc, state->headingFont);
+		SIZE extent = {0};
+		GetTextExtentPoint32W(dc, state->headingText[i], (int)wcslen(state->headingText[i]), &extent);
+		SelectObject(dc, oldFont);
+		int headingWidth = extent.cx + scaled(state, 4);
+		if (headingWidth > width - header) {
+			headingWidth = width - header;
+		}
+		MoveWindow(
+			state->teamControls[i][TEAM_ICON],
+			left + headingWidth,
+			y + (extent.cy - header) / 2,
+			header,
+			header,
+			TRUE
+		);
+		if (state->editingTeam[i]) {
+			int x = left + headingWidth;
+			int gap = scaled(state, 6);
+			int inputWidth = scaled(state, 190);
+			int buttonWidth = scaled(state, 70);
+			MoveWindow(state->teamControls[i][TEAM_INPUT], x, y, inputWidth, header, TRUE);
+			x += inputWidth + gap;
+			MoveWindow(state->teamControls[i][TEAM_CONFIRM], x, y, buttonWidth, header, TRUE);
+			x += buttonWidth + gap;
+			MoveWindow(state->teamControls[i][TEAM_CANCEL], x, y, buttonWidth, header, TRUE);
+			x += buttonWidth + gap;
+			int errorWidth = left + width - x;
+			int errorHeight = header - scaled(state, 4);
+			SelectObject(dc, state->font);
+			wchar_t text[2 * FIXTURE_TEXT + 128];
+			GetWindowTextW(state->teamControls[i][TEAM_ERROR], text, 2 * FIXTURE_TEXT + 128);
+			RECT errorBounds = {0, 0, errorWidth - GetSystemMetricsForDpi(SM_CXVSCROLL, state->dpi), 0};
+			DrawTextW(dc, text, -1, &errorBounds, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
 			SelectObject(dc, oldFont);
-			headingWidth = extent.cx + scaled(state, 4);
-			if (headingWidth > width - header) {
-				headingWidth = width - header;
+			if (errorBounds.bottom > errorHeight) {
+				errorHeight = errorBounds.bottom;
+				if (errorHeight > scaled(state, 60)) {
+					errorHeight = scaled(state, 60);
+				}
+				header = errorHeight + scaled(state, 4);
 			}
 			MoveWindow(
-				state->away[AWAY_ICON],
-				left + headingWidth,
-				y + (extent.cy - header) / 2,
-				header,
-				header,
-				TRUE
+				state->teamControls[i][TEAM_ERROR], x, y + scaled(state, 4), errorWidth, errorHeight, TRUE
 			);
-			if (state->editingAway) {
-				int x = left + headingWidth;
-				int gap = scaled(state, 6);
-				int inputWidth = scaled(state, 190);
-				int buttonWidth = scaled(state, 70);
-				MoveWindow(state->away[AWAY_TEAM], x, y, inputWidth, header, TRUE);
-				x += inputWidth + gap;
-				MoveWindow(state->away[AWAY_CONFIRM], x, y, buttonWidth, header, TRUE);
-				x += buttonWidth + gap;
-				MoveWindow(state->away[AWAY_CANCEL], x, y, buttonWidth, header, TRUE);
-				x += buttonWidth + gap;
-				int errorWidth = left + width - x;
-				int errorHeight = header - scaled(state, 4);
-				SelectObject(dc, state->font);
-				wchar_t text[2 * FIXTURE_TEXT + 128];
-				GetWindowTextW(state->away[AWAY_ERROR], text, 2 * FIXTURE_TEXT + 128);
-				RECT errorBounds = {0, 0, errorWidth - GetSystemMetricsForDpi(SM_CXVSCROLL, state->dpi), 0};
-				DrawTextW(dc, text, -1, &errorBounds, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
-				SelectObject(dc, oldFont);
-				if (errorBounds.bottom > errorHeight) {
-					errorHeight = errorBounds.bottom;
-					if (errorHeight > scaled(state, 60)) {
-						errorHeight = scaled(state, 60);
-					}
-					header = errorHeight + scaled(state, 4);
-				}
-				MoveWindow(state->away[AWAY_ERROR], x, y + scaled(state, 4), errorWidth, errorHeight, TRUE);
-				ShowScrollBar(state->away[AWAY_ERROR], SB_VERT, errorBounds.bottom > errorHeight);
-			}
-			ReleaseDC(window, dc);
+			ShowScrollBar(state->teamControls[i][TEAM_ERROR], SB_VERT, errorBounds.bottom > errorHeight);
 		}
+		ReleaseDC(window, dc);
 		MoveWindow(state->headings[i], left, y, headingWidth, scaled(state, 27), TRUE);
 		// Ellipsis controls can alter their text; restore the full heading after resizing.
 		if (!SetWindowTextW(state->headings[i], state->headingText[i])) {
@@ -1382,24 +1415,24 @@ static void layout(HWND window, WindowState *state) {
 	}
 }
 
-static bool createAwayControls(HWND window, WindowState *state) {
+static bool createTeamControls(HWND window, WindowState *state, unsigned side) {
 	static const struct {
 		const wchar_t *className;
 		const wchar_t *text;
 		DWORD style;
 		DWORD extended;
-	} controls[AWAY_CONTROL_COUNT] = {
-		{L"BUTTON", L"Replace away team", WS_TABSTOP | BS_OWNERDRAW, 0},
+	} controls[TEAM_CONTROL_COUNT] = {
+		{L"BUTTON", L"", WS_TABSTOP | BS_OWNERDRAW, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{L"BUTTON", L"Confirm", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 0},
 	};
-	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
-		state->away[i] = CreateWindowExW(
+	for (unsigned i = 0; i < TEAM_CONTROL_COUNT; ++i) {
+		state->teamControls[side][i] = CreateWindowExW(
 			controls[i].extended,
 			controls[i].className,
-			controls[i].text,
+			i == TEAM_ICON ? (side ? L"Replace away team" : L"Replace home team") : controls[i].text,
 			WS_CHILD | controls[i].style,
 			0,
 			0,
@@ -1410,13 +1443,16 @@ static bool createAwayControls(HWND window, WindowState *state) {
 			GetModuleHandleW(NULL),
 			NULL
 		);
-		if (!state->away[i]) {
+		if (!state->teamControls[side][i]) {
 			return false;
 		}
 	}
-	SendMessageW(state->away[AWAY_TEAM], EM_SETLIMITTEXT, 255, 0);
+	SendMessageW(state->teamControls[side][TEAM_INPUT], EM_SETLIMITTEXT, 255, 0);
 	SendMessageW(
-		state->away[AWAY_TEAM], EM_SETCUEBANNER, TRUE, (LPARAM)L"Team ID or club short name"
+		state->teamControls[side][TEAM_INPUT],
+		EM_SETCUEBANNER,
+		TRUE,
+		(LPARAM)L"Team ID or club short name"
 	);
 	return true;
 }
@@ -1611,9 +1647,9 @@ static bool createControls(HWND window, WindowState *state) {
 			}
 		}
 	}
-	bool ok = createAwayControls(window, state) && createSimulationControls(window, state) &&
-						setFonts(state) && setMetadata(state) && setHeadings(state) && fillList(state, 0) &&
-						fillList(state, 1);
+	bool ok = createTeamControls(window, state, 0) && createTeamControls(window, state, 1) &&
+						createSimulationControls(window, state) && setFonts(state) && setMetadata(state) &&
+						setHeadings(state) && fillList(state, 0) && fillList(state, 1);
 	if (ok) {
 		selectTab(state);
 	}
@@ -2009,17 +2045,19 @@ static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
 		chooseFixtureFile(window, state, control == state->fileButtons[FILE_SAVE_BUTTON]);
 		return true;
 	}
-	if (control == state->away[AWAY_ICON]) {
-		editAway(window, state, true);
-		return true;
-	}
-	if (control == state->away[AWAY_CONFIRM]) {
-		startReplacement(window, state);
-		return true;
-	}
-	if (control == state->away[AWAY_CANCEL]) {
-		editAway(window, state, false);
-		return true;
+	for (unsigned side = 0; side < 2; ++side) {
+		if (control == state->teamControls[side][TEAM_ICON]) {
+			editTeam(window, state, side, true);
+			return true;
+		}
+		if (control == state->teamControls[side][TEAM_CONFIRM]) {
+			startReplacement(window, state, side);
+			return true;
+		}
+		if (control == state->teamControls[side][TEAM_CANCEL]) {
+			editTeam(window, state, side, false);
+			return true;
+		}
 	}
 	if (control == state->simulation[SIM_SUBMIT]) {
 		startSimulation(window, state);
@@ -2064,7 +2102,7 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 				return 0;
 			}
 			if (state->replacementThread) {
-				showError(window, L"An away team replacement is running. Please wait before closing.");
+				showError(window, L"A team replacement is running. Please wait before closing.");
 				return 0;
 			}
 			if (state->simulationThread) {
@@ -2079,7 +2117,8 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 
 // Draws the owner-drawn edit icon; returns false when the item is not ours.
 static bool drawItem(HWND window, WindowState *state, const DRAWITEMSTRUCT *draw) {
-	if (draw->hwndItem != state->away[AWAY_ICON]) {
+	if (draw->hwndItem != state->teamControls[0][TEAM_ICON] &&
+			draw->hwndItem != state->teamControls[1][TEAM_ICON]) {
 		return false;
 	}
 	if (!drawEditIcon(state, draw)) {
@@ -2149,7 +2188,11 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			HDC dc = (HDC)wParam;
 			SetBkMode(dc, TRANSPARENT);
 			SetTextColor(
-				dc, (HWND)lParam == state->away[AWAY_ERROR] ? RGB(255, 0, 0) : GetSysColor(COLOR_WINDOWTEXT)
+				dc,
+				(HWND)lParam == state->teamControls[0][TEAM_ERROR] ||
+						(HWND)lParam == state->teamControls[1][TEAM_ERROR]
+					? RGB(255, 0, 0)
+					: GetSysColor(COLOR_WINDOWTEXT)
 			);
 			SetBkColor(dc, GetSysColor(COLOR_WINDOW));
 			return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
@@ -2160,12 +2203,16 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			}
 			break;
 		case WM_SYSCOLORCHANGE:
-			if (state->away[AWAY_ICON]) {
-				InvalidateRect(state->away[AWAY_ICON], NULL, TRUE);
+			for (unsigned side = 0; side < 2; ++side) {
+				if (state->teamControls[side][TEAM_ICON]) {
+					InvalidateRect(state->teamControls[side][TEAM_ICON], NULL, TRUE);
+				}
 			}
 			break;
 		case WM_SETCURSOR:
-			if ((HWND)wParam == state->away[AWAY_ICON] && IsWindowEnabled(state->away[AWAY_ICON])) {
+			if (((HWND)wParam == state->teamControls[0][TEAM_ICON] ||
+						(HWND)wParam == state->teamControls[1][TEAM_ICON]) &&
+					IsWindowEnabled((HWND)wParam)) {
 				SetCursor(LoadCursorW(NULL, IDC_HAND));
 				return TRUE;
 			}
@@ -2198,9 +2245,13 @@ static bool handleKey(HWND window, WindowState *state, const MSG *message) {
 	if (message->message != WM_KEYDOWN) {
 		return false;
 	}
-	if (message->wParam == VK_ESCAPE && state->editingAway && TabCtrl_GetCurSel(state->tabs) == 0) {
-		editAway(window, state, false);
-		return true;
+	if (message->wParam == VK_ESCAPE && TabCtrl_GetCurSel(state->tabs) == 0) {
+		for (unsigned side = 0; side < 2; ++side) {
+			if (state->editingTeam[side]) {
+				editTeam(window, state, side, false);
+				return true;
+			}
+		}
 	}
 	if (message->wParam == VK_RETURN) {
 		if (message->hwnd == state->fileButtons[FILE_OPEN_BUTTON] ||
@@ -2208,13 +2259,17 @@ static bool handleKey(HWND window, WindowState *state, const MSG *message) {
 			SendMessageW(message->hwnd, BM_CLICK, 0, 0);
 			return true;
 		}
-		if (message->hwnd == state->away[AWAY_ICON] || message->hwnd == state->away[AWAY_CANCEL]) {
-			SendMessageW(message->hwnd, BM_CLICK, 0, 0);
-			return true;
-		}
-		if (message->hwnd == state->away[AWAY_TEAM] || message->hwnd == state->away[AWAY_CONFIRM]) {
-			startReplacement(window, state);
-			return true;
+		for (unsigned side = 0; side < 2; ++side) {
+			if (message->hwnd == state->teamControls[side][TEAM_ICON] ||
+					message->hwnd == state->teamControls[side][TEAM_CANCEL]) {
+				SendMessageW(message->hwnd, BM_CLICK, 0, 0);
+				return true;
+			}
+			if (message->hwnd == state->teamControls[side][TEAM_INPUT] ||
+					message->hwnd == state->teamControls[side][TEAM_CONFIRM]) {
+				startReplacement(window, state, side);
+				return true;
+			}
 		}
 		if (message->hwnd == state->simulation[SIM_SUBMIT]) {
 			SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);

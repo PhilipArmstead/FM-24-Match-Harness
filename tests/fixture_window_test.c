@@ -92,6 +92,8 @@ static HANDLE replacementRelease;
 static unsigned replacementCalls;
 static int replacementResult;
 static bool replacementLoadFailure;
+static unsigned expectedSide = 1;
+static const FixtureData *replacementInput;
 static const wchar_t *expectedTeam;
 static wchar_t replacementOutput[HARNESS_PATH_LENGTH];
 static unsigned taskbarCreates;
@@ -333,9 +335,9 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 	return simulationResult;
 }
 
-int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
 	ASSERT_BOOL_EQ(argc == 5 && argv[argc] == NULL, true);
-	ASSERT_INT_EQ(wcscmp(argv[1], L"replace-away"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[1], expectedSide ? L"replace-away" : L"replace-home"), 0);
 	ASSERT_INT_EQ(wcscmp(argv[2], binaryReplacement ? argv[4] : expectedInput), 0);
 	ASSERT_INT_EQ(wcscmp(argv[3], expectedTeam), 0);
 	ASSERT_BOOL_EQ(files_hasExtension(argv[4], L".json"), true);
@@ -343,7 +345,12 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 	++replacementCalls;
 	ASSERT_BOOL_EQ(WaitForSingleObject(replacementRelease, 5000) == WAIT_OBJECT_0, true);
 	(void)snprintf(
-		result, resultSize, "%s", replacementResult ? "error: that is the home team" : "ok"
+		result,
+		resultSize,
+		"%s",
+		replacementResult
+			? (expectedSide ? "error: that is the home team" : "error: that is the away team")
+			: "ok"
 	);
 	if (!replacementResult) {
 		ASSERT_BOOL_EQ(files_write(argv[4], "{\"replacement\":true}", 20), true);
@@ -370,14 +377,20 @@ bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t
 		(void)snprintf(error, errorSize, "cannot read replacement fixture");
 		return false;
 	}
-	memset(out, 0, sizeof *out);
-	strcpy(out->teams[0].name, "Aston Villa");
-	strcpy(out->teams[1].name, "Luton Town");
-	strcpy(out->teams[1].tactic, "New tactic");
-	strcpy(out->teams[1].formation, "4-2-3-1");
-	out->teams[1].playerCount = (FixtureNumber){.value = 1, .known = true};
-	strcpy(out->teams[1].players[0].name, "New away player");
-	out->teams[1].slots[0].position = (FixtureNumber){.value = 1, .known = true};
+	if (replacementInput) {
+		*out = *replacementInput;
+	} else {
+		memset(out, 0, sizeof *out);
+		strcpy(out->teams[0].name, "Aston Villa");
+	}
+	FixtureTeam *team = &out->teams[expectedSide];
+	memset(team, 0, sizeof *team);
+	strcpy(team->name, expectedSide ? "Luton Town" : "Norwich City");
+	strcpy(team->tactic, "New tactic");
+	strcpy(team->formation, "4-2-3-1");
+	team->playerCount = (FixtureNumber){.value = 1, .known = true};
+	strcpy(team->players[0].name, "New player");
+	team->slots[0].position = (FixtureNumber){.value = 1, .known = true};
 	return true;
 }
 
@@ -471,12 +484,14 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		ASSERT_BOOL_EQ(controlVisible(state->simulation[i]), tab == 1);
 	}
-	for (unsigned i = 0; i < AWAY_CONTROL_COUNT; ++i) {
-		ASSERT_BOOL_EQ(
-			controlVisible(state->away[i]),
-			tab == 0 && (i == AWAY_ICON ? !state->editingAway : state->editingAway) &&
-				(i != AWAY_ERROR || GetWindowTextLengthW(state->away[i]) > 0)
-		);
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = 0; i < TEAM_CONTROL_COUNT; ++i) {
+			ASSERT_BOOL_EQ(
+				controlVisible(state->teamControls[side][i]),
+				tab == 0 && (i == TEAM_ICON ? !state->editingTeam[side] : state->editingTeam[side]) &&
+					(i != TEAM_ERROR || GetWindowTextLengthW(state->teamControls[side][i]) > 0)
+			);
+		}
 	}
 }
 
@@ -587,17 +602,18 @@ static void checkControlColors(HWND window, HWND control, UINT message) {
 	ASSERT_BOOL_EQ(ReleaseDC(control, dc), true);
 }
 
-static void clickAway(HWND window, WindowState *state, unsigned control) {
+static void clickTeam(HWND window, WindowState *state, unsigned side, unsigned control) {
 	ASSERT_BOOL_EQ(
-		windowProcedure(window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->away[control]) ==
-			0,
+		windowProcedure(
+			window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->teamControls[side][control]
+		) == 0,
 		true
 	);
 }
 
-static void checkAwayLayout(HWND window, WindowState *state) {
-	RECT heading = controlBounds(window, state->headings[1]);
-	RECT icon = controlBounds(window, state->away[AWAY_ICON]);
+static void checkTeamLayout(HWND window, WindowState *state, unsigned side) {
+	RECT heading = controlBounds(window, state->headings[side]);
+	RECT icon = controlBounds(window, state->teamControls[side][TEAM_ICON]);
 	HDC dc = GetDC(window);
 	ASSERT_BOOL_EQ(dc != NULL, true);
 	if (dc) {
@@ -611,13 +627,13 @@ static void checkAwayLayout(HWND window, WindowState *state) {
 	}
 	ASSERT_BOOL_EQ(icon.left == heading.right, true);
 	ASSERT_INT_EQ(icon.bottom - icon.top, scaled(state, 27));
-	if (!state->editingAway) {
+	if (!state->editingTeam[side]) {
 		return;
 	}
-	RECT input = controlBounds(window, state->away[AWAY_TEAM]);
-	RECT confirm = controlBounds(window, state->away[AWAY_CONFIRM]);
-	RECT cancel = controlBounds(window, state->away[AWAY_CANCEL]);
-	RECT error = controlBounds(window, state->away[AWAY_ERROR]);
+	RECT input = controlBounds(window, state->teamControls[side][TEAM_INPUT]);
+	RECT confirm = controlBounds(window, state->teamControls[side][TEAM_CONFIRM]);
+	RECT cancel = controlBounds(window, state->teamControls[side][TEAM_CANCEL]);
+	RECT error = controlBounds(window, state->teamControls[side][TEAM_ERROR]);
 	RECT tabs = controlBounds(window, state->tabs);
 	ASSERT_BOOL_EQ(input.left == heading.right && input.top == heading.top, true);
 	ASSERT_BOOL_EQ(confirm.left > input.right && cancel.left > confirm.right, true);
@@ -625,7 +641,8 @@ static void checkAwayLayout(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(error.top < cancel.bottom, true);
 }
 
-static void checkAwayHeading(HWND window, WindowState *state, const wchar_t *expected) {
+static void
+checkTeamHeading(HWND window, WindowState *state, unsigned side, const wchar_t *expected) {
 	HDC dc = GetDC(window);
 	ASSERT_BOOL_EQ(dc != NULL, true);
 	HGDIOBJ old = SelectObject(dc, state->headingFont);
@@ -633,32 +650,50 @@ static void checkAwayHeading(HWND window, WindowState *state, const wchar_t *exp
 	ASSERT_BOOL_EQ(GetTextExtentPoint32W(dc, expected, (int)wcslen(expected), &extent), true);
 	SelectObject(dc, old);
 	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
-	RECT heading = controlBounds(window, state->headings[1]);
-	RECT pitch = controlBounds(window, state->pitches[1]);
-	RECT list = controlBounds(window, state->lists[1]);
+	RECT heading = controlBounds(window, state->headings[side]);
+	RECT pitch = controlBounds(window, state->pitches[side]);
+	RECT list = controlBounds(window, state->lists[side]);
 	int width = extent.cx + scaled(state, 4);
 	int maximum = list.right - pitch.left - scaled(state, 27);
 	ASSERT_INT_EQ(heading.right - heading.left, width < maximum ? width : maximum);
 	if (width <= maximum) {
 		wchar_t text[2 * FIXTURE_TEXT + 128] = {0};
-		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2 * FIXTURE_TEXT + 128) > 0, true);
+		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[side], text, 2 * FIXTURE_TEXT + 128) > 0, true);
 		ASSERT_INT_EQ(wcscmp(text, expected), 0);
 	}
-	checkAwayLayout(window, state);
+	checkTeamLayout(window, state, side);
 }
 
-static void checkHeadingResize(HWND window, WindowState *state) {
+static void checkHeadingResize(HWND window, WindowState *state, unsigned side) {
 	char tactic[FIXTURE_TEXT];
-	strcpy(tactic, state->data->teams[1].tactic);
-	memset(state->data->teams[1].tactic, 'W', 120);
-	state->data->teams[1].tactic[120] = 0;
+	strcpy(tactic, state->data->teams[side].tactic);
+	memset(state->data->teams[side].tactic, 'W', 120);
+	state->data->teams[side].tactic[120] = 0;
 	ASSERT_BOOL_EQ(setHeadings(state), true);
 	wchar_t expected[2 * FIXTURE_TEXT + 128];
 	wchar_t wideTactic[FIXTURE_TEXT];
-	ASSERT_BOOL_EQ(widen(state->data->teams[1].tactic, wideTactic, FIXTURE_TEXT), true);
+	wchar_t wideTeam[FIXTURE_TEXT];
+	wchar_t wideFormation[FIXTURE_TEXT];
+	ASSERT_BOOL_EQ(widen(state->data->teams[side].tactic, wideTactic, FIXTURE_TEXT), true);
+	ASSERT_BOOL_EQ(widen(state->data->teams[side].name, wideTeam, FIXTURE_TEXT), true);
+	ASSERT_BOOL_EQ(
+		widen(
+			state->data->teams[side].formation[0] ? state->data->teams[side].formation
+																						: "Formation unknown",
+			wideFormation,
+			FIXTURE_TEXT
+		),
+		true
+	);
 	ASSERT_BOOL_EQ(
 		swprintf(
-			expected, 2 * FIXTURE_TEXT + 128, L"Away: Bristol City - %ls [Formation unknown]", wideTactic
+			expected,
+			2 * FIXTURE_TEXT + 128,
+			L"%ls: %ls - %ls [%ls]",
+			side ? L"Away" : L"Home",
+			wideTeam,
+			wideTactic,
+			wideFormation
 		) > 0,
 		true
 	);
@@ -668,14 +703,14 @@ static void checkHeadingResize(HWND window, WindowState *state) {
 		ASSERT_BOOL_EQ(setFonts(state), true);
 		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 900, SWP_NOMOVE | SWP_NOZORDER), true);
 		layout(window, state);
-		checkAwayHeading(window, state, expected);
+		checkTeamHeading(window, state, side, expected);
 		// Simulate text altered by the ellipsis control before expanding it.
-		ASSERT_BOOL_EQ(SetWindowTextW(state->headings[1], L"Away..."), true);
+		ASSERT_BOOL_EQ(SetWindowTextW(state->headings[side], L"Away..."), true);
 		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 4000, 900, SWP_NOMOVE | SWP_NOZORDER), true);
 		layout(window, state);
-		checkAwayHeading(window, state, expected);
+		checkTeamHeading(window, state, side, expected);
 	}
-	strcpy(state->data->teams[1].tactic, tactic);
+	strcpy(state->data->teams[side].tactic, tactic);
 	state->dpi = 96;
 	ASSERT_BOOL_EQ(setFonts(state), true);
 	ASSERT_BOOL_EQ(setHeadings(state), true);
@@ -683,7 +718,7 @@ static void checkHeadingResize(HWND window, WindowState *state) {
 	layout(window, state);
 }
 
-static void checkAwayIcon(HWND window, WindowState *state) {
+static void checkTeamIcon(HWND window, WindowState *state, unsigned teamSide) {
 	HDC dc = GetDC(window);
 	ASSERT_BOOL_EQ(dc != NULL, true);
 	if (!dc) {
@@ -709,8 +744,9 @@ static void checkAwayIcon(HWND window, WindowState *state) {
 	for (unsigned i = 0; old && i < sizeof resolutions / sizeof resolutions[0]; ++i) {
 		state->dpi = resolutions[i];
 		int side = scaled(state, 27);
-		DRAWITEMSTRUCT draw = {
-			.hwndItem = state->away[AWAY_ICON], .hDC = memory, .rcItem = {0, 0, side, side}};
+		DRAWITEMSTRUCT draw = {.hwndItem = state->teamControls[teamSide][TEAM_ICON],
+			.hDC = memory,
+			.rcItem = {0, 0, side, side}};
 		ASSERT_BOOL_EQ(windowProcedure(window, WM_DRAWITEM, 0, (LPARAM)&draw) == TRUE, true);
 		COLORREF normal[54 * 54];
 		unsigned blue = 0;
@@ -794,134 +830,167 @@ static void checkAwayIcon(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
 }
 
-static void checkAwayEditor(HWND window, WindowState *state) {
+static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
+	expectedSide = side;
+	replacementInput = state->data;
+	unsigned calls = replacementCalls;
+	wchar_t originalTeam[FIXTURE_TEXT];
+	wchar_t opponent[FIXTURE_TEXT];
+	ASSERT_BOOL_EQ(widen(state->data->teams[side].name, originalTeam, FIXTURE_TEXT), true);
+	ASSERT_BOOL_EQ(widen(state->data->teams[1 - side].name, opponent, FIXTURE_TEXT), true);
+	const wchar_t *prefix = side ? L"Away: " : L"Home: ";
+	const wchar_t *newTeam = side ? L"Luton Town" : L"Norwich City";
+	const wchar_t *newHeading = side ? L"Away: Luton Town - New tactic [4-2-3-1]"
+																	 : L"Home: Norwich City - New tactic [4-2-3-1]";
 	wchar_t heading[2048] = {0};
 	wchar_t text[2048] = {0};
 	changeTab(window, state, 0);
-	checkHeadingResize(window, state);
+	checkHeadingResize(window, state, side);
 	layout(window, state);
-	checkAwayLayout(window, state);
-	checkAwayIcon(window, state);
-	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], heading, 2048) > 0, true);
-	ASSERT_BOOL_EQ(wcsstr(heading, L"Bristol City") != NULL, true);
-	checkAwayHeading(window, state, heading);
+	checkTeamLayout(window, state, side);
+	checkTeamIcon(window, state, side);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[side], heading, 2048) > 0, true);
+	ASSERT_BOOL_EQ(wcsstr(heading, originalTeam) != NULL, true);
+	checkTeamHeading(window, state, side, heading);
 	ASSERT_BOOL_EQ(files_write(state->savedFilename, "original saved fixture", 22), true);
 	wchar_t saved[FIXTURE_EXPORT_FILENAME_LENGTH];
 	wcscpy(saved, state->savedFilename);
 	const wchar_t *originalPath = state->path;
-	clickAway(window, state, AWAY_ICON);
-	ASSERT_BOOL_EQ(state->editingAway, true);
-	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) == 6, true);
-	ASSERT_INT_EQ(wcscmp(text, L"Away: "), 0);
-	checkAwayHeading(window, state, L"Away: ");
-	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_TEAM], text, 2048) > 0, true);
-	ASSERT_INT_EQ(wcscmp(text, L"Bristol City"), 0);
-	ASSERT_BOOL_EQ(SendMessageW(state->away[AWAY_TEAM], EM_GETLIMITTEXT, 0, 0) == 255, true);
-	checkAwayLayout(window, state);
+	clickTeam(window, state, 1 - side, TEAM_ICON);
+	ASSERT_BOOL_EQ(state->editingTeam[1 - side], true);
+	clickTeam(window, state, side, TEAM_ICON);
+	ASSERT_BOOL_EQ(state->editingTeam[side] && !state->editingTeam[1 - side], true);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->headings[side], text, 2048) == 6, true);
+	ASSERT_INT_EQ(wcscmp(text, prefix), 0);
+	checkTeamHeading(window, state, side, prefix);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->teamControls[side][TEAM_INPUT], text, 2048) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, originalTeam), 0);
+	ASSERT_BOOL_EQ(
+		SendMessageW(state->teamControls[side][TEAM_INPUT], EM_GETLIMITTEXT, 0, 0) == 255, true
+	);
+	checkTeamLayout(window, state, side);
 	state->dpi = 144;
 	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1350, 900, SWP_NOMOVE | SWP_NOZORDER), true);
 	ASSERT_BOOL_EQ(setFonts(state), true);
 	layout(window, state);
-	checkAwayLayout(window, state);
-	checkAwayHeading(window, state, L"Away: ");
+	checkTeamLayout(window, state, side);
+	checkTeamHeading(window, state, side, prefix);
 	state->dpi = 96;
 	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
 	ASSERT_BOOL_EQ(setFonts(state), true);
 	layout(window, state);
-	ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], L"Not submitted"), true);
-	MSG key = {.hwnd = state->away[AWAY_TEAM], .message = WM_KEYUP, .wParam = VK_ESCAPE};
-	ASSERT_BOOL_EQ(!handleKey(window, state, &key) && state->editingAway, true);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], L"Not submitted"), true);
+	MSG key = {
+		.hwnd = state->teamControls[side][TEAM_INPUT], .message = WM_KEYUP, .wParam = VK_ESCAPE};
+	ASSERT_BOOL_EQ(!handleKey(window, state, &key) && state->editingTeam[side], true);
 	key.message = WM_KEYDOWN;
 	ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
-	ASSERT_BOOL_EQ(!state->editingAway && replacementCalls == 0, true);
+	ASSERT_BOOL_EQ(!state->editingTeam[side] && replacementCalls == calls, true);
 	ASSERT_BOOL_EQ(
-		GetWindowTextW(state->headings[1], text, 2048) > 0 && wcscmp(text, heading) == 0, true
+		GetWindowTextW(state->headings[side], text, 2048) > 0 && wcscmp(text, heading) == 0, true
 	);
-	checkAwayHeading(window, state, heading);
+	checkTeamHeading(window, state, side, heading);
 	ASSERT_INT_EQ(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath, true);
-	clickAway(window, state, AWAY_ICON);
+	clickTeam(window, state, side, TEAM_ICON);
 	key.wParam = VK_RETURN;
 	static const wchar_t *const invalid[] = {L"", L" \t", L"1\nteam=2"};
 	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
-		ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], invalid[i]), true);
+		ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], invalid[i]), true);
 		ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
-		ASSERT_BOOL_EQ(!state->replacementThread && replacementCalls == 0 && state->editingAway, true);
-		ASSERT_BOOL_EQ(GetWindowTextLengthW(state->away[AWAY_ERROR]) > 0, true);
+		ASSERT_BOOL_EQ(
+			!state->replacementThread && replacementCalls == calls && state->editingTeam[side], true
+		);
+		ASSERT_BOOL_EQ(GetWindowTextLengthW(state->teamControls[side][TEAM_ERROR]) > 0, true);
 	}
 	ASSERT_BOOL_EQ(paths_absolute(saved, expectedInput, HARNESS_PATH_LENGTH), true);
 	replacementRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
 	ASSERT_BOOL_EQ(replacementRelease != NULL, true);
-	expectedTeam = L"Aston Villa";
-	ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam), true);
+	expectedTeam = opponent;
+	ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], expectedTeam), true);
 	replacementResult = 1;
 	int errors = errorMessages;
 	unsigned simulations = simulationCalls;
-	clickAway(window, state, AWAY_CONFIRM);
+	clickTeam(window, state, side, TEAM_CONFIRM);
 	ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
 	HANDLE worker = state->replacementThread;
-	ASSERT_BOOL_EQ(!IsWindowEnabled(state->away[AWAY_CONFIRM]), true);
-	ASSERT_BOOL_EQ(!IsWindowEnabled(state->away[AWAY_CANCEL]), true);
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state->teamControls[side][TEAM_CONFIRM]), true);
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state->teamControls[side][TEAM_CANCEL]), true);
 	ASSERT_BOOL_EQ(!IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
-	clickAway(window, state, AWAY_CONFIRM);
-	clickAway(window, state, AWAY_CANCEL);
+	ASSERT_BOOL_EQ(!IsWindowEnabled(state->teamControls[1 - side][TEAM_ICON]), true);
+	clickTeam(window, state, 1 - side, TEAM_ICON);
+	ASSERT_BOOL_EQ(!state->editingTeam[1 - side], true);
+	clickTeam(window, state, side, TEAM_CONFIRM);
+	clickTeam(window, state, side, TEAM_CANCEL);
 	clickSimulate(window, state);
-	ASSERT_BOOL_EQ(state->replacementThread == worker && state->editingAway, true);
+	ASSERT_BOOL_EQ(state->replacementThread == worker && state->editingTeam[side], true);
 	ASSERT_BOOL_EQ(simulationCalls == simulations, true);
 	ASSERT_BOOL_EQ(windowProcedure(window, WM_CLOSE, 0, 0), 0);
 	ASSERT_BOOL_EQ(IsWindow(window) && errorMessages == ++errors, true);
 	ASSERT_BOOL_EQ(SetEvent(replacementRelease), true);
 	ASSERT_BOOL_EQ(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0, true);
 	ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, REPLACE_TIMER, 0) == 0, true);
-	ASSERT_BOOL_EQ(replacementCalls == 1 && !state->replacementThread && state->editingAway, true);
-	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_ERROR], text, 2048) > 0, true);
-	ASSERT_INT_EQ(wcscmp(text, L"error: that is the home team"), 0);
-	ASSERT_INT_EQ(strcmp(state->data->teams[1].name, "Bristol City"), 0);
+	ASSERT_BOOL_EQ(
+		replacementCalls == calls + 1 && !state->replacementThread && state->editingTeam[side], true
+	);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->teamControls[side][TEAM_ERROR], text, 2048) > 0, true);
+	ASSERT_INT_EQ(
+		wcscmp(text, side ? L"error: that is the home team" : L"error: that is the away team"), 0
+	);
+	ASSERT_BOOL_EQ(widen(state->data->teams[side].name, text, 2048), true);
+	ASSERT_INT_EQ(wcscmp(text, originalTeam), 0);
 	ASSERT_INT_EQ(wcscmp(state->savedFilename, saved) == 0 && state->path == originalPath, true);
 	ASSERT_BOOL_EQ(fileMissing(replacementOutput), true);
-	HDC dc = GetDC(state->away[AWAY_ERROR]);
+	HDC dc = GetDC(state->teamControls[side][TEAM_ERROR]);
 	ASSERT_BOOL_EQ(
-		windowProcedure(window, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)state->away[AWAY_ERROR]) ==
-			(LRESULT)GetSysColorBrush(COLOR_WINDOW),
+		windowProcedure(
+			window, WM_CTLCOLORSTATIC, (WPARAM)dc, (LPARAM)state->teamControls[side][TEAM_ERROR]
+		) == (LRESULT)GetSysColorBrush(COLOR_WINDOW),
 		true
 	);
 	ASSERT_BOOL_EQ(GetTextColor(dc) == RGB(255, 0, 0), true);
-	ASSERT_BOOL_EQ(ReleaseDC(state->away[AWAY_ERROR], dc), true);
+	ASSERT_BOOL_EQ(ReleaseDC(state->teamControls[side][TEAM_ERROR], dc), true);
 	ASSERT_BOOL_EQ(
-		IsWindowEnabled(state->away[AWAY_CONFIRM]) && IsWindowEnabled(state->away[AWAY_CANCEL]), true
+		IsWindowEnabled(state->teamControls[side][TEAM_CONFIRM]) &&
+			IsWindowEnabled(state->teamControls[side][TEAM_CANCEL]),
+		true
 	);
-	checkAwayLayout(window, state);
+	checkTeamLayout(window, state, side);
 	changeTab(window, state, 1);
 	changeTab(window, state, 0);
 
 	replacementResult = 0;
 	replacementLoadFailure = true;
-	expectedTeam = L"Luton Town";
-	ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam), true);
-	clickAway(window, state, AWAY_CONFIRM);
+	expectedTeam = newTeam;
+	ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], expectedTeam), true);
+	clickTeam(window, state, side, TEAM_CONFIRM);
 	ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
 	ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
 	checkReplacement(window, state);
-	ASSERT_BOOL_EQ(state->editingAway && strcmp(state->data->teams[1].name, "Bristol City"), 0);
-	ASSERT_BOOL_EQ(GetWindowTextW(state->away[AWAY_ERROR], text, 2048) > 0, true);
+	ASSERT_BOOL_EQ(state->editingTeam[side], true);
+	ASSERT_BOOL_EQ(widen(state->data->teams[side].name, text, 2048), true);
+	ASSERT_INT_EQ(wcscmp(text, originalTeam), 0);
+	ASSERT_BOOL_EQ(GetWindowTextW(state->teamControls[side][TEAM_ERROR], text, 2048) > 0, true);
 	ASSERT_INT_EQ(wcscmp(text, L"cannot read replacement fixture"), 0);
 	ASSERT_BOOL_EQ(fileMissing(replacementOutput), true);
 	replacementLoadFailure = false;
 	for (unsigned i = 0; i < 2; ++i) {
-		expectedTeam = i ? L"677" : L"Luton Town";
-		ASSERT_BOOL_EQ(SetWindowTextW(state->away[AWAY_TEAM], expectedTeam), true);
+		expectedTeam = i ? (side ? L"677" : L"691") : newTeam;
+		ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[side][TEAM_INPUT], expectedTeam), true);
 		if (i) {
 			ASSERT_BOOL_EQ(paths_absolute(state->path, expectedInput, HARNESS_PATH_LENGTH), true);
 		}
 		wchar_t previous[HARNESS_PATH_LENGTH];
 		wcscpy(previous, state->replacementPath);
-		clickAway(window, state, AWAY_CONFIRM);
+		clickTeam(window, state, side, TEAM_CONFIRM);
 		ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
 		if (i) {
 			changeTab(window, state, 1);
 		}
 		ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
 		checkReplacement(window, state);
-		ASSERT_BOOL_EQ(!state->replacementThread && !state->editingAway && state->temporary, true);
+		ASSERT_BOOL_EQ(
+			!state->replacementThread && !state->editingTeam[side] && state->temporary, true
+		);
 		ASSERT_BOOL_EQ(!state->savedFilename[0] && !state->missing, true);
 		ASSERT_INT_EQ(wcscmp(state->path, replacementOutput), 0);
 		if (previous[0]) {
@@ -931,29 +1000,39 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 		checkContents(saved, "original saved fixture");
 		firstLine(state->metadata, L"This fixture object is not saved. Click here to export it");
 		changeTab(window, state, 0);
-		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) > 0, true);
-		ASSERT_INT_EQ(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]"), 0);
-		checkAwayHeading(window, state, L"Away: Luton Town - New tactic [4-2-3-1]");
-		ASSERT_BOOL_EQ(ListView_GetItemCount(state->lists[1]) == FIXTURE_SLOTS + 1, true);
+		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[side], text, 2048) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, newHeading), 0);
+		checkTeamHeading(window, state, side, newHeading);
+		ASSERT_BOOL_EQ(widen(state->data->teams[1 - side].name, text, 2048), true);
+		ASSERT_INT_EQ(wcscmp(text, opponent), 0);
+		ASSERT_BOOL_EQ(ListView_GetItemCount(state->lists[side]) == FIXTURE_SLOTS + 1, true);
 		ASSERT_BOOL_EQ(
-			GetWindowLongPtrW(state->pitches[1], GWLP_USERDATA) == (LONG_PTR)&state->data->teams[1], true
+			GetWindowLongPtrW(state->pitches[side], GWLP_USERDATA) == (LONG_PTR)&state->data->teams[side],
+			true
 		);
 		ASSERT_BOOL_EQ(IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
-		clickAway(window, state, AWAY_ICON);
-		clickAway(window, state, AWAY_CANCEL);
-		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[1], text, 2048) > 0, true);
-		ASSERT_INT_EQ(wcscmp(text, L"Away: Luton Town - New tactic [4-2-3-1]"), 0);
-		checkAwayHeading(window, state, L"Away: Luton Town - New tactic [4-2-3-1]");
+		clickTeam(window, state, side, TEAM_ICON);
+		clickTeam(window, state, side, TEAM_CANCEL);
+		ASSERT_BOOL_EQ(GetWindowTextW(state->headings[side], text, 2048) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, newHeading), 0);
+		checkTeamHeading(window, state, side, newHeading);
 		if (!i) {
-			clickAway(window, state, AWAY_ICON);
+			clickTeam(window, state, side, TEAM_ICON);
 		}
 	}
-	ASSERT_BOOL_EQ(replacementCalls == 4, true);
+	ASSERT_BOOL_EQ(replacementCalls == calls + 4, true);
 	for (unsigned exported = 0; exported < 2; ++exported) {
 		if (exported) {
 			exportFixture(window, state);
 			ASSERT_BOOL_EQ(!state->temporary, true);
-			ASSERT_INT_EQ(wcscmp(state->savedFilename, L"aston-villa-v-luton-town-12345.json"), 0);
+			wchar_t expectedFilename[FIXTURE_EXPORT_FILENAME_LENGTH];
+			ASSERT_BOOL_EQ(
+				fixtureExport_filename(
+					state->data, 12345, expectedFilename, FIXTURE_EXPORT_FILENAME_LENGTH
+				),
+				true
+			);
+			ASSERT_INT_EQ(wcscmp(state->savedFilename, expectedFilename), 0);
 			checkContents(state->savedFilename, "{\"replacement\":true}");
 		}
 		ASSERT_BOOL_EQ(
@@ -965,12 +1044,12 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 		simulationResult = 0;
 		clickSimulate(window, state);
 		ASSERT_BOOL_EQ(state->simulationThread != NULL, true);
-		ASSERT_BOOL_EQ(!IsWindowEnabled(state->away[AWAY_ICON]), true);
-		clickAway(window, state, AWAY_ICON);
-		ASSERT_BOOL_EQ(!state->editingAway, true);
+		ASSERT_BOOL_EQ(!IsWindowEnabled(state->teamControls[side][TEAM_ICON]), true);
+		clickTeam(window, state, side, TEAM_ICON);
+		ASSERT_BOOL_EQ(!state->editingTeam[side], true);
 		ASSERT_BOOL_EQ(WaitForSingleObject(state->simulationThread, 5000) == WAIT_OBJECT_0, true);
 		checkSimulation(window, state);
-		ASSERT_BOOL_EQ(IsWindowEnabled(state->away[AWAY_ICON]), true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->teamControls[side][TEAM_ICON]), true);
 	}
 	ASSERT_BOOL_EQ(errorMessages == errors, true);
 	ASSERT_BOOL_EQ(CloseHandle(replacementRelease), true);
@@ -978,6 +1057,7 @@ static void checkAwayEditor(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(DeleteFileW(state->savedFilename), true);
 	ASSERT_BOOL_EQ(DeleteFileW(state->replacementPath), true);
 	state->replacementPath[0] = 0;
+	replacementInput = NULL;
 }
 
 static void checkFonts(HWND window, WindowState *state) {
@@ -1004,7 +1084,8 @@ static void checkFonts(HWND window, WindowState *state) {
 			state->metadataHeight = scaled(state, 110);
 			layout(window, state);
 			checkFileButtonLayout(window, state);
-			checkAwayLayout(window, state);
+			checkTeamLayout(window, state, 0);
+			checkTeamLayout(window, state, 1);
 		}
 	}
 	calibriInstalled = false;
@@ -1271,7 +1352,8 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
 	ASSERT_BOOL_EQ(state.taskbar == NULL, true);
 	taskbarStateResult = S_OK;
-	checkAwayEditor(window, &state);
+	checkTeamEditor(window, &state, 1);
+	checkTeamEditor(window, &state, 0);
 	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
 	ASSERT_BOOL_EQ(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS, true);
 	releaseTaskbar(&state);
@@ -1481,26 +1563,31 @@ static void checkFileOperations(FixtureData *data) {
 	setActivePath(&state, binary, false);
 	ASSERT_BOOL_EQ(state.replacementPath[0] == 0 && !fileMissing(binary), true);
 
-	// Away-team edits still work after a binary Save As becomes the active source.
+	// Team edits still work after a binary Save As becomes the active source.
 	fileLoadPath = NULL;
 	fileSaveInput = binary;
 	binaryReplacement = true;
 	replacementResult = 0;
 	replacementLoadFailure = false;
-	expectedTeam = L"Luton Town";
 	replacementRelease = CreateEventW(NULL, TRUE, TRUE, NULL);
 	ASSERT_BOOL_EQ(replacementRelease != NULL, true);
-	ReplaceAwayJob replacement = {0};
-	wcscpy(replacement.input, binary);
-	wcscpy(replacement.team, expectedTeam);
-	replacement.data = calloc(1, sizeof *replacement.data);
-	ASSERT_BOOL_EQ(replacement.data != NULL, true);
-	if (replacement.data) {
-		ASSERT_INT_EQ((int)replaceAway(&replacement), 0);
-		ASSERT_INT_EQ(strcmp(replacement.data->teams[1].name, "Luton Town"), 0);
+	for (unsigned side = 0; side < 2; ++side) {
+		expectedSide = side;
+		expectedTeam = side ? L"Luton Town" : L"Norwich City";
+		ReplaceTeamJob replacement = {.side = side};
+		wcscpy(replacement.input, binary);
+		wcscpy(replacement.team, expectedTeam);
+		replacement.data = calloc(1, sizeof *replacement.data);
+		ASSERT_BOOL_EQ(replacement.data != NULL, true);
+		if (replacement.data) {
+			ASSERT_INT_EQ((int)replaceTeam(&replacement), 0);
+			ASSERT_INT_EQ(
+				strcmp(replacement.data->teams[side].name, side ? "Luton Town" : "Norwich City"), 0
+			);
+		}
+		free(replacement.data);
+		removeReplacement(replacement.output);
 	}
-	free(replacement.data);
-	removeReplacement(replacement.output);
 	ASSERT_BOOL_EQ(CloseHandle(replacementRelease), true);
 	binaryReplacement = false;
 

@@ -28,13 +28,14 @@ typedef struct Side {
 	Chains chains;
 } Side;
 
-// A pointer in the game's data replaced for a build against another away team.
+// A pointer in the game's data replaced for a build with another team.
 typedef struct Swap {
 	uint8_t *slot;
 	uint8_t *original;
+	const uint8_t *replacement;
 } Swap;
 
-enum { MAX_SWAPS = 8 };
+enum { MAX_SWAPS = 16 };
 
 // Pairs records of the input with records of a build (see align()).
 typedef struct Alignment {
@@ -43,8 +44,14 @@ typedef struct Alignment {
 	size_t *source; // per built record: the input record it pairs with, or SIZE_MAX
 } Alignment;
 
-static void addSwap(Swap *swaps, size_t *count, uint8_t *slot, const uint8_t *expected);
-static size_t swapAwayTeam(const SeedBuilder *builder, Swap *swaps);
+static bool addSwap(
+	Swap *swaps,
+	size_t *count,
+	uint8_t *slot,
+	const uint8_t *expected,
+	const uint8_t *replacement
+);
+static bool swapTeams(const SeedBuilder *builder, Swap *swaps, size_t *count);
 static void restoreSwaps(const Swap *swaps, size_t count);
 static bool
 buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced);
@@ -68,11 +75,11 @@ bool seedBuilder_open(
 	SeedBuilder *builder,
 	const ByteBuffer *input,
 	uint32_t inputSeed,
-	const uint8_t *awayTeam,
+	const uint8_t *const teams[2],
 	char *error,
 	size_t errorSize
 ) {
-	*builder = (SeedBuilder){.awayTeam = awayTeam};
+	*builder = (SeedBuilder){.teams = {teams ? teams[0] : NULL, teams ? teams[1] : NULL}};
 	const char *why = NULL;
 	if (!fixture_findNext(&builder->next, &why)) {
 		(void)snprintf(error, errorSize, "no next fixture to rebuild: %s", why);
@@ -93,7 +100,7 @@ bool seedBuilder_open(
 			errorSize,
 			"the input is not the game's next fixture (%s%s) or its layout was edited",
 			builder->next.description,
-			awayTeam ? ", against its \"away_team\"" : ""
+			builder->teams[0] || builder->teams[1] ? ", with its team overrides" : ""
 		);
 		ok = false;
 	}
@@ -117,24 +124,25 @@ bool seedBuilder_open(
 	log_message(
 		"seed builds: %s%s; %zu fields differ from the game's build",
 		builder->next.description,
-		awayTeam ? " (another away team)" : "",
+		builder->teams[0] || builder->teams[1] ? " (with team overrides)" : "",
 		seedBuilder_editCount(builder)
 	);
 	return true;
 }
 
-bool seedBuilder_dropAwayEdits(SeedBuilder *builder, size_t *dropped) {
+bool seedBuilder_dropTeamEdits(SeedBuilder *builder, unsigned teamSide, size_t *dropped) {
 	*dropped = 0;
 	if (builder->editCount == 0) {
 		return true;
 	}
 	Side side = {.serialised = &builder->input};
 	if (!parseChains(&builder->input, &side.chains)) {
-		log_message("cannot identify the away team's edits");
+		log_message("cannot identify the %s team's edits", teamSide ? "away" : "home");
 		return false;
 	}
 	for (size_t i = 0; i < builder->input.recordCount; ++i) {
-		if (builder->edited[i] && chainKey(&side, i, 0) == SITE_PART_AWAY) {
+		if (builder->edited[i] &&
+				chainKey(&side, i, 0) == (teamSide ? SITE_PART_AWAY : SITE_PART_HOME)) {
 			builder->edited[i] = false;
 			++*dropped;
 		}
@@ -175,28 +183,61 @@ void seedBuilder_close(SeedBuilder *builder) {
 }
 
 // Notes `slot` for swapping if it holds `expected`.
-static void addSwap(Swap *swaps, size_t *count, uint8_t *slot, const uint8_t *expected) {
+static bool addSwap(
+	Swap *swaps,
+	size_t *count,
+	uint8_t *slot,
+	const uint8_t *expected,
+	const uint8_t *replacement
+) {
 	uint8_t *value = NULL;
-	if (*count < MAX_SWAPS && memory_readPointer(slot, 0, &value) && value == expected) {
-		swaps[(*count)++] = (Swap){slot, value};
+	if (expected == replacement || !memory_readPointer(slot, 0, &value) || value != expected) {
+		return true;
 	}
+	for (size_t i = 0; i < *count; ++i) {
+		if (swaps[i].slot == slot) {
+			return true;
+		}
+	}
+	if (*count == MAX_SWAPS) {
+		log_message("too many fixture pointers to replace safely");
+		return false;
+	}
+	swaps[(*count)++] = (Swap){slot, value, replacement};
+	return true;
 }
 
-// Puts builder->awayTeam (if set) in place of the fixture's away team, wherever the build looks
-// for it: the game's own fixture (rather than a copy: the team selection the build runs is handed
-// the fixture and may keep it), the copies of it among the matches the human manager attends
-// (without them the game picks the human's side itself, as for an AI manager) and the home team's
-// next-match record. Returns how many pointers were swapped.
-static size_t swapAwayTeam(const SeedBuilder *builder, Swap *swaps) {
-	uint8_t *fixture = builder->next.fixture;
-	uint8_t *home = NULL;
-	uint8_t *away = NULL;
-	if (!builder->awayTeam || !memory_readPointer(fixture, FIXTURE_HOME, &home) ||
-			!memory_readPointer(fixture, FIXTURE_AWAY, &away)) {
-		return 0;
+// Updates the fixture, its copies in the human's attended matches and each original team's
+// next-match opponent. Collect everything before writing so an overflow leaves the game untouched.
+static bool swapTeams(const SeedBuilder *builder, Swap *swaps, size_t *count) {
+	*count = 0;
+	if (!builder->teams[0] && !builder->teams[1]) {
+		return true;
 	}
-	size_t count = 0;
-	addSwap(swaps, &count, fixture + FIXTURE_AWAY, away);
+	uint8_t *fixture = builder->next.fixture;
+	uint8_t *original[2] = {0};
+	if (!memory_readPointer(fixture, FIXTURE_HOME, &original[0]) ||
+			!memory_readPointer(fixture, FIXTURE_AWAY, &original[1]) || !original[0] || !original[1]) {
+		log_message("cannot read the fixture's teams for replacement");
+		return false;
+	}
+	const uint8_t *selected[2] = {builder->teams[0] ? builder->teams[0] : original[0],
+		builder->teams[1] ? builder->teams[1] : original[1]};
+	if (selected[0] == selected[1]) {
+		log_message("cannot build a fixture with the same team on both sides");
+		return false;
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		if (!addSwap(
+					swaps,
+					count,
+					fixture + (side ? FIXTURE_AWAY : FIXTURE_HOME),
+					original[side],
+					selected[side]
+				)) {
+			return false;
+		}
+	}
 	uint8_t *holder = NULL;
 	uint8_t *start = NULL;
 	uint8_t *end = NULL;
@@ -207,21 +248,42 @@ static size_t swapAwayTeam(const SeedBuilder *builder, Swap *swaps) {
 			uint8_t *match = NULL;
 			uint8_t *copy = NULL;
 			uint8_t *copyHome = NULL;
+			uint8_t *copyAway = NULL;
 			if (memory_readPointer(entry, 0, &match) && memory_readPointer(match, 0, &copy) &&
 					copy != fixture && memory_readPointer(copy, FIXTURE_HOME, &copyHome) &&
-					copyHome == home) {
-				addSwap(swaps, &count, copy + FIXTURE_AWAY, away);
+					memory_readPointer(copy, FIXTURE_AWAY, &copyAway) && copyHome == original[0] &&
+					copyAway == original[1]) {
+				for (unsigned side = 0; side < 2; ++side) {
+					if (!addSwap(
+								swaps,
+								count,
+								copy + (side ? FIXTURE_AWAY : FIXTURE_HOME),
+								original[side],
+								selected[side]
+							)) {
+						return false;
+					}
+				}
 			}
 		}
 	}
-	uint8_t *data = NULL;
-	if (memory_readPointer(home, TEAM_IN_GAME_DATA, &data)) {
-		addSwap(swaps, &count, data + NEXT_MATCH_OPPONENT, away);
+	for (unsigned side = 0; side < 2; ++side) {
+		const uint8_t *opponent = original[side] == selected[0]   ? selected[1]
+															: original[side] == selected[1] ? selected[0]
+																															: selected[1 - side];
+		if (opponent == original[1 - side]) {
+			continue;
+		}
+		uint8_t *data = NULL;
+		if (memory_readPointer(original[side], TEAM_IN_GAME_DATA, &data) &&
+				!addSwap(swaps, count, data + NEXT_MATCH_OPPONENT, original[1 - side], opponent)) {
+			return false;
+		}
 	}
-	for (size_t i = 0; i < count; ++i) {
-		memcpy(swaps[i].slot, &builder->awayTeam, sizeof builder->awayTeam);
+	for (size_t i = 0; i < *count; ++i) {
+		memcpy(swaps[i].slot, &swaps[i].replacement, sizeof swaps[i].replacement);
 	}
-	return count;
+	return true;
 }
 
 static void restoreSwaps(const Swap *swaps, size_t count) {
@@ -230,12 +292,15 @@ static void restoreSwaps(const Swap *swaps, size_t count) {
 	}
 }
 
-// The game's build of the fixture with `seed` (against builder->awayTeam if set), serialised with
+// The game's build of the fixture with `seed` (with team overrides if set), serialised with
 // its write records.
 static bool
 buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced) {
 	Swap swaps[MAX_SWAPS];
-	size_t swapped = swapAwayTeam(builder, swaps);
+	size_t swapped = 0;
+	if (!swapTeams(builder, swaps, &swapped)) {
+		return false;
+	}
 	uint8_t *match = match_build(builder->next.fixture, seed);
 	bool ok = match && trace_serialize(match, out, traced);
 	if (match) {

@@ -53,7 +53,8 @@ static void runJob(char *text) {
 		case JOB_RUN: jobs_run(&job); break;
 		case JOB_BUILD_NEXT: jobs_buildNext(&job); break;
 		case JOB_INSPECT: jobs_inspect(&job); break;
-		case JOB_REPLACE_AWAY: jobs_replaceAway(&job); break;
+		case JOB_REPLACE_AWAY:
+		case JOB_REPLACE_HOME: jobs_replaceTeam(&job); break;
 	}
 	job_free(&job);
 }

@@ -68,9 +68,9 @@ The file has a header and a `fields` array:
 }
 ```
 
-Only `format` and the fields' values are needed to play the file. The one
-other header key that is read is `away_team`, which only a file made by
-`replace-away` has (see [Changing the opponent](#changing-the-opponent)). The
+Only `format` and the fields' values are needed to play the file. The
+`home_team` and `away_team` header keys record replacements made by
+`replace-home` and `replace-away` (see [Changing teams](#changing-teams)). The
 rest of the header is information. `game_build` is the PE timestamp of the
 `fm.exe` that wrote it: 1744804480 (Steam) or 1744804949 (Epic Games).
 
@@ -935,14 +935,15 @@ edited them. If you edit one, your value is used for every seed.
 Their fields are mostly unnamed: look in the `official[0..3]`, `referee` and
 `venue` blocks. Names such as the stadium are `str` fields you can edit.
 
-# Changing the opponent
+# Changing teams
 
 You can't swap teams by editing the file: another squad writes a different
-number of fields. Have the game build the match against another team instead:
+number of fields. Have the game rebuild either side instead:
 
 ```
 fm24ctl replace-away next-fixture.json 677 luton.json
 fm24ctl replace-away next-fixture.json "Luton Town" luton.json
+fm24ctl replace-home luton.json "Norwich City" norwich-v-luton.json
 ```
 
 The team is its unique ID in the game's database, or its club's short name as
@@ -952,20 +953,24 @@ club's first team. If the name fits more than one club, the command lists them
 with their IDs; use an ID then.
 
 The game builds the new side, picking the squad and tactic as it would for a
-real match. Your own side keeps the line-up and tactic you picked in the game.
+real match. The unchanged side keeps its line-up, tactic and edits. If it is
+your managed team, it keeps the selections you picked in the game.
 Your edits to the rest of the file are kept, as `run` keeps them. Edits to the
-old away team are dropped, because those players aren't in the match any more.
+replaced team's block are dropped, because those players aren't in the match any more.
 The result line says how many edits were kept and dropped.
 
-The output has `"away_team": <ID>` in its header. `run` reads it and builds
-the new opponent for every seed, so seeds work as for any other file. Don't
-remove it. Run `replace-away` again on the output to change the opponent again.
+The output has `"home_team": <ID>` and/or `"away_team": <ID>` in its header.
+`run` reads both and builds the same teams for every seed. Don't remove them.
+You can replace either side repeatedly; replacing one preserves the other.
+Selecting the fixture's original team clears that side's override.
+The viewer's edit icons use these same commands.
 
 Limits:
 
-- The input must still be the human manager's next fixture, as for `run`. Only
-  the away team can be replaced, and only when it is the opponent: if you
-  manage the away side, the command refuses.
+- The input must still be based on the human manager's next fixture, as for
+  `run`. Either side can be replaced, including the managed team, but a team
+  cannot play against itself. A replacement side uses the game's selected
+  squad and tactic, not the old side's stored selections.
 - The match stays a match of the original competition, venue and date. Only
   the team changes; the game doesn't check that the new team could play in
   it.

@@ -15,7 +15,8 @@
 
 enum {
 	MAX_MERGED_STRING = 4096,
-	STAFF_ATTRIBUTES_MEMBER = 0x60, // MATCH_STAFF offset of the staff attributes (SITE_STAFF_ATTRIBUTES)
+	STAFF_ATTRIBUTES_MEMBER =
+		0x60, // MATCH_STAFF offset of the staff attributes (SITE_STAFF_ATTRIBUTES)
 };
 
 static void writeEscaped(FILE *file, const uint8_t *text, size_t length);
@@ -45,7 +46,7 @@ static void writeHeader(
 	FILE *file,
 	const Serialised *serialised,
 	const char *source,
-	uint32_t awayTeam,
+	const uint32_t teams[2],
 	bool full
 );
 
@@ -54,7 +55,7 @@ bool configWriter_write(
 	const Serialised *serialised,
 	const char *source,
 	const PeopleIndex *people,
-	uint32_t awayTeam,
+	const uint32_t teams[2],
 	bool full
 ) {
 	FieldLabel *labels = labels_compute(serialised, people);
@@ -68,7 +69,7 @@ bool configWriter_write(
 	}
 	size_t seedOffset = SIZE_MAX;
 	(void)match_seedOffset(serialised->bytes.data, serialised->bytes.length, &seedOffset);
-	writeHeader(file, serialised, source, awayTeam, full);
+	writeHeader(file, serialised, source, teams, full);
 	for (size_t i = 0; i < serialised->recordCount;) {
 		i += writeField(file, serialised, labels, i, seedOffset, full);
 	}
@@ -279,7 +280,7 @@ static void writeHeader(
 	FILE *file,
 	const Serialised *serialised,
 	const char *source,
-	uint32_t awayTeam,
+	const uint32_t teams[2],
 	bool full
 ) {
 	const uint8_t *bytes = serialised->bytes.data;
@@ -291,8 +292,10 @@ static void writeHeader(
 	fprintf(file, "  \"engine_version\": \"%u.%u.%u.%u\",\n", bytes[2], bytes[3], bytes[4], bytes[5]);
 	fprintf(file, "  \"source\": ");
 	writeEscapedString(file, source);
-	if (awayTeam) {
-		fprintf(file, ",\n  \"away_team\": %u", (unsigned)awayTeam);
+	for (unsigned side = 0; teams && side < 2; ++side) {
+		if (teams[side]) {
+			fprintf(file, ",\n  \"%s_team\": %u", side ? "away" : "home", (unsigned)teams[side]);
+		}
 	}
 	if (full) {
 		fprintf(file, ",\n  \"bytes\": %zu,\n  \"paths\": [\n", serialised->bytes.length);

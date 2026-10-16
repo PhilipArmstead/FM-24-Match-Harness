@@ -24,8 +24,9 @@ static bool inspectSucceeded(const char *result);
 #undef client_submit
 #undef client_succeeded
 
-static const char config[] = "{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}],"
-														 "\"source\":\"preserve annotations\",\"away_team\":677}";
+static const char config[] =
+	"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}],"
+	"\"source\":\"preserve annotations\",\"home_team\":678,\"away_team\":677}";
 static unsigned inspectCalls;
 static bool inspectFailure;
 
