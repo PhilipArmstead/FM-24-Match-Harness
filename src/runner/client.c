@@ -3,9 +3,7 @@
 
 #include "client.h"
 
-#include "files.h"
 #include "inject.h"
-#include "paths.h"
 #include "protocol.h"
 
 #include <stdio.h>
@@ -14,82 +12,63 @@
 
 
 enum {
-	READY_TIMEOUT_MS = 10000, // from injection until the DLL has created its events
+	READY_TIMEOUT_MS = 10000, // from injection until the DLL has created its pipe
 	READY_POLL_MS = 50,
 };
 
-static bool readResult(const wchar_t *path, char *result, size_t size);
-static bool openEvents(HANDLE *go, HANDLE *done);
-static bool connectHarness(HANDLE *go, HANDLE *done);
+static bool validResult(char *result, size_t length);
+static HANDLE connectHarness(unsigned timeoutMs);
+static bool
+transfer(HANDLE pipe, bool write, void *data, DWORD size, unsigned timeoutMs, DWORD *done);
 
 bool client_submit(const char *job, unsigned timeoutMs, char *result, size_t resultSize) {
-	HANDLE go = NULL;
-	HANDLE done = NULL;
-	wchar_t directory[HARNESS_PATH_LENGTH];
-	wchar_t jobPath[HARNESS_PATH_LENGTH];
-	wchar_t resultPath[HARNESS_PATH_LENGTH];
-	bool ok = connectHarness(&go, &done);
-	ok = ok && paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
-			 paths_join(jobPath, HARNESS_PATH_LENGTH, directory, HARNESS_JOB_FILE) &&
-			 paths_join(resultPath, HARNESS_PATH_LENGTH, directory, HARNESS_RESULT_FILE);
-	if (ok) {
-		ok = DeleteFileW(resultPath) || GetLastError() == ERROR_FILE_NOT_FOUND;
-		ok = ok && files_write(jobPath, job, strlen(job));
-		if (!ok) {
-			fprintf(stderr, "cannot prepare the job and result files\n");
-		}
+	char reply[HARNESS_RESULT_LENGTH];
+	if (!result) {
+		result = reply;
+		resultSize = sizeof reply;
 	}
-	if (ok) {
-		ok = SetEvent(go) != 0;
-		if (!ok) {
-			fprintf(stderr, "cannot signal the harness (%lu)\n", GetLastError());
-		}
+	if (resultSize < 2) {
+		fprintf(stderr, "result buffer is too small\n");
+		return false;
 	}
-	if (ok) {
-		DWORD waited = WaitForSingleObject(done, timeoutMs);
-		ok = waited == WAIT_OBJECT_0;
-		if (waited == WAIT_TIMEOUT) {
-			fprintf(stderr, "timed out; the harness may still be running\n");
-		} else if (!ok) {
-			fprintf(stderr, "cannot wait for the harness (%lu)\n", GetLastError());
-		}
+	result[0] = 0;
+	size_t length = strlen(job);
+	if (length > HARNESS_JOB_LENGTH) {
+		fprintf(stderr, "the job is too long\n");
+		return false;
 	}
-	if (ok && result) {
-		ok = readResult(resultPath, result, resultSize);
+	ULONGLONG started = GetTickCount64();
+	HANDLE pipe = connectHarness(timeoutMs);
+	if (!pipe) {
+		return false;
 	}
-	if (go) {
-		CloseHandle(go);
+	ULONGLONG waited = GetTickCount64() - started;
+	unsigned remaining = waited < timeoutMs ? timeoutMs - (unsigned)waited : 0;
+	DWORD mode = PIPE_READMODE_MESSAGE;
+	DWORD count = 0;
+	bool ok = SetNamedPipeHandleState(pipe, &mode, NULL, NULL);
+	if (!ok) {
+		fprintf(stderr, "cannot set up the harness pipe (%lu)\n", GetLastError());
 	}
-	if (done) {
-		CloseHandle(done);
-	}
-	return ok;
+	ok = ok && transfer(pipe, true, (void *)job, (DWORD)length, remaining, &count) &&
+			 transfer(pipe, false, result, (DWORD)(resultSize - 1), remaining, &count);
+	CloseHandle(pipe);
+	return ok && validResult(result, count);
 }
 
 bool client_succeeded(const char *result) {
 	return strncmp(result, "ok", 2) == 0 && (result[2] == 0 || result[2] == ':');
 }
 
-static bool readResult(const wchar_t *path, char *result, size_t size) {
-	if (size < 2) {
-		fprintf(stderr, "result buffer is too small\n");
-		return false;
-	}
-	result[0] = 0;
-	FILE *file = _wfopen(path, L"rb");
-	if (!file) {
-		fprintf(stderr, "cannot open the result file; see harness.log\n");
-		return false;
-	}
-	size_t length = fread(result, 1, size - 1, file);
-	bool ok = length > 0 && !memchr(result, 0, length) && fgetc(file) == EOF && !ferror(file);
+// Terminates a reply of `length` bytes; false (and empty) unless it is one non-empty line.
+static bool validResult(char *result, size_t length) {
 	result[length] = 0;
+	bool ok = length > 0 && !memchr(result, 0, length);
 	size_t lineLength = strcspn(result, "\r\n");
 	if (lineLength < length) {
 		size_t ending = result[lineLength] == '\r' && result[lineLength + 1] == '\n' ? 2 : 1;
 		ok = ok && lineLength + ending == length;
 	}
-	ok = fclose(file) == 0 && ok;
 	if (!ok) {
 		result[0] = 0;
 		fprintf(stderr, "cannot read a complete result; see harness.log\n");
@@ -97,40 +76,94 @@ static bool readResult(const wchar_t *path, char *result, size_t size) {
 	return ok;
 }
 
-// Opens the DLL's events; false if this protocol's harness is not running in fm.exe.
-static bool openEvents(HANDLE *go, HANDLE *done) {
-	*go = OpenEventW(EVENT_MODIFY_STATE, FALSE, HARNESS_EVENT_GO);
-	*done = OpenEventW(SYNCHRONIZE, FALSE, HARNESS_EVENT_DONE);
-	if (*go && *done) {
-		return true;
+// Connects to the harness pipe, injecting the DLL first if this protocol's harness is not loaded
+// yet, and waiting while another runner's job holds the pipe. Prints why and returns NULL on
+// failure.
+static HANDLE connectHarness(unsigned timeoutMs) {
+	ULONGLONG started = GetTickCount64();
+	ULONGLONG injected = 0;
+	bool announced = false;
+	for (;;) {
+		HANDLE pipe = CreateFileW(
+			HARNESS_PIPE_NAME,
+			GENERIC_READ | GENERIC_WRITE,
+			0,
+			NULL,
+			OPEN_EXISTING,
+			FILE_FLAG_OVERLAPPED,
+			NULL
+		);
+		if (pipe != INVALID_HANDLE_VALUE) {
+			return pipe;
+		}
+		DWORD error = GetLastError();
+		ULONGLONG now = GetTickCount64();
+		if (error == ERROR_PIPE_BUSY) {
+			if (!announced) {
+				fprintf(stderr, "the harness is running another job; waiting for it to finish\n");
+				announced = true;
+			}
+			if (now - started >= timeoutMs) {
+				fprintf(stderr, "timed out waiting for the other job\n");
+				return NULL;
+			}
+			ULONGLONG left = timeoutMs - (now - started);
+			(void)WaitNamedPipeW(HARNESS_PIPE_NAME, left < MAXDWORD - 1 ? (DWORD)left + 1 : MAXDWORD - 1);
+		} else if (error != ERROR_FILE_NOT_FOUND) {
+			fprintf(stderr, "cannot connect to the harness (%lu)\n", error);
+			return NULL;
+		} else if (!injected) {
+			if (!inject_harness()) {
+				return NULL;
+			}
+			injected = GetTickCount64();
+		} else if (now - injected >= READY_TIMEOUT_MS) {
+			// The DLL creates its pipe once its build check has passed.
+			fprintf(stderr, "the harness did not start in fm.exe (wrong game build?); see harness.log\n");
+			return NULL;
+		} else {
+			Sleep(READY_POLL_MS);
+		}
 	}
-	if (*go) {
-		CloseHandle(*go);
-	}
-	if (*done) {
-		CloseHandle(*done);
-	}
-	*go = NULL;
-	*done = NULL;
-	return false;
 }
 
-// Connects to the harness, injecting it first if this protocol's DLL is not loaded yet (a no-op
-// otherwise). Prints why and returns false if it cannot be started.
-static bool connectHarness(HANDLE *go, HANDLE *done) {
-	if (openEvents(go, done)) {
-		return true;
-	}
-	if (!inject_harness()) {
+// Writes or reads one message on the overlapped pipe, waiting at most `timeoutMs`. A timeout
+// cancels only the transfer: the DLL keeps running the job.
+static bool
+transfer(HANDLE pipe, bool write, void *data, DWORD size, unsigned timeoutMs, DWORD *done) {
+	OVERLAPPED overlapped = {.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL)};
+	if (!overlapped.hEvent) {
+		fprintf(stderr, "cannot create an event (%lu)\n", GetLastError());
 		return false;
 	}
-	// The DLL creates its events once its build check has passed.
-	for (unsigned waited = 0; waited < READY_TIMEOUT_MS; waited += READY_POLL_MS) {
-		if (openEvents(go, done)) {
-			return true;
-		}
-		Sleep(READY_POLL_MS);
+	*done = 0;
+	BOOL started = write ? WriteFile(pipe, data, size, NULL, &overlapped)
+											 : ReadFile(pipe, data, size, NULL, &overlapped);
+	bool ok = started || GetLastError() == ERROR_IO_PENDING;
+	if (ok && !started && WaitForSingleObject(overlapped.hEvent, timeoutMs) != WAIT_OBJECT_0) {
+		CancelIo(pipe);
+		(void)GetOverlappedResult(pipe, &overlapped, done, TRUE);
+		fprintf(stderr, "timed out; the harness may still be running\n");
+		CloseHandle(overlapped.hEvent);
+		return false;
 	}
-	fprintf(stderr, "the harness did not start in fm.exe (wrong game build?); see harness.log\n");
-	return false;
+	ok = ok && GetOverlappedResult(pipe, &overlapped, done, FALSE);
+	if (!ok) {
+		DWORD error = GetLastError();
+		if (error == ERROR_MORE_DATA) {
+			fprintf(stderr, "the harness's result is too long\n");
+		} else {
+			fprintf(
+				stderr,
+				"cannot %s the harness (%lu); see harness.log\n",
+				write ? "write to" : "read from",
+				error
+			);
+		}
+	} else if (write && *done != size) {
+		fprintf(stderr, "cannot send the whole job to the harness\n");
+		ok = false;
+	}
+	CloseHandle(overlapped.hEvent);
+	return ok;
 }

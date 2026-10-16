@@ -53,14 +53,15 @@ typedef struct RunOptions {
 } RunOptions;
 
 static bool absolutePath(const wchar_t *argument, Path *out);
-static bool workingPath(const wchar_t *name, Path *out);
+static bool jobInputPath(Path *out);
+static void removeJobInput(const Path *path);
 static int submitAndReport(const char *job);
 static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t *awayTeam);
 static bool encodeToFile(const Path *json, const Path *output, size_t *size, uint32_t *awayTeam);
 static void addResult(Totals *totals, unsigned seed, unsigned home, unsigned away);
 static bool parseCsvNumbers(const char *line, unsigned long *values, size_t count);
 static int printSummary(const Path *csvPath);
-static bool prepareInput(Path *input, uint32_t *awayTeam);
+static bool prepareInput(Path *input, uint32_t *awayTeam, bool *encoded);
 static bool isSeedList(const wchar_t *text);
 static bool parseRunOption(int argc, wchar_t **argv, int *i, RunOptions *options);
 static bool placeRunArgument(const wchar_t *argument, RunOptions *options);
@@ -89,10 +90,12 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 	Path profile = {0};
 	char seeds[256];
 	uint32_t awayTeam = 0;
+	bool encoded = false;
 	if (!absolutePath(options.input, &input) ||
 			!(options.output ? absolutePath(options.output, &output) : defaultOutput(&input, &output)) ||
 			(options.profile && !absolutePath(options.profile, &profile)) ||
-			!paths_toUtf8(options.seeds, seeds, sizeof seeds) || !prepareInput(&input, &awayTeam)) {
+			!paths_toUtf8(options.seeds, seeds, sizeof seeds) ||
+			!prepareInput(&input, &awayTeam, &encoded)) {
 		return EXIT_FAILED;
 	}
 	printf("results: %s\n", output.utf8);
@@ -115,7 +118,11 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 	);
 	printf("job submitted; waiting...\n");
 	char result[CLIENT_RESULT_LENGTH];
-	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
+	bool submitted = client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result);
+	if (encoded) {
+		removeJobInput(&input);
+	}
+	if (!submitted) {
 		return EXIT_FAILED;
 	}
 	printf("%s\n", result);
@@ -177,8 +184,11 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 		return EXIT_FAILED;
 	}
 	(void)snprintf(result, resultSize, "Cannot prepare replacement; see the console for details.");
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
-			!workingPath(L"_job_input.bin", &bin) || !encodeToFile(&input, &bin, &size, &awayTeam)) {
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) || !jobInputPath(&bin)) {
+		return EXIT_FAILED;
+	}
+	if (!encodeToFile(&input, &bin, &size, &awayTeam)) {
+		removeJobInput(&bin);
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
@@ -197,7 +207,9 @@ int commands_replaceAwayWithResult(int argc, wchar_t **argv, char *result, size_
 		resultSize,
 		"Cannot replace away team; FM24 must be running and idle. See the console and harness.log."
 	);
-	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize)) {
+	bool submitted = client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize);
+	removeJobInput(&bin);
+	if (!submitted) {
 		return EXIT_FAILED;
 	}
 	printf("%s\n", result);
@@ -230,9 +242,19 @@ static bool absolutePath(const wchar_t *argument, Path *out) {
 	return ok;
 }
 
-// A working file next to fm24ctl.exe.
-static bool workingPath(const wchar_t *name, Path *out) {
+// A new file next to fm24ctl.exe for one job's encoded input: jobs wait in line for the DLL, so
+// each needs its own (several runners, or a viewer's simulation and replacement, may be queued).
+static bool jobInputPath(Path *out) {
+	static volatile LONG count;
+	wchar_t name[64];
 	wchar_t directory[HARNESS_PATH_LENGTH];
+	(void)swprintf(
+		name,
+		sizeof name / sizeof name[0],
+		L"_job_input-%lu-%ld.bin",
+		GetCurrentProcessId(),
+		InterlockedIncrement(&count)
+	);
 	bool ok = paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
 						paths_join(out->wide, HARNESS_PATH_LENGTH, directory, name) &&
 						paths_toUtf8(out->wide, out->utf8, sizeof out->utf8);
@@ -240,6 +262,12 @@ static bool workingPath(const wchar_t *name, Path *out) {
 		fprintf(stderr, "cannot resolve the working file %ls\n", name);
 	}
 	return ok;
+}
+
+static void removeJobInput(const Path *path) {
+	if (!DeleteFileW(path->wide) && GetLastError() != ERROR_FILE_NOT_FOUND) {
+		fprintf(stderr, "cannot remove %s (Windows error %lu)\n", path->utf8, GetLastError());
+	}
 }
 
 // Submits a job that reports one result line, prints it, and turns it into an exit code.
@@ -352,17 +380,23 @@ static int printSummary(const Path *csvPath) {
 
 // Turns a .json config into the .bin the DLL plays, and reads its "away_team"; a .bin is played
 // as it is.
-static bool prepareInput(Path *input, uint32_t *awayTeam) {
+static bool prepareInput(Path *input, uint32_t *awayTeam, bool *encoded) {
 	*awayTeam = 0;
+	*encoded = false;
 	if (!files_hasExtension(input->wide, L".json")) {
 		return true;
 	}
 	Path bin;
 	size_t size = 0;
-	if (!workingPath(L"_job_input.bin", &bin) || !encodeToFile(input, &bin, &size, awayTeam)) {
+	if (!jobInputPath(&bin)) {
+		return false;
+	}
+	if (!encodeToFile(input, &bin, &size, awayTeam)) {
+		removeJobInput(&bin);
 		return false;
 	}
 	*input = bin;
+	*encoded = true;
 	return true;
 }
 

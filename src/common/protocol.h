@@ -3,26 +3,29 @@
 
 // What the harness DLL (inside fm.exe) and the runner (fm24ctl) agree on.
 //
-// The runner writes a job file of `key=value` lines next to the DLL, signals HARNESS_EVENT_GO and
-// waits for HARNESS_EVENT_DONE; the DLL writes a one-line outcome to the result file.
+// The runner connects to HARNESS_PIPE_NAME, writes a job of `key=value` lines as one message and
+// reads the DLL's one-line outcome as the reply. The pipe has a single instance, so the DLL serves
+// one runner at a time and the others wait for it. Jobs carry full paths, so a runner works with
+// a DLL loaded from any folder; the DLL writes harness.log next to itself.
 //
 // Bump HARNESS_PROTOCOL (a dotted version: 1.0.0 -> 1.0.1) to inject a rebuilt DLL while an older
 // copy is still loaded in fm.exe.
 // Windows identifies a loaded DLL by its path, so a new build needs a new file name; the old copy
-// keeps waiting on its own, differently named events and never sees the new jobs.
+// keeps serving its own, differently named pipe and never sees the new jobs. A second copy of the
+// same version (from another folder) cannot create the pipe and stays idle.
 #pragma once
 
-#define HARNESS_PROTOCOL L"1.0.13"
+#define HARNESS_PROTOCOL L"1.0.16"
 #define HARNESS_DLL_NAME (L"fm24-harness-" HARNESS_PROTOCOL L".dll")
 // Injected when HARNESS_DLL_NAME is missing (e.g. a renamed release copy). It must have been built
-// with the same HARNESS_PROTOCOL, or the runner never sees its events.
+// with the same HARNESS_PROTOCOL, or the runner never sees its pipe.
 #define HARNESS_DLL_FALLBACK_NAME L"fm24-harness.dll"
-#define HARNESS_EVENT_GO (L"Local\\FM24Harness_Go_" HARNESS_PROTOCOL)
-#define HARNESS_EVENT_DONE (L"Local\\FM24Harness_Done_" HARNESS_PROTOCOL)
+#define HARNESS_PIPE_NAME (L"\\\\.\\pipe\\FM24Harness_" HARNESS_PROTOCOL)
 
-#define HARNESS_JOB_FILE L"job.txt"
-#define HARNESS_RESULT_FILE L"result.txt"
 #define HARNESS_LOG_FILE L"harness.log"
+
+// Longest job message and result line (in bytes) either side accepts.
+enum { HARNESS_JOB_LENGTH = 16384, HARNESS_RESULT_LENGTH = 512 };
 
 // Longest path (in UTF-16 units) either side handles; job files carry full paths.
 enum { HARNESS_PATH_LENGTH = 1024 };

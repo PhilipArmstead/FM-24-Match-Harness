@@ -12,7 +12,6 @@
 
 static bool readConfig(const wchar_t *path, ByteBuffer *out);
 static bool writeConfig(const wchar_t *path, const void *bytes, size_t length);
-static FILE *openResult(const wchar_t *path, const wchar_t *mode);
 
 #define commands_defaultThreads runnerTest_defaultThreads
 #define commands_run runnerTest_run
@@ -28,16 +27,12 @@ static FILE *openResult(const wchar_t *path, const wchar_t *mode);
 #undef files_read
 #undef files_write
 
-#define _wfopen openResult
-#include "../src/runner/client.c" // NOLINT(bugprone-suspicious-include): simulate result-file failures.
-#undef _wfopen
-
-#include "../src/runner/probe.c" // NOLINT(bugprone-suspicious-include): test in-memory PE images.
+#include "../src/runner/client.c" // NOLINT(bugprone-suspicious-include): check result replies.
+#include "../src/runner/probe.c"  // NOLINT(bugprone-suspicious-include): test in-memory PE images.
 
 
 static unsigned configReads;
 static ByteBuffer writtenConfig;
-static FILE *resultStream;
 
 static bool readConfig(const wchar_t *path, ByteBuffer *out) {
 	(void)path;
@@ -50,14 +45,6 @@ static bool readConfig(const wchar_t *path, ByteBuffer *out) {
 static bool writeConfig(const wchar_t *path, const void *bytes, size_t length) {
 	(void)path;
 	return buffer_append(&writtenConfig, bytes, length);
-}
-
-static FILE *openResult(const wchar_t *path, const wchar_t *mode) {
-	(void)path;
-	(void)mode;
-	FILE *file = resultStream;
-	resultStream = NULL;
-	return file;
 }
 
 bool inject_harness(void) {
@@ -129,15 +116,9 @@ TEST(rejects_malformed_cli_numbers) {
 }
 
 static void checkResult(const void *data, size_t length, bool expected) {
-	resultStream = tmpfile();
-	ASSERT_BOOL_EQ(resultStream != NULL, true);
-	if (!resultStream) {
-		return;
-	}
-	ASSERT_BOOL_EQ(fwrite(data, 1, length, resultStream) == length, true);
-	ASSERT_INT_EQ(fseek(resultStream, 0, SEEK_SET), 0);
 	char result[32] = "";
-	ASSERT_BOOL_EQ(readResult(L"result.txt", result, sizeof result), expected);
+	memcpy(result, data, length);
+	ASSERT_BOOL_EQ(validResult(result, length), expected);
 	ASSERT_BOOL_EQ(result[0] != 0, expected);
 }
 
@@ -148,16 +129,12 @@ TEST(rejects_missing_or_incomplete_results) {
 	ASSERT_BOOL_EQ(client_succeeded("okerror"), false);
 	ASSERT_BOOL_EQ(client_succeeded("o"), false);
 	ASSERT_BOOL_EQ(client_succeeded(""), false);
-	char result[32];
-	ASSERT_BOOL_EQ(readResult(L"missing.txt", result, sizeof result), false);
 	checkResult("ok: done", 8, true);
 	checkResult("ok: done\n", 9, true);
 	checkResult("ok: done\r\n", 10, true);
 	checkResult("ok: done\nerror", 14, false);
 	checkResult("", 0, false);
 	checkResult("ok\0error", 8, false);
-	static const char oversized[] = "ok: this result does not fit in the buffer";
-	checkResult(oversized, sizeof oversized - 1, false);
 }
 
 TEST(validates_pe_header_and_section_bounds) {

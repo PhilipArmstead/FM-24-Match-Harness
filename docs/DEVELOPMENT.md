@@ -4,7 +4,7 @@ FM24 match-engine harness development
 # Layout
 
 ```
-src/common/  protocol (job file, events, DLL name), byte buffer, files,
+src/common/  protocol (job pipe, DLL name), byte buffer, files,
              shared tactic role/position names
 src/dll/     game.h (addresses, layouts, signatures), memory, stream,
              match, rng, database, fixture, trace, seed_build (per-seed
@@ -154,7 +154,7 @@ them to the integer assertion's `int` parameters.
 path, so bump `HARNESS_PROTOCOL` in `src/common/protocol.h` and build. CMake
 re-configures by itself, the DLL is renamed `fm24-harness-<version>.dll`, and
 `build.sh` replaces the old copy in `bin/`. The next command injects the new
-DLL. It loads alongside the old one, and the old copy idles on its own events
+DLL. It loads alongside the old one, and the old copy idles on its own pipe
 until the game exits.
 
 **Generated code:** after editing `tools/fields/tactic_bits.json`, run
@@ -166,12 +166,15 @@ on the Steam `fm.exe`:
 
 # Use
 
-Run everything from `bin/`. The job file, result file and `harness.log` live
-next to the DLL there.
+Run everything from `bin/`. `harness.log` lives next to the DLL that fm.exe
+loaded: a runner sends its job over a named pipe, so a `fm24ctl` in another
+folder (e.g. `build/`) with the same protocol version uses that DLL, and its
+log, rather than injecting its own.
 
-Submit only one game job at a time across runner processes and viewer windows:
-the protocol shares its job, input and result files. A client timeout does not
-cancel DLL work; wait for completion in `harness.log` before submitting another job.
+The DLL runs one job at a time. Runners and viewer windows that submit while
+a job is running wait for it (`the harness is running another job; waiting`),
+and their time limit includes that wait. A runner that times out stops waiting
+but does not cancel DLL work; later jobs still wait for it.
 
 1. Start FM24 and load the save. Wait until the game is **idle** (not
    processing). The engine calls aren't synchronised with the game's own

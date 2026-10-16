@@ -24,23 +24,17 @@ enum { TEAM_NAME_LENGTH = 64 };
 
 static bool findTeams(const Job *job, uint8_t **current, uint8_t **team, char *error, size_t size);
 static bool reserialise(ByteBuffer *bytes, Serialised *out);
-static void writeConfig(
-	const Job *job,
-	SeedBuilder *builder,
-	uint8_t *team,
-	uint32_t seed,
-	const wchar_t *directory
-);
+static void writeConfig(const Job *job, SeedBuilder *builder, uint8_t *team, uint32_t seed);
 
-void jobs_replaceAway(const Job *job, const wchar_t *directory) {
+void jobs_replaceAway(const Job *job) {
 	ByteBuffer input = {0};
 	size_t seedOffset = 0;
 	if (!output_wantsJson(job->output)) {
-		job_writeResult(directory, "error: the output must be a .json config");
+		job_writeResult("error: the output must be a .json config");
 		return;
 	}
 	if (!files_read(job->input, &input) || !match_seedOffset(input.data, input.length, &seedOffset)) {
-		job_writeResult(directory, "error: cannot read the input, or it is not a serialised match");
+		job_writeResult("error: cannot read the input, or it is not a serialised match");
 		buffer_free(&input);
 		return;
 	}
@@ -54,10 +48,10 @@ void jobs_replaceAway(const Job *job, const wchar_t *directory) {
 	buffer_free(&input);
 	if (!ok) {
 		log_message("replace_away: %s", error);
-		job_writeResult(directory, "error: %s", error);
+		job_writeResult("error: %s", error);
 		return;
 	}
-	writeConfig(job, &builder, team, seed, directory);
+	writeConfig(job, &builder, team, seed);
 	seedBuilder_close(&builder);
 }
 
@@ -78,30 +72,22 @@ static bool reserialise(ByteBuffer *bytes, Serialised *out) {
 }
 
 // Builds the fixture against the new team with the input's seed and edits, and writes it.
-static void writeConfig(
-	const Job *job,
-	SeedBuilder *builder,
-	uint8_t *team,
-	uint32_t seed,
-	const wchar_t *directory
-) {
+static void writeConfig(const Job *job, SeedBuilder *builder, uint8_t *team, uint32_t seed) {
 	uint8_t *home = NULL;
 	uint8_t *fixtureAway = NULL;
 	(void)memory_readPointer(builder->next.fixture, FIXTURE_HOME, &home);
 	(void)memory_readPointer(builder->next.fixture, FIXTURE_AWAY, &fixtureAway);
 	if (team == home) {
-		job_writeResult(directory, "error: that is the home team");
+		job_writeResult("error: that is the home team");
 		return;
 	}
 	if (fixtureAway == database_findHumanTeam()) {
-		job_writeResult(
-			directory, "error: your team is the away side; only an opponent can be replaced"
-		);
+		job_writeResult("error: your team is the away side; only an opponent can be replaced");
 		return;
 	}
 	size_t dropped = 0;
 	if (!seedBuilder_dropAwayEdits(builder, &dropped)) {
-		job_writeResult(directory, "error: cannot identify the away team's edits; see harness.log");
+		job_writeResult("error: cannot identify the away team's edits; see harness.log");
 		return;
 	}
 	size_t kept = seedBuilder_editCount(builder);
@@ -118,9 +104,7 @@ static void writeConfig(
 	ByteBuffer merged = {0};
 	Serialised serialised = {0};
 	if (!seedBuilder_build(builder, seed, &merged)) {
-		job_writeResult(
-			directory, "error: the input's edits cannot be placed in the new build; see harness.log"
-		);
+		job_writeResult("error: the input's edits cannot be placed in the new build; see harness.log");
 	} else if (!reserialise(&merged, &serialised) ||
 						 !output_write(
 							 job->output,
@@ -129,10 +113,9 @@ static void writeConfig(
 							 builder->awayTeam ? database_teamUniqueId(team) : 0,
 							 job->full
 						 )) {
-		job_writeResult(directory, "error: serialise or write failed; see harness.log");
+		job_writeResult("error: serialise or write failed; see harness.log");
 	} else {
 		job_writeResult(
-			directory,
 			"ok: %s (team %u); %zu edits kept, %zu edits to the old away team dropped",
 			source,
 			database_teamUniqueId(team),

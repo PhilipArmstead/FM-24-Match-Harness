@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Jobs submitted by the runner: a job file of key=value lines, and a one-line result.
+// Jobs submitted by the runner: a message of key=value lines, and a one-line result (protocol.h).
 #pragma once
 
 #include "protocol.h"
@@ -42,16 +42,17 @@ typedef struct Job {
 	char awayTeam[JOB_TEAM_LENGTH]; // run, replace_away: the input's "away_team" ("": the fixture's)
 } Job;
 
-// Reads <directory>\job.txt; logs and returns false if it is missing or malformed.
-bool job_read(const wchar_t *directory, Job *job);
+// Parses a job's key=value lines (modifying `text`); logs and returns false if it is malformed.
+bool job_parse(char *text, Job *job);
 void job_free(Job *job);
 
-// Writes the job's one-line outcome to <directory>\result.txt (must start with "ok" or "error").
-void job_writeResult(const wchar_t *directory, const char *format, ...)
-	__attribute__((format(gnu_printf, 2, 3)));
+// Sets the job's one-line outcome (must start with "ok" or "error"); a later call replaces it.
+void job_writeResult(const char *format, ...) __attribute__((format(gnu_printf, 1, 2)));
+// The outcome set since the last call ("" if none), for the reply to the runner.
+const char *job_takeResult(void);
 
 // The job implementations (job_*.c); each reports through job_writeResult and/or the log.
-void jobs_run(const Job *job, const wchar_t *directory);
-void jobs_buildNext(const Job *job, const wchar_t *directory);
-void jobs_inspect(const Job *job, const wchar_t *directory);
-void jobs_replaceAway(const Job *job, const wchar_t *directory);
+void jobs_run(const Job *job);
+void jobs_buildNext(const Job *job);
+void jobs_inspect(const Job *job);
+void jobs_replaceAway(const Job *job);

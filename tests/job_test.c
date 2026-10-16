@@ -73,6 +73,29 @@ TEST(rejects_invalid_seeds) {
 	ASSERT_BOOL_EQ(job.hasSeed || job.seed != 0, false);
 }
 
+TEST(parses_job_messages) {
+	Job job;
+	char run[] = "command=run\r\ninput=C:/in.bin\r\nseeds=1-3\r\noutput=C:/out.csv";
+	ASSERT_BOOL_EQ(job_parse(run, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_RUN && job.seedCount == 3, true);
+	ASSERT_INT_EQ(wcscmp(job.input, L"C:/in.bin"), 0);
+	ASSERT_INT_EQ(wcscmp(job.output, L"C:/out.csv"), 0);
+	job_free(&job);
+	char build[] = "command=build_next\noutput=C:/next.json\n\n";
+	ASSERT_BOOL_EQ(job_parse(build, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_BUILD_NEXT, true);
+	job_free(&job);
+	char incomplete[] = "command=run\ninput=C:/in.bin\nseeds=1\n";
+	ASSERT_BOOL_EQ(job_parse(incomplete, &job), false);
+	char bad[] = "command=inspect\ninput=C:/in.bin\noutput=C:/out.json\nseeds=x\n";
+	ASSERT_BOOL_EQ(job_parse(bad, &job), false);
+	char empty[] = "";
+	ASSERT_BOOL_EQ(job_parse(empty, &job), false);
+	job_writeResult("ok: %d", 1);
+	ASSERT_INT_EQ(strcmp(job_takeResult(), "ok: 1"), 0);
+	ASSERT_INT_EQ(strcmp(job_takeResult(), ""), 0);
+}
+
 void registerJobTests(void) {
 	test_run(
 		"job parses progress window handles and rejects invalid values", test_parses_progress_window
@@ -82,4 +105,5 @@ void registerJobTests(void) {
 		test_replaces_repeated_seed_lists
 	);
 	test_run("job rejects malformed and overflowing seeds", test_rejects_invalid_seeds);
+	test_run("job parses job messages and keeps one result", test_parses_job_messages);
 }

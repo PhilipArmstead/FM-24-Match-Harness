@@ -14,7 +14,7 @@
 #include <windows.h>
 
 
-enum { MAX_SEED_RANGE = 10000000, LINE_LENGTH = 4096 };
+enum { MAX_SEED_RANGE = 10000000 };
 
 static bool widen(const char *text, wchar_t *out, size_t size);
 static bool appendSeed(Job *job, size_t *capacity, uint32_t seed);
@@ -26,27 +26,14 @@ static bool copyText(const char *value, char *out, size_t size);
 static bool parseLine(Job *job, char *key, char *value);
 static bool isComplete(const Job *job);
 
-bool job_read(const wchar_t *directory, Job *job) {
+bool job_parse(char *text, Job *job) {
 	*job = (Job){.threads = 1};
-	wchar_t path[HARNESS_PATH_LENGTH];
-	if (swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_JOB_FILE) < 0) {
-		log_message("job file path is too long");
-		return false;
-	}
-	FILE *file = _wfopen(path, L"rb");
-	if (!file) {
-		log_message("job file not found");
-		return false;
-	}
-	char line[LINE_LENGTH];
 	bool ok = true;
-	while (ok && fgets(line, sizeof line, file)) {
-		if (strlen(line) == sizeof line - 1 && line[sizeof line - 2] != '\n') {
-			log_message("job line is too long");
-			ok = false;
-			break;
-		}
-		line[strcspn(line, "\r\n")] = 0;
+	for (char *line = text; ok && *line;) {
+		size_t length = strcspn(line, "\n");
+		char *next = line[length] ? line + length + 1 : line + length;
+		line[length] = 0;
+		line[strcspn(line, "\r")] = 0;
 		char *equals = strchr(line, '=');
 		if (equals) {
 			*equals = 0;
@@ -55,14 +42,7 @@ bool job_read(const wchar_t *directory, Job *job) {
 				log_message("bad job line: %s=%s", line, equals + 1);
 			}
 		}
-	}
-	if (ferror(file)) {
-		log_message("cannot read the job file");
-		ok = false;
-	}
-	if (fclose(file) != 0) {
-		log_message("cannot close the job file");
-		ok = false;
+		line = next;
 	}
 	if (ok && !isComplete(job)) {
 		log_message("job is missing required keys");
@@ -79,24 +59,24 @@ void job_free(Job *job) {
 	*job = (Job){0};
 }
 
-void job_writeResult(const wchar_t *directory, const char *format, ...) {
-	wchar_t path[HARNESS_PATH_LENGTH];
-	if (swprintf(path, HARNESS_PATH_LENGTH, L"%ls\\%ls", directory, HARNESS_RESULT_FILE) < 0) {
-		log_message("job result path is too long");
-		return;
-	}
-	FILE *file = _wfopen(path, L"wb");
-	if (!file) {
-		log_message("cannot open the job result file");
-		return;
-	}
+static char result[HARNESS_RESULT_LENGTH]; // the current job's outcome (jobs run one at a time)
+
+void job_writeResult(const char *format, ...) {
 	va_list args;
 	va_start(args, format);
-	bool ok = vfprintf(file, format, args) >= 0;
+	int length = vsnprintf(result, sizeof result, format, args);
 	va_end(args);
-	if (fclose(file) != 0 || !ok) {
-		log_message("cannot write the job result file");
+	if (length < 0) {
+		result[0] = 0;
+		log_message("cannot format the job result");
 	}
+}
+
+const char *job_takeResult(void) {
+	static char taken[HARNESS_RESULT_LENGTH];
+	memcpy(taken, result, sizeof taken);
+	result[0] = 0;
+	return taken;
 }
 
 static bool widen(const char *text, wchar_t *out, size_t size) {

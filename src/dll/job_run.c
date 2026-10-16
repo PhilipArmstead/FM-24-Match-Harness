@@ -84,12 +84,12 @@ static void runWorkers(Run *run, unsigned count);
 static bool openRun(const Job *job, const ByteBuffer *input, Run *run);
 static bool closeRun(Run *run);
 
-void jobs_run(const Job *job, const wchar_t *directory) {
+void jobs_run(const Job *job) {
 	ByteBuffer input = {0};
 	Run run;
 	if (!files_read(job->input, &input) || !openRun(job, &input, &run)) {
 		log_message("cannot start the run");
-		job_writeResult(directory, "error: cannot start the run; see harness.log");
+		job_writeResult("error: cannot start the run; see harness.log");
 		buffer_free(&input);
 		return;
 	}
@@ -100,9 +100,7 @@ void jobs_run(const Job *job, const wchar_t *directory) {
 		if ((job->awayTeam[0] && !database_findTeam(job->awayTeam, &awayTeam, error, sizeof error)) ||
 				!seedBuilder_open(&seedBuilder, &input, run.fileSeed, awayTeam, error, sizeof error)) {
 			log_message("cannot rebuild per seed: %s", error);
-			job_writeResult(
-				directory, "error: %s (--keep-build plays the input with only its seed changed)", error
-			);
+			job_writeResult("error: %s (--keep-build plays the input with only its seed changed)", error);
 			(void)closeRun(&run);
 			buffer_free(&input);
 			return;
@@ -140,7 +138,6 @@ void jobs_run(const Job *job, const wchar_t *directory) {
 	}
 	ok = closeRun(&run) && ok;
 	job_writeResult(
-		directory,
 		"%s: %zu/%zu runs%s%s",
 		ok ? "ok" : "error",
 		run.written,

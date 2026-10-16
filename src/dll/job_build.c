@@ -16,12 +16,12 @@
 
 static uint32_t clockSeed(void);
 
-void jobs_buildNext(const Job *job, const wchar_t *directory) {
+void jobs_buildNext(const Job *job) {
 	NextFixture next;
 	const char *error = NULL;
 	if (!fixture_findNext(&next, &error)) {
 		log_message("build_next: %s", error);
-		job_writeResult(directory, "error: %s", error);
+		job_writeResult("error: %s", error);
 		return;
 	}
 	uint32_t seed = job->hasSeed ? job->seed : clockSeed();
@@ -34,7 +34,7 @@ void jobs_buildNext(const Job *job, const wchar_t *directory) {
 	);
 	uint8_t *match = match_build(next.fixture, seed);
 	if (!match) {
-		job_writeResult(directory, "error: match allocation failed");
+		job_writeResult("error: match allocation failed");
 		return;
 	}
 	Serialised serialised = {0};
@@ -44,9 +44,9 @@ void jobs_buildNext(const Job *job, const wchar_t *directory) {
 	(void)snprintf(source, sizeof source, "%s, %s, seed %u", next.description, next.when, seed);
 	if (ok && output_write(job->output, &serialised, source, 0, job->full)) {
 		log_message("build_next: wrote %zu bytes", serialised.bytes.length);
-		job_writeResult(directory, "ok: %s, %zu bytes", source, serialised.bytes.length);
+		job_writeResult("ok: %s, %zu bytes", source, serialised.bytes.length);
 	} else {
-		job_writeResult(directory, "error: serialise or write failed; see harness.log");
+		job_writeResult("error: serialise or write failed; see harness.log");
 	}
 	trace_free(&serialised);
 }
