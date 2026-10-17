@@ -122,9 +122,10 @@ choose a thread count, enter a seed pattern such as `1`, `42`, `1-1000`,
 `1,3,5` or `1,4,7-70`, optionally select **Generate detailed reports?**, then
 click **Simulate fixture**. Threads default to the logical CPU count minus
 one, with a minimum of 1 and the existing harness cap of 16; that default is
-also the field's maximum. The seed pattern defaults to `keep` (the fixture's
-own seed). The window remains responsive while running, but another simulation
-cannot be started from this window and it cannot be closed until the run finishes.
+also the field's maximum. The optional seed pattern defaults to blank, which
+uses `keep` (the fixture's own seed). The window remains responsive while running,
+but another simulation cannot be started from this window and it cannot be closed
+until the run finishes.
 Completion or failure appears in the tab, with results and errors also
 printed to the console.
 

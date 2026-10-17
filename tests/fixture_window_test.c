@@ -582,6 +582,7 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 		state->lists[0],
 		state->lists[1],
 		state->simulation[SIM_THREADS_LABEL],
+		state->simulation[SIM_SEEDS_LABEL],
 		state->simulation[SIM_SEEDS],
 		state->simulation[SIM_SUMMARY],
 		state->simulation[SIM_STATUS]};
@@ -592,6 +593,9 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 	}
 	RECT seeds = controlBounds(window, state->simulation[SIM_SEEDS]);
 	ASSERT_BOOL_EQ(seeds.right - seeds.left == scaled(state, 220), true);
+	RECT seedLabel = controlBounds(window, state->simulation[SIM_SEEDS_LABEL]);
+	ASSERT_BOOL_EQ(seedLabel.right - seedLabel.left == scaled(state, 180), true);
+	ASSERT_BOOL_EQ(seedLabel.right < seeds.left, true);
 	RECT threads = controlBounds(window, state->simulation[SIM_THREADS_LABEL]);
 	ASSERT_BOOL_EQ(threads.right - threads.left == scaled(state, 180), true);
 	RECT submit = controlBounds(window, state->simulation[SIM_SUBMIT]);
@@ -1227,8 +1231,10 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(minimum == 1 && maximum == 7, true);
 	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_THREADS], text, 256) == 1, true);
 	ASSERT_INT_EQ(wcscmp(text, L"7"), 0);
-	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) == 4, true);
-	ASSERT_INT_EQ(wcscmp(text, L"keep"), 0);
+	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_SEEDS_LABEL], text, 256) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L"Seed pattern (optional):"), 0);
+	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) == 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L""), 0);
 	ASSERT_BOOL_EQ(
 		SendMessageW(state.simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_UNCHECKED, true
 	);
@@ -1261,7 +1267,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		ASSERT_BOOL_EQ(state.simulationThread == NULL && errorMessages == ++errors, true);
 	}
 	ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_THREADS], L"2"), true);
-	static const wchar_t *const invalidSeeds[] = {L"", L"abc", L"1\nthreads=7", L"1;2"};
+	static const wchar_t *const invalidSeeds[] = {L"abc", L"1\nthreads=7", L"1;2"};
 	for (unsigned i = 0; i < sizeof invalidSeeds / sizeof invalidSeeds[0]; ++i) {
 		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_SEEDS], invalidSeeds[i]), true);
 		clickSimulate(window, &state);
@@ -1271,7 +1277,8 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	simulationRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
 	ASSERT_BOOL_EQ(simulationRelease != NULL, true);
 	expectedProgressWindow = window;
-	static const wchar_t *const patterns[] = {L"1", L"42", L"1-1000", L"1,3,5", L"1,4,7-70", L"keep"};
+	static const wchar_t *const patterns[] = {
+		L"1", L"42", L"1-1000", L"1,3,5", L"1,4,7-70", L"keep", L""};
 	for (unsigned i = 0; i < sizeof patterns / sizeof patterns[0]; ++i) {
 		if (i == 4) {
 			wcscpy(state.savedFilename, L"saved fixture.json");
@@ -1282,11 +1289,11 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 			),
 			true
 		);
-		expectedSeeds = patterns[i];
+		expectedSeeds = patterns[i][0] ? patterns[i] : L"keep";
 		expectedThreads = i % 2 ? L"7" : L"1";
 		expectedDetailed = i % 2 != 0;
 		simulationResult = i == 5 ? 1 : 0;
-		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_SEEDS], expectedSeeds), true);
+		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_SEEDS], patterns[i]), true);
 		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_THREADS], expectedThreads), true);
 		SendMessageW(
 			state.simulation[SIM_DETAILED], BM_SETCHECK, expectedDetailed ? BST_CHECKED : BST_UNCHECKED, 0
@@ -1421,8 +1428,10 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 			++errors;
 		}
 		ASSERT_BOOL_EQ(errorMessages == errors, true);
-		ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) > 0, true);
-		ASSERT_INT_EQ(wcscmp(text, expectedSeeds), 0);
+		ASSERT_BOOL_EQ(
+			GetWindowTextW(state.simulation[SIM_SEEDS], text, 256) == (int)wcslen(patterns[i]), true
+		);
+		ASSERT_INT_EQ(wcscmp(text, patterns[i]), 0);
 	}
 	taskbarCreateResult = E_FAIL;
 	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);

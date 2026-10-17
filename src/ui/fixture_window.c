@@ -314,15 +314,18 @@ static void startSimulation(HWND window, WindowState *state) {
 		return;
 	}
 	length = GetWindowTextW(state->simulation[SIM_SEEDS], job->seeds, 256);
-	if (length == 0 || GetWindowTextLengthW(state->simulation[SIM_SEEDS]) >= 256 ||
+	if (GetWindowTextLengthW(state->simulation[SIM_SEEDS]) >= 256 ||
 			(wcscmp(job->seeds, L"keep") != 0 && wcsspn(job->seeds, L"0123456789,-") != (size_t)length)) {
 		showError(
 			window,
 			L"Enter a seed pattern such as 1, 42, 1-1000, 1,3,5 or 1,4,7-70; "
-			L"or keep to use the fixture's seed."
+			L"or leave blank to use the fixture's seed."
 		);
 		SetFocus(state->simulation[SIM_SEEDS]);
 		return;
+	}
+	if (length == 0) {
+		wcscpy(job->seeds, L"keep");
 	}
 	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
@@ -1593,7 +1596,7 @@ static void layout(HWND window, WindowState *state) {
 		{0, 4, 180, 24},
 		{192, 0, 58, 28},
 		{250, 0, 20, 28},
-		{0, 46, 100, 24},
+		{0, 46, 180, 24},
 		{192, 42, 220, 30},
 		{0, 92, 220, 28},
 		{0, 136, 180, 34},
@@ -1728,8 +1731,8 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 		{L"STATIC", L"Number of threads:", 0, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0},
-		{L"STATIC", L"Seed pattern:", 0, 0},
-		{L"EDIT", L"keep", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{L"STATIC", L"Seed pattern (optional):", 0, 0},
+		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{L"BUTTON", L"Generate detailed reports?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
 		{L"BUTTON", L"Simulate fixture", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"STATIC", L"Results are saved beside the fixture, using its filename with .csv.", 0, 0},
