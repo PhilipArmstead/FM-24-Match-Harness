@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "client.h"
+#include "embedded.h"
 #include "files.h"
 #include "test.h"
 #include "tests.h"
@@ -307,7 +308,37 @@ TEST(preserves_jump_candidate_overflow) {
 	ASSERT_INT_EQ(match.tieCount, 0);
 }
 
+TEST(extracts_the_dll_only_when_it_changed) {
+	static const char first[] = "first build";
+	static const char second[] = "second build";
+	wchar_t path[MAX_PATH];
+	DWORD length = GetTempPathW(MAX_PATH, path);
+	ASSERT_BOOL_EQ(length > 0 && length < MAX_PATH - 40, true);
+	(void)swprintf(
+		path + length, MAX_PATH - length, L"fm24-embedded-test-%lu.dll", GetCurrentProcessId()
+	);
+	ByteBuffer contents = {0};
+	ASSERT_BOOL_EQ(embedded_write(path, first, sizeof first), true);
+	ASSERT_BOOL_EQ(files_read(path, &contents) && contents.length == sizeof first, true);
+	// A read-only file can't be replaced, like a DLL that fm.exe has loaded.
+	ASSERT_BOOL_EQ(SetFileAttributesW(path, FILE_ATTRIBUTE_READONLY) != 0, true);
+	ASSERT_BOOL_EQ(embedded_write(path, first, sizeof first), true);
+	ASSERT_BOOL_EQ(embedded_write(path, second, sizeof second), false);
+	ASSERT_BOOL_EQ(SetFileAttributesW(path, FILE_ATTRIBUTE_NORMAL) != 0, true);
+	ASSERT_BOOL_EQ(embedded_write(path, second, sizeof second), true);
+	ASSERT_BOOL_EQ(
+		files_read(path, &contents) && contents.length == sizeof second &&
+			memcmp(contents.data, second, sizeof second) == 0,
+		true
+	);
+	buffer_free(&contents);
+	(void)DeleteFileW(path);
+}
+
 void registerRunnerTests(void) {
+	test_run(
+		"runner extracts the DLL only when it changed", test_extracts_the_dll_only_when_it_changed
+	);
 	test_run(
 		"runner replaces either team and preserves both overrides",
 		test_replaces_either_team_and_preserves_both_overrides

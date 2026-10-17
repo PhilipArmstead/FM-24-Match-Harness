@@ -11,17 +11,7 @@ Written in C17.
 
 > NOTE: this is for Windows 10 or newer only. Steam and Epic Games compatible.
 
-# How does it work?
-
-There are two files shipped in this bundle:
-
-- **`fm24-harness-<version>.dll`** (`src/dll/`): injected into `fm.exe`. It checks
-  the game build, then runs jobs: play matches, build the next fixture,
-  export configs.
-- **`fm24ctl.exe`** (`src/runner/`, `src/ui/`): exports fixtures, passes them
-  to seeded jobs and opens fixtures in a native Windows viewer.
-
-# How to use?
+ # How to use?
 
 - You must be running Football Manager 24, with match engine v24.2 on Windows.
 - You must have an upcoming fixture.

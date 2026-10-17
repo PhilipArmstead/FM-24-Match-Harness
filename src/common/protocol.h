@@ -17,9 +17,6 @@
 
 #define HARNESS_PROTOCOL L"1.0.25"
 #define HARNESS_DLL_NAME (L"fm24-harness-" HARNESS_PROTOCOL L".dll")
-// Injected when HARNESS_DLL_NAME is missing (e.g. a renamed release copy). It must have been built
-// with the same HARNESS_PROTOCOL, or the runner never sees its pipe.
-#define HARNESS_DLL_FALLBACK_NAME L"fm24-harness.dll"
 #define HARNESS_PIPE_NAME (L"\\\\.\\pipe\\FM24Harness_" HARNESS_PROTOCOL)
 
 #define HARNESS_LOG_FILE L"harness.log"

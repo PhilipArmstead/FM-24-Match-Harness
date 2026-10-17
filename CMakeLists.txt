@@ -75,6 +75,7 @@ target_link_options(harness PRIVATE -static -static-libgcc
 add_executable(fm24ctl
 	src/runner/client.c
 	src/runner/commands.c
+	src/runner/embedded.c
 	src/runner/fixture_data.c
 	src/runner/fixture_load.c
 	src/runner/inject.c
@@ -87,14 +88,28 @@ add_executable(fm24ctl
 	src/ui/fixture_export.c
 	src/ui/fixture_window.c
 	src/ui/viewer.rc
+	"${CMAKE_BINARY_DIR}/harness_dll.rc"
 )
+# fm24ctl carries a stripped copy of the DLL as a resource and extracts it before injecting (see
+# src/runner/embedded.h), so a release is the one executable.
+set(embedded_dll "${CMAKE_BINARY_DIR}/harness-embedded.dll")
+add_custom_command(
+	OUTPUT "${embedded_dll}"
+	COMMAND "${CMAKE_STRIP}" --strip-unneeded -o "${embedded_dll}" "$<TARGET_FILE:harness>"
+	DEPENDS harness
+	VERBATIM
+)
+file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/harness_dll.rc"
+	CONTENT "#include \"resources.h\"\nIDR_HARNESS_DLL RCDATA \"${embedded_dll}\"\n"
+)
+set_source_files_properties("${CMAKE_BINARY_DIR}/harness_dll.rc" PROPERTIES OBJECT_DEPENDS "${embedded_dll}")
 target_include_directories(fm24ctl PRIVATE src/runner src/ui)
 target_link_libraries(fm24ctl PRIVATE common comctl32 user32 gdi32 ole32 shell32 uuid)
 target_compile_definitions(fm24ctl PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 target_compile_options(fm24ctl PRIVATE ${warnings})
 target_link_options(fm24ctl PRIVATE -municode -static -static-libgcc)
 
-install(TARGETS harness fm24ctl RUNTIME DESTINATION . COMPONENT Runtime)
+install(TARGETS fm24ctl RUNTIME DESTINATION . COMPONENT Runtime)
 
 option(FM24_BUILD_TESTS "Build regression checks" OFF)
 if(FM24_BUILD_TESTS)
@@ -110,6 +125,7 @@ if(FM24_BUILD_TESTS)
 		tests/fixture_window_test.c
 		tests/fixture_load_test.c
 		src/ui/fixture_export.c
+		src/runner/embedded.c
 		src/runner/fixture_data.c
 		src/runner/json_reader.c
 		src/runner/match_config.c
@@ -138,7 +154,7 @@ if(FM24_BUILD_TESTS)
 			COMMAND "${CMAKE_COMMAND}"
 				"-DBUILD_DIR=${CMAKE_BINARY_DIR}"
 				"-DCONFIG=$<CONFIG>"
-				"-DDLL=$<TARGET_FILE:harness>"
+				"-DDLL=${embedded_dll}"
 				"-DRUNNER=$<TARGET_FILE:fm24ctl>"
 				"-DSTRIP=${CMAKE_STRIP}"
 				"-DOBJDUMP=${CMAKE_OBJDUMP}"

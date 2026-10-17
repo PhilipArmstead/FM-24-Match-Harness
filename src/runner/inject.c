@@ -3,6 +3,7 @@
 
 #include "inject.h"
 
+#include "embedded.h"
 #include "paths.h"
 #include "protocol.h"
 
@@ -28,12 +29,6 @@ bool inject_harness(void) {
 	}
 	wchar_t dllPath[HARNESS_PATH_LENGTH];
 	if (!findDll(dllPath, HARNESS_PATH_LENGTH)) {
-		fprintf(
-			stderr,
-			"neither %ls nor %ls found next to fm24ctl.exe (build it first)\n",
-			HARNESS_DLL_NAME,
-			HARNESS_DLL_FALLBACK_NAME
-		);
 		return false;
 	}
 	HANDLE process = OpenProcess(
@@ -48,7 +43,13 @@ bool inject_harness(void) {
 	bool ok = loadRemotely(process, dllPath);
 	CloseHandle(process);
 	if (ok) {
-		printf("injected into fm.exe (pid %lu); see harness.log for the build check\n", pid);
+		*wcsrchr(dllPath, L'\\') = 0; // the DLL's directory, where it writes its log
+		printf(
+			"injected into fm.exe (pid %lu); see %ls\\%ls for the build check\n",
+			pid,
+			dllPath,
+			HARNESS_LOG_FILE
+		);
 	}
 	return ok;
 }
@@ -70,28 +71,17 @@ unsigned long inject_findGame(void) {
 	return pid;
 }
 
-// The harness DLL next to fm24ctl.exe: this protocol's build, else HARNESS_DLL_FALLBACK_NAME
-// (with a note, since only a build of the same protocol will answer). False if neither exists.
+// This protocol's DLL next to fm24ctl.exe (a development build), else the one built into
+// fm24ctl.exe, extracted first. Prints why and returns false if neither is available.
 static bool findDll(wchar_t *dllPath, size_t size) {
 	wchar_t directory[HARNESS_PATH_LENGTH];
-	if (!paths_executableDirectory(directory, HARNESS_PATH_LENGTH)) {
-		return false;
-	}
-	if (paths_join(dllPath, size, directory, HARNESS_DLL_NAME) &&
+	if (paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
+			paths_join(dllPath, size, directory, HARNESS_DLL_NAME) &&
 			GetFileAttributesW(dllPath) != INVALID_FILE_ATTRIBUTES) {
+		printf("injecting the %ls next to fm24ctl.exe\n", HARNESS_DLL_NAME);
 		return true;
 	}
-	if (paths_join(dllPath, size, directory, HARNESS_DLL_FALLBACK_NAME) &&
-			GetFileAttributesW(dllPath) != INVALID_FILE_ATTRIBUTES) {
-		printf(
-			"%ls not found; injecting %ls (it must be a protocol %ls build)\n",
-			HARNESS_DLL_NAME,
-			HARNESS_DLL_FALLBACK_NAME,
-			HARNESS_PROTOCOL
-		);
-		return true;
-	}
-	return false;
+	return embedded_dllPath(dllPath, size) && embedded_extract(dllPath);
 }
 
 // Runs LoadLibraryW(dllPath) in the game; returns false (and prints why) on failure.

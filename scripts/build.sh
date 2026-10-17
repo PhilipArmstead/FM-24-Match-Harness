@@ -17,12 +17,15 @@ dll="fm24-harness-$protocol.dll"
 "$CMAKE" --install "$BUILD_DIR" --config Release --prefix "$(cygpath -m "$ROOT/bin")"
 # CMake's --strip does not propagate strip failures.
 strip=$(sed -n 's/^CMAKE_STRIP:[^=]*=//p' "$BUILD_DIR/CMakeCache.txt")
-"$strip" --strip-unneeded "$ROOT/bin/$dll" "$ROOT/bin/fm24ctl.exe" "$ROOT/bin/fm24_tests.exe"
+"$strip" --strip-unneeded "$ROOT/bin/fm24ctl.exe" "$ROOT/bin/fm24_tests.exe"
 
-# Older protocols' DLLs (and the old fm24_harness_p<N>.dll names) are never injected again.
-# Deleting one still loaded in fm.exe fails; it goes on a later build once the game has restarted.
-for old in "$BUILD_DIR"/fm24-harness-*.dll "$ROOT"/bin/fm24-harness-*.dll \
-	"$BUILD_DIR"/fm24_harness_p*.dll "$ROOT"/bin/fm24_harness_p*.dll; do
+# fm24ctl.exe carries the DLL, so a loose copy in bin/ would override it (see inject.c); older
+# protocols' DLLs in build/ are never injected again. Deleting one still loaded in fm.exe fails; it
+# goes on a later build once the game has restarted.
+for old in "$BUILD_DIR"/fm24-harness-*.dll "$BUILD_DIR"/fm24_harness_p*.dll; do
 	[ -e "$old" ] && [ "$(basename "$old")" != "$dll" ] && { rm -f "$old" 2>/dev/null || true; }
+done
+for old in "$ROOT"/bin/fm24-harness-*.dll "$ROOT"/bin/fm24_harness_p*.dll; do
+	[ -e "$old" ] && { rm -f "$old" 2>/dev/null || true; }
 done
 ls "$ROOT/bin"

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+# DLL is the stripped copy fm24ctl embeds; the release installs only RUNNER.
 file(SHA256 "${DLL}" dll_before)
 file(SHA256 "${RUNNER}" runner_before)
 
@@ -8,14 +9,17 @@ execute_process(
 	COMMAND_ERROR_IS_FATAL ANY
 )
 
-foreach(binary IN ITEMS "${DLL}" "${RUNNER}")
+get_filename_component(runner_name "${RUNNER}" NAME)
+set(installed_runner "${BUILD_DIR}/release-check/${runner_name}")
+execute_process(
+	COMMAND "${STRIP}" --strip-unneeded "${installed_runner}"
+	COMMAND_ERROR_IS_FATAL ANY
+)
+
+foreach(binary IN ITEMS "${DLL}" "${installed_runner}")
 	get_filename_component(name "${binary}" NAME)
 	execute_process(
-		COMMAND "${STRIP}" --strip-unneeded "${BUILD_DIR}/release-check/${name}"
-		COMMAND_ERROR_IS_FATAL ANY
-	)
-	execute_process(
-		COMMAND "${OBJDUMP}" -h "${BUILD_DIR}/release-check/${name}"
+		COMMAND "${OBJDUMP}" -h "${binary}"
 		OUTPUT_VARIABLE sections
 		COMMAND_ERROR_IS_FATAL ANY
 	)
@@ -26,8 +30,17 @@ foreach(binary IN ITEMS "${DLL}" "${RUNNER}")
 	if(binary STREQUAL DLL AND sections MATCHES "\\.edata")
 		message(FATAL_ERROR "${name}: internal DLL symbols must not be exported")
 	endif()
-	if(binary STREQUAL RUNNER AND NOT sections MATCHES "\\.rsrc")
-		message(FATAL_ERROR "${name}: missing application resources")
+	if(binary STREQUAL installed_runner)
+		# The embedded DLL lives in .rsrc, so the section must be at least as large as the DLL.
+		file(SIZE "${DLL}" dll_size)
+		string(REGEX MATCH "\\.rsrc +([0-9a-f]+)" rsrc_match "${sections}")
+		if(NOT rsrc_match)
+			message(FATAL_ERROR "${name}: missing application resources")
+		endif()
+		math(EXPR rsrc_size "0x${CMAKE_MATCH_1}")
+		if(rsrc_size LESS dll_size)
+			message(FATAL_ERROR "${name}: the harness DLL is not embedded")
+		endif()
 	endif()
 endforeach()
 

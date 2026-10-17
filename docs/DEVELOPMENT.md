@@ -41,7 +41,7 @@ see `scripts/env.sh`), clang-format 22+ and the MinGW clang-tidy
 (`pacman -S mingw-w64-x86_64-clang-tools-extra`).
 
 ```sh
-scripts/build.sh     # build into build/, install stripped DLL + runner + tests into bin/
+scripts/build.sh     # build into build/, install stripped runner (DLL inside) + tests into bin/
 scripts/format.sh    # apply .clang-format (--check to only verify)
 scripts/tidy.sh      # clang-tidy with .clang-tidy (warnings are errors)
 ```
@@ -54,8 +54,11 @@ Release links discard unused sections and do not export the DLL's internal
 symbols. Debug builds retain their normal flags and exports without LTO.
 Fast-math and build-machine-specific CPU instructions are not enabled.
 
-Unstripped binaries stay in `build/` for diagnosis. The script installs
-copies into `bin/` and strips them with CMake's selected toolchain utility,
+Unstripped binaries stay in `build/` for diagnosis. `fm24ctl.exe` embeds
+`build/harness-embedded.dll`, a stripped copy of the DLL, as a resource, so
+`bin/` holds no DLL (the script deletes any left there, since a loose DLL
+would override the built-in one). The script installs copies into `bin/` and
+strips them with CMake's selected toolchain utility,
 preserving Windows unwind metadata and application resources. Installation
 or stripping errors fail the script instead of silently leaving old
 binaries in `bin/`. Close a running runner before rebuilding; for a loaded
@@ -93,7 +96,7 @@ only copy the input when patching seeds rather than rebuilding it.
 
 Use `ctest --test-dir build --output-on-failure` for individual results and the
 Release packaging check. Building does not run the tests. To stage only
-the two distributable files, without the test executable:
+the distributable runner, without the test executable:
 
 ```sh
 cmake --install build --config Release --prefix dist --component Runtime --strip
@@ -167,9 +170,10 @@ on the Steam `fm.exe`:
 # Use
 
 Run everything from `bin/`. `harness.log` lives next to the DLL that fm.exe
-loaded: a runner sends its job over a named pipe, so a `fm24ctl` in another
-folder (e.g. `build/`) with the same protocol version uses that DLL, and its
-log, rather than injecting its own.
+loaded, normally `%LOCALAPPDATA%\fm24-harness\`. A runner sends its job over
+a named pipe, so a `fm24ctl` in another folder (e.g. `build/`) with the same
+protocol version uses the DLL that is already loaded, and its log, rather than
+injecting its own.
 
 The DLL runs one job at a time. Runners and viewer windows that submit while
 a job is running wait for it (`the harness is running another job; waiting`),
@@ -184,10 +188,13 @@ but does not cancel DLL work; later jobs still wait for it.
    `ready; waiting for jobs`. `refusing: ...` means a different game build, or a
    software breakpoint on a called function. If a debugger is attached, it may
    pause fm.exe when the DLL loads: resume the game and the injection completes.
-   It injects `fm24-harness-<version>.dll` next to `fm24ctl.exe`, or
-   `fm24-harness.dll` if that is missing (e.g. a renamed release copy). The
-   fallback must be a build of the same `<version>`, or the runner never
-   sees it start
+   It injects `fm24-harness-<version>.dll` from next to `fm24ctl.exe` if
+   there is one (e.g. running from `build/`). Otherwise it writes its built-in
+   copy to `%LOCALAPPDATA%\fm24-harness\` first, and leaves an identical
+   file there alone. If fm.exe has a different build of the same `<version>`
+   loaded, the copy cannot be replaced: bump the protocol or restart the game.
+   Old versions collect in that folder; delete them once the game has
+   exited
 3. `fm24ctl run <input> [seeds] [out.csv]`,
    where `<input>` is a `.bin` input or a `.json` config; e.g.
    `fm24ctl run next.json` plays the config's own seed into `next.csv`.
