@@ -1211,6 +1211,19 @@ static DWORD WINAPI fixtureFile(LPVOID parameter) {
 	);
 }
 
+// Locks out (or restores) the controls that would race a fixture file operation.
+static void enableFileControls(const WindowState *state, BOOL enable) {
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], enable);
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
+			EnableWindow(state->teamControls[side][i], enable);
+		}
+	}
+	EnableWindow(state->simulation[SIM_SUBMIT], enable);
+}
+
 static bool
 startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary) {
 	if (state->simulationThread || state->replacementThread || state->fileThread) {
@@ -1247,17 +1260,43 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 		showError(window, L"Cannot start the fixture file operation.");
 		return false;
 	}
-	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
-		EnableWindow(state->fileButtons[i], FALSE);
-	}
-	for (unsigned side = 0; side < 2; ++side) {
-		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
-			EnableWindow(state->teamControls[side][i], FALSE);
-		}
-	}
-	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
+	enableFileControls(state, FALSE);
 	SetFocus(state->tabs);
 	return true;
+}
+
+// Shows the fixture a successful file operation opened or saved.
+static void showFileResult(HWND window, WindowState *state, const FileJob *job) {
+	setActivePath(state, job->save ? job->output : job->input, job->temporary);
+	if (!job->save) {
+		*state->data = *job->data;
+		for (unsigned side = 0; side < 2; ++side) {
+			state->editingTeam[side] = false;
+			SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
+		}
+		state->progressCompleted = 0;
+		state->progressTotal = 0;
+		SetWindowTextW(state->simulation[SIM_SUMMARY], L"");
+		SetWindowTextW(
+			state->simulation[SIM_STATUS],
+			L"Results are saved beside the fixture, using its filename with .csv."
+		);
+	}
+	bool ok = setMetadata(state);
+	if (!job->save) {
+		ok = ok && setHeadings(state) && fillList(state, 0) && fillList(state, 1);
+	}
+	if (!ok) {
+		showError(window, L"Cannot display the fixture.");
+		state->failed = true;
+		DestroyWindow(window);
+		return;
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		InvalidateRect(state->pitches[side], NULL, TRUE);
+	}
+	selectTab(state);
+	layout(window, state);
 }
 
 static void checkFileJob(HWND window, WindowState *state) {
@@ -1279,47 +1318,10 @@ static void checkFileJob(HWND window, WindowState *state) {
 	KillTimer(window, FILE_TIMER);
 	CloseHandle(state->fileThread);
 	state->fileThread = NULL;
-	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
-		EnableWindow(state->fileButtons[i], TRUE);
-	}
-	for (unsigned side = 0; side < 2; ++side) {
-		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
-			EnableWindow(state->teamControls[side][i], TRUE);
-		}
-	}
-	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
+	enableFileControls(state, TRUE);
 	FileJob *job = &state->fileJob;
 	if (result == 0) {
-		setActivePath(state, job->save ? job->output : job->input, job->temporary);
-		if (!job->save) {
-			*state->data = *job->data;
-			for (unsigned side = 0; side < 2; ++side) {
-				state->editingTeam[side] = false;
-				SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
-			}
-			state->progressCompleted = 0;
-			state->progressTotal = 0;
-			SetWindowTextW(state->simulation[SIM_SUMMARY], L"");
-			SetWindowTextW(
-				state->simulation[SIM_STATUS],
-				L"Results are saved beside the fixture, using its filename with .csv."
-			);
-		}
-		bool ok = setMetadata(state);
-		if (!job->save) {
-			ok = ok && setHeadings(state) && fillList(state, 0) && fillList(state, 1);
-		}
-		if (!ok) {
-			showError(window, L"Cannot display the fixture.");
-			state->failed = true;
-			DestroyWindow(window);
-		} else {
-			for (unsigned side = 0; side < 2; ++side) {
-				InvalidateRect(state->pitches[side], NULL, TRUE);
-			}
-			selectTab(state);
-			layout(window, state);
-		}
+		showFileResult(window, state, job);
 	} else {
 		showFileError(window, job->error);
 	}
@@ -2325,6 +2327,34 @@ static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
 	return false;
 }
 
+// Polls the background operation behind `timer`; returns false when the timer is not ours.
+static bool checkTimer(HWND window, WindowState *state, WPARAM timer) {
+	switch (timer) {
+		case FILE_TIMER: checkFileJob(window, state); return true;
+		case REPLACE_TIMER: checkReplacement(window, state); return true;
+		case TEAMS_TIMER: checkTeams(window, state); return true;
+		case SIMULATION_TIMER: checkSimulation(window, state); return true;
+		default: return false;
+	}
+}
+
+// Explains why the window cannot close yet; returns false when nothing is running.
+static bool closeBlocked(HWND window, const WindowState *state) {
+	if (state->fileThread) {
+		showError(window, L"A fixture file operation is running. Please wait before closing.");
+		return true;
+	}
+	if (state->replacementThread) {
+		showError(window, L"A team replacement is running. Please wait before closing.");
+		return true;
+	}
+	if (state->simulationThread) {
+		showError(window, L"A simulation is running. Please wait for it to finish before closing.");
+		return true;
+	}
+	return false;
+}
+
 static LRESULT
 actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
@@ -2343,20 +2373,7 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 			}
 			break;
 		case WM_TIMER:
-			if (wParam == FILE_TIMER) {
-				checkFileJob(window, state);
-				return 0;
-			}
-			if (wParam == REPLACE_TIMER) {
-				checkReplacement(window, state);
-				return 0;
-			}
-			if (wParam == TEAMS_TIMER) {
-				checkTeams(window, state);
-				return 0;
-			}
-			if (wParam == SIMULATION_TIMER) {
-				checkSimulation(window, state);
+			if (checkTimer(window, state, wParam)) {
 				return 0;
 			}
 			break;
@@ -2369,16 +2386,7 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 			return metadataNotification(window, state, notification);
 		}
 		case WM_CLOSE:
-			if (state->fileThread) {
-				showError(window, L"A fixture file operation is running. Please wait before closing.");
-				return 0;
-			}
-			if (state->replacementThread) {
-				showError(window, L"A team replacement is running. Please wait before closing.");
-				return 0;
-			}
-			if (state->simulationThread) {
-				showError(window, L"A simulation is running. Please wait for it to finish before closing.");
+			if (closeBlocked(window, state)) {
 				return 0;
 			}
 			break;
@@ -2421,6 +2429,30 @@ static void dpiChanged(HWND window, WindowState *state, UINT dpi, const RECT *bo
 	);
 }
 
+// Paints static text and buttons on the window background, with team errors in red.
+static LRESULT colorControl(const WindowState *state, HDC dc, HWND control) {
+	SetBkMode(dc, TRANSPARENT);
+	SetTextColor(
+		dc,
+		control == state->teamControls[0][TEAM_ERROR] || control == state->teamControls[1][TEAM_ERROR]
+			? RGB(255, 0, 0)
+			: GetSysColor(COLOR_WINDOWTEXT)
+	);
+	SetBkColor(dc, GetSysColor(COLOR_WINDOW));
+	return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+}
+
+// Shows the hand cursor over an enabled edit icon; returns false for any other control.
+static bool setIconCursor(const WindowState *state, HWND control) {
+	if ((control != state->teamControls[0][TEAM_ICON] &&
+				control != state->teamControls[1][TEAM_ICON]) ||
+			!IsWindowEnabled(control)) {
+		return false;
+	}
+	SetCursor(LoadCursorW(NULL, IDC_HAND));
+	return true;
+}
+
 static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
 	WindowState *state = (WindowState *)GetWindowLongPtrW(window, GWLP_USERDATA);
 	if (message == WM_NCCREATE) {
@@ -2456,19 +2488,7 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			updateSimulationProgress(window, state, wParam, lParam);
 			return 0;
 		case WM_CTLCOLORSTATIC:
-		case WM_CTLCOLORBTN: {
-			HDC dc = (HDC)wParam;
-			SetBkMode(dc, TRANSPARENT);
-			SetTextColor(
-				dc,
-				(HWND)lParam == state->teamControls[0][TEAM_ERROR] ||
-						(HWND)lParam == state->teamControls[1][TEAM_ERROR]
-					? RGB(255, 0, 0)
-					: GetSysColor(COLOR_WINDOWTEXT)
-			);
-			SetBkColor(dc, GetSysColor(COLOR_WINDOW));
-			return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
-		}
+		case WM_CTLCOLORBTN: return colorControl(state, (HDC)wParam, (HWND)lParam);
 		case WM_DRAWITEM:
 			if (drawItem(window, state, (const DRAWITEMSTRUCT *)lParam)) {
 				return TRUE;
@@ -2482,10 +2502,7 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			}
 			break;
 		case WM_SETCURSOR:
-			if (((HWND)wParam == state->teamControls[0][TEAM_ICON] ||
-						(HWND)wParam == state->teamControls[1][TEAM_ICON]) &&
-					IsWindowEnabled((HWND)wParam)) {
-				SetCursor(LoadCursorW(NULL, IDC_HAND));
+			if (setIconCursor(state, (HWND)wParam)) {
 				return TRUE;
 			}
 			break;

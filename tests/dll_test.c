@@ -398,10 +398,26 @@ TEST(swaps_either_or_both_teams_and_restores_game_state) {
 		ASSERT_BOOL_EQ(memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true);
 		ASSERT_BOOL_EQ(value == teams[side], true);
 	}
+	// The same team may play on both sides.
 	builder.teams[0] = teams[1];
 	builder.teams[1] = NULL;
-	ASSERT_BOOL_EQ(swapTeams(&builder, swaps, &count), false);
-	ASSERT_BOOL_EQ(count == 0, true);
+	ASSERT_BOOL_EQ(swapTeams(&builder, swaps, &count), true);
+	for (unsigned side = 0; side < 2; ++side) {
+		uint8_t *value = NULL;
+		ASSERT_BOOL_EQ(memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true);
+		ASSERT_BOOL_EQ(value == teams[1], true);
+	}
+	restoreSwaps(swaps, count);
+	for (unsigned side = 0; side < 2; ++side) {
+		uint8_t *value = NULL;
+		ASSERT_BOOL_EQ(memory_readPointer(fixture, side ? FIXTURE_AWAY : FIXTURE_HOME, &value), true);
+		ASSERT_BOOL_EQ(value == teams[side], true);
+		ASSERT_BOOL_EQ(memory_readPointer(nextMatch[side], NEXT_MATCH_OPPONENT, &value), true);
+		ASSERT_BOOL_EQ(value == teams[1 - side], true);
+	}
+	for (unsigned i = 0; i < 8; ++i) {
+		ASSERT_INT_EQ(memcmp(copies[i], fixture, sizeof fixture), 0);
+	}
 	expectedBuildTeams[0] = expectedBuildTeams[1] = NULL;
 	humanMatchesHolder = NULL;
 	failBuild = false;
@@ -418,7 +434,7 @@ TEST(writes_both_team_overrides) {
 	uint32_t teams[2] = {678, 677};
 	writeHeader(file, &serialised, "test", teams, false);
 	ASSERT_INT_EQ(fflush(file), 0);
-	rewind(file);
+	ASSERT_INT_EQ(fseek(file, 0, SEEK_SET), 0);
 	char text[512] = {0};
 	ASSERT_BOOL_EQ(fread(text, 1, sizeof text - 1, file) > 0, true);
 	ASSERT_BOOL_EQ(strstr(text, "\"home_team\": 678") != NULL, true);
@@ -658,7 +674,7 @@ TEST(labels_staff_attributes_byte_by_byte) {
 	ASSERT_BOOL_EQ(file != NULL, true);
 	if (file) {
 		ASSERT_INT_EQ((int)writeField(file, &serialised, labels, 1, SIZE_MAX, false), 1);
-		rewind(file);
+		ASSERT_INT_EQ(fseek(file, 0, SEEK_SET), 0);
 		char line[256];
 		size_t fields = 0;
 		while (fgets(line, sizeof line, file)) {

@@ -184,6 +184,33 @@ static bool copyText(const char *value, char *out, size_t size) {
 	return true;
 }
 
+static bool parseSeed(Job *job, const char *value) {
+	if (strcmp(value, "random") == 0) {
+		job->hasSeed = false;
+		job->seed = 0;
+		return true;
+	}
+	char *end = NULL;
+	unsigned long long seed = 0;
+	if (!parseNumber(value, &end, &seed) || *end != 0 || seed > UINT32_MAX) {
+		return false;
+	}
+	job->hasSeed = true;
+	job->seed = (uint32_t)seed;
+	return true;
+}
+
+static bool parseThreads(Job *job, const char *value) {
+	char *end = NULL;
+	unsigned long long threads = 0;
+	if (!parseNumber(value, &end, &threads) || *end != 0 || threads < 1 ||
+			threads > HARNESS_MAX_THREADS) {
+		return false;
+	}
+	job->threads = (unsigned)threads;
+	return true;
+}
+
 static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "command") == 0) {
 		return parseCommand(job, value);
@@ -208,19 +235,7 @@ static bool parseLine(Job *job, char *key, char *value) {
 		return parseSeeds(job, value);
 	}
 	if (strcmp(key, "seed") == 0) {
-		if (strcmp(value, "random") == 0) {
-			job->hasSeed = false;
-			job->seed = 0;
-			return true;
-		}
-		char *end = NULL;
-		unsigned long long seed = 0;
-		if (!parseNumber(value, &end, &seed) || *end != 0 || seed > UINT32_MAX) {
-			return false;
-		}
-		job->hasSeed = true;
-		job->seed = (uint32_t)seed;
-		return true;
+		return parseSeed(job, value);
 	}
 	if (strcmp(key, "full") == 0) {
 		job->full = strcmp(value, "1") == 0;
@@ -239,14 +254,7 @@ static bool parseLine(Job *job, char *key, char *value) {
 		return true;
 	}
 	if (strcmp(key, "threads") == 0) {
-		char *end = NULL;
-		unsigned long long threads = 0;
-		if (!parseNumber(value, &end, &threads) || *end != 0 || threads < 1 ||
-				threads > HARNESS_MAX_THREADS) {
-			return false;
-		}
-		job->threads = (unsigned)threads;
-		return true;
+		return parseThreads(job, value);
 	}
 	if (strcmp(key, "progress_window") == 0) {
 		char *end = NULL;

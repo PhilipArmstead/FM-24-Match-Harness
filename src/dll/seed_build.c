@@ -51,6 +51,26 @@ static bool addSwap(
 	const uint8_t *expected,
 	const uint8_t *replacement
 );
+static bool swapFixture(
+	Swap *swaps,
+	size_t *count,
+	uint8_t *fixture,
+	uint8_t *const original[2],
+	const uint8_t *const selected[2]
+);
+static bool swapAttendedCopies(
+	Swap *swaps,
+	size_t *count,
+	const uint8_t *fixture,
+	uint8_t *const original[2],
+	const uint8_t *const selected[2]
+);
+static bool swapOpponents(
+	Swap *swaps,
+	size_t *count,
+	uint8_t *const original[2],
+	const uint8_t *const selected[2]
+);
 static bool swapTeams(const SeedBuilder *builder, Swap *swaps, size_t *count);
 static void restoreSwaps(const Swap *swaps, size_t count);
 static bool
@@ -207,6 +227,82 @@ static bool addSwap(
 	return true;
 }
 
+// Notes both of `fixture`'s team slots for swapping from `original` to `selected`.
+static bool swapFixture(
+	Swap *swaps,
+	size_t *count,
+	uint8_t *fixture,
+	uint8_t *const original[2],
+	const uint8_t *const selected[2]
+) {
+	for (unsigned side = 0; side < 2; ++side) {
+		if (!addSwap(
+					swaps,
+					count,
+					fixture + (side ? FIXTURE_AWAY : FIXTURE_HOME),
+					original[side],
+					selected[side]
+				)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Notes the copies of `fixture` in the human's attended matches for swapping.
+static bool swapAttendedCopies(
+	Swap *swaps,
+	size_t *count,
+	const uint8_t *fixture,
+	uint8_t *const original[2],
+	const uint8_t *const selected[2]
+) {
+	uint8_t *holder = NULL;
+	uint8_t *start = NULL;
+	uint8_t *end = NULL;
+	if (!memory_readPointer(game_address(RVA_HUMAN_MATCHES_HOLDER), 0, &holder) ||
+			!memory_readPointer(holder, HUMAN_MATCHES, &start) ||
+			!memory_readPointer(holder, HUMAN_MATCHES + sizeof(void *), &end)) {
+		return true;
+	}
+	for (uint8_t *entry = start; entry < end; entry += sizeof(void *)) {
+		uint8_t *match = NULL;
+		uint8_t *copy = NULL;
+		uint8_t *copyHome = NULL;
+		uint8_t *copyAway = NULL;
+		if (memory_readPointer(entry, 0, &match) && memory_readPointer(match, 0, &copy) &&
+				copy != fixture && memory_readPointer(copy, FIXTURE_HOME, &copyHome) &&
+				memory_readPointer(copy, FIXTURE_AWAY, &copyAway) && copyHome == original[0] &&
+				copyAway == original[1] && !swapFixture(swaps, count, copy, original, selected)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Notes each original team's next-match opponent for swapping to its new opponent.
+static bool swapOpponents(
+	Swap *swaps,
+	size_t *count,
+	uint8_t *const original[2],
+	const uint8_t *const selected[2]
+) {
+	for (unsigned side = 0; side < 2; ++side) {
+		const uint8_t *opponent = original[side] == selected[0]   ? selected[1]
+															: original[side] == selected[1] ? selected[0]
+																															: selected[1 - side];
+		if (opponent == original[1 - side]) {
+			continue;
+		}
+		uint8_t *data = NULL;
+		if (memory_readPointer(original[side], TEAM_IN_GAME_DATA, &data) &&
+				!addSwap(swaps, count, data + NEXT_MATCH_OPPONENT, original[1 - side], opponent)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 // Updates the fixture, its copies in the human's attended matches and each original team's
 // next-match opponent. Collect everything before writing so an overflow leaves the game untouched.
 static bool swapTeams(const SeedBuilder *builder, Swap *swaps, size_t *count) {
@@ -223,62 +319,10 @@ static bool swapTeams(const SeedBuilder *builder, Swap *swaps, size_t *count) {
 	}
 	const uint8_t *selected[2] = {builder->teams[0] ? builder->teams[0] : original[0],
 		builder->teams[1] ? builder->teams[1] : original[1]};
-	if (selected[0] == selected[1]) {
-		log_message("cannot build a fixture with the same team on both sides");
+	if (!swapFixture(swaps, count, fixture, original, selected) ||
+			!swapAttendedCopies(swaps, count, fixture, original, selected) ||
+			!swapOpponents(swaps, count, original, selected)) {
 		return false;
-	}
-	for (unsigned side = 0; side < 2; ++side) {
-		if (!addSwap(
-					swaps,
-					count,
-					fixture + (side ? FIXTURE_AWAY : FIXTURE_HOME),
-					original[side],
-					selected[side]
-				)) {
-			return false;
-		}
-	}
-	uint8_t *holder = NULL;
-	uint8_t *start = NULL;
-	uint8_t *end = NULL;
-	if (memory_readPointer(game_address(RVA_HUMAN_MATCHES_HOLDER), 0, &holder) &&
-			memory_readPointer(holder, HUMAN_MATCHES, &start) &&
-			memory_readPointer(holder, HUMAN_MATCHES + sizeof(void *), &end)) {
-		for (uint8_t *entry = start; entry < end; entry += sizeof(void *)) {
-			uint8_t *match = NULL;
-			uint8_t *copy = NULL;
-			uint8_t *copyHome = NULL;
-			uint8_t *copyAway = NULL;
-			if (memory_readPointer(entry, 0, &match) && memory_readPointer(match, 0, &copy) &&
-					copy != fixture && memory_readPointer(copy, FIXTURE_HOME, &copyHome) &&
-					memory_readPointer(copy, FIXTURE_AWAY, &copyAway) && copyHome == original[0] &&
-					copyAway == original[1]) {
-				for (unsigned side = 0; side < 2; ++side) {
-					if (!addSwap(
-								swaps,
-								count,
-								copy + (side ? FIXTURE_AWAY : FIXTURE_HOME),
-								original[side],
-								selected[side]
-							)) {
-						return false;
-					}
-				}
-			}
-		}
-	}
-	for (unsigned side = 0; side < 2; ++side) {
-		const uint8_t *opponent = original[side] == selected[0]   ? selected[1]
-															: original[side] == selected[1] ? selected[0]
-																															: selected[1 - side];
-		if (opponent == original[1 - side]) {
-			continue;
-		}
-		uint8_t *data = NULL;
-		if (memory_readPointer(original[side], TEAM_IN_GAME_DATA, &data) &&
-				!addSwap(swaps, count, data + NEXT_MATCH_OPPONENT, original[1 - side], opponent)) {
-			return false;
-		}
 	}
 	for (size_t i = 0; i < *count; ++i) {
 		memcpy(swaps[i].slot, &swaps[i].replacement, sizeof swaps[i].replacement);
