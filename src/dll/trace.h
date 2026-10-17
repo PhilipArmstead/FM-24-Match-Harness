@@ -42,4 +42,7 @@ bool trace_serialize(uint8_t *match, Serialised *out, bool traced);
 
 bool trace_appendRecord(Serialised *serialised, TraceRecord record);
 
+// Index of `chain` in the path table, adding it if new (UINT32_MAX if out of memory).
+uint32_t trace_findPath(Serialised *serialised, const char *chain);
+
 void trace_free(Serialised *serialised);

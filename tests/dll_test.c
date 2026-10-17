@@ -423,6 +423,82 @@ TEST(swaps_either_or_both_teams_and_restores_game_state) {
 	failBuild = false;
 }
 
+static void appendTestRecord(Serialised *serialised, const char *bytes, const char *path) {
+	uint32_t index = trace_findPath(serialised, path);
+	TraceRecord record = {
+		.offset = (uint32_t)serialised->bytes.length,
+		.length = (uint32_t)strlen(bytes),
+		.caller = strchr(path, '>') ? 0 : SITE_PART_HOME,
+		.path = index,
+	};
+	ASSERT_BOOL_EQ(index != UINT32_MAX, true);
+	ASSERT_BOOL_EQ(buffer_append(&serialised->bytes, bytes, record.length), true);
+	ASSERT_BOOL_EQ(trace_appendRecord(serialised, record), true);
+}
+
+TEST(copies_either_team_block_over_the_other) {
+	Serialised built = {0};
+	appendTestRecord(&built, "m", "1ac76fb");
+	appendTestRecord(&built, "HH", "1ac77d5>10");
+	appendTestRecord(&built, "aaa", "1ac77e8>10");
+	appendTestRecord(&built, "x", "1ac77fe");
+	ASSERT_BOOL_EQ(mirrorSide(&built, 1), true);
+	ASSERT_BOOL_EQ(built.bytes.length == 8 && built.recordCount == 4, true);
+	if (built.bytes.length == 8 && built.recordCount == 4) {
+		ASSERT_BOOL_EQ(memcmp(built.bytes.data, "maaaaaax", 8) == 0, true);
+		ASSERT_BOOL_EQ(recordsTileBytes(&built), true);
+		ASSERT_BOOL_EQ(built.records[1].path == 1 && built.records[2].path == 2, true);
+	}
+	trace_free(&built);
+	appendTestRecord(&built, "m", "1ac76fb");
+	appendTestRecord(&built, "HH", "1ac77d5>10");
+	appendTestRecord(&built, "h", "1ac77d5");
+	appendTestRecord(&built, "aaa", "1ac77e8>10");
+	appendTestRecord(&built, "x", "1ac77fe");
+	ASSERT_BOOL_EQ(mirrorSide(&built, 0), true);
+	ASSERT_BOOL_EQ(built.bytes.length == 8 && built.recordCount == 6, true);
+	if (built.bytes.length == 8 && built.recordCount == 6) {
+		ASSERT_BOOL_EQ(memcmp(built.bytes.data, "mHHhHHhx", 8) == 0, true);
+		ASSERT_BOOL_EQ(recordsTileBytes(&built), true);
+		ASSERT_INT_EQ((int)built.records[3].path, 3);
+		ASSERT_BOOL_EQ(strcmp(built.paths[built.records[4].path], "1ac77e8") == 0, true);
+		ASSERT_BOOL_EQ(built.records[4].caller == SITE_PART_AWAY, true);
+		ASSERT_BOOL_EQ(built.records[5].path == 4 && built.records[5].offset == 7, true);
+		Side side = {.serialised = &built};
+		size_t away[2] = {0};
+		ASSERT_BOOL_EQ(parseChains(&built, &side.chains), true);
+		ASSERT_BOOL_EQ(findPart(&side, SITE_PART_AWAY, away) && away[0] == 3 && away[1] == 5, true);
+		freeChains(&side.chains);
+	}
+	trace_free(&built);
+	// Without an away block nothing is copied.
+	appendTestRecord(&built, "m", "1ac76fb");
+	appendTestRecord(&built, "HH", "1ac77d5>10");
+	ASSERT_BOOL_EQ(mirrorSide(&built, 0), false);
+	ASSERT_BOOL_EQ(built.bytes.length == 3 && built.recordCount == 2, true);
+	trace_free(&built);
+}
+
+TEST(builds_a_team_playing_itself_against_the_fixtures_opponent) {
+	uint8_t fixture[FIXTURE_AWAY + sizeof(void *)] = {0};
+	uint8_t teams[3] = {0}; // the fixture's home and away teams, and another
+	storePointer(fixture, FIXTURE_HOME, &teams[0]);
+	storePointer(fixture, FIXTURE_AWAY, &teams[1]);
+	const uint8_t *overrides[][2] = {
+		{&teams[1], NULL}, {NULL, &teams[0]}, {&teams[2], &teams[2]}, {&teams[2], NULL}, {NULL, NULL}};
+	const unsigned sides[] = {1, 0, 0, 2, 2};
+	const uint8_t *builds[][2] = {
+		{NULL, &teams[1]}, {&teams[0], NULL}, {&teams[2], NULL}, {&teams[2], NULL}, {NULL, NULL}};
+	for (unsigned i = 0; i < sizeof sides / sizeof sides[0]; ++i) {
+		SeedBuilder builder = {
+			.next = {.fixture = fixture}, .teams = {overrides[i][0], overrides[i][1]}};
+		SeedBuilder build;
+		ASSERT_INT_EQ((int)planBuild(&builder, &build), (int)sides[i]);
+		ASSERT_BOOL_EQ(build.teams[0] == builds[i][0] && build.teams[1] == builds[i][1], true);
+		ASSERT_BOOL_EQ(build.next.fixture == fixture, true);
+	}
+}
+
 TEST(writes_both_team_overrides) {
 	uint8_t bytes[6] = {0};
 	Serialised serialised = {.bytes = {.data = bytes, .length = sizeof bytes}};
@@ -806,6 +882,13 @@ void registerDllTests(void) {
 	test_run(
 		"DLL swaps either or both teams and restores game state",
 		test_swaps_either_or_both_teams_and_restores_game_state
+	);
+	test_run(
+		"DLL copies either team's block over the other's", test_copies_either_team_block_over_the_other
+	);
+	test_run(
+		"DLL builds a team playing itself against the fixture's opponent",
+		test_builds_a_team_playing_itself_against_the_fixtures_opponent
 	);
 	test_run("DLL writes both team overrides", test_writes_both_team_overrides);
 	test_run("DLL interns call chains without repeated text formatting", test_interns_numeric_paths);

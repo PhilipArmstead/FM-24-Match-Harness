@@ -57,6 +57,18 @@ bool trace_appendRecord(Serialised *serialised, TraceRecord record) {
 	return true;
 }
 
+uint32_t trace_findPath(Serialised *serialised, const char *chain) {
+	for (size_t i = 0; i < serialised->pathCount; ++i) {
+		if (strcmp(serialised->paths[i], chain) == 0) {
+			return (uint32_t)i;
+		}
+	}
+	if (serialised->pathCount >= UINT32_MAX || !appendPath(serialised, chain)) {
+		return UINT32_MAX;
+	}
+	return (uint32_t)serialised->pathCount - 1;
+}
+
 bool trace_serialize(uint8_t *match, Serialised *out, bool traced) {
 	if (!outputBuffer && !(outputBuffer = stream_create())) {
 		return false;

@@ -73,6 +73,18 @@ static bool swapOpponents(
 );
 static bool swapTeams(const SeedBuilder *builder, Swap *swaps, size_t *count);
 static void restoreSwaps(const Swap *swaps, size_t count);
+static unsigned planBuild(const SeedBuilder *builder, SeedBuilder *build);
+static bool findPart(const Side *side, uint32_t part, size_t range[2]);
+static uint32_t movedPath(Serialised *serialised, uint32_t path, uint32_t part);
+static bool copyRecords(
+	Serialised *to,
+	Serialised *from,
+	size_t start,
+	size_t end,
+	uint32_t *paths,
+	const uint32_t parts[2]
+);
+static bool mirrorSide(Serialised *built, unsigned from);
 static bool
 buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced);
 static bool roundTrip(const ByteBuffer *bytes, Serialised *out);
@@ -336,17 +348,152 @@ static void restoreSwaps(const Swap *swaps, size_t count) {
 	}
 }
 
-// The game's build of the fixture with `seed` (with team overrides if set), serialised with
-// its write records.
-static bool
-buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced) {
-	Swap swaps[MAX_SWAPS];
-	size_t swapped = 0;
-	if (!swapTeams(builder, swaps, &swapped)) {
+// The game cannot build a team against itself: before the human submits the team for the match,
+// the away side gets unnamed filler players (the home side has taken the squad); after, both sides
+// do. So a team playing itself is built against the fixture's own team on one side, and its block
+// copied over that team's. Sets `build`'s fixture and overrides and returns the side to copy from
+// (the team's own side in the fixture, else home), or 2 if the team does not play itself.
+static unsigned planBuild(const SeedBuilder *builder, SeedBuilder *build) {
+	*build = (SeedBuilder){.next = builder->next, .teams = {builder->teams[0], builder->teams[1]}};
+	uint8_t *original[2] = {0};
+	if ((!builder->teams[0] && !builder->teams[1]) ||
+			!memory_readPointer(builder->next.fixture, FIXTURE_HOME, &original[0]) ||
+			!memory_readPointer(builder->next.fixture, FIXTURE_AWAY, &original[1])) {
+		return 2;
+	}
+	const uint8_t *home = builder->teams[0] ? builder->teams[0] : original[0];
+	const uint8_t *away = builder->teams[1] ? builder->teams[1] : original[1];
+	if (home != away) {
+		return 2;
+	}
+	unsigned from = original[1] == away ? 1 : 0;
+	build->teams[from] = home;
+	build->teams[1 - from] = NULL;
+	return from;
+}
+
+// The records [range[0], range[1]) written for `part` (a SITE_PART_*), which must be contiguous.
+static bool findPart(const Side *side, uint32_t part, size_t range[2]) {
+	size_t count = side->serialised->recordCount;
+	size_t start = 0;
+	while (start < count && chainKey(side, start, 0) != part) {
+		++start;
+	}
+	size_t end = runEnd(side, start, count, 0, part);
+	for (size_t i = end; i < count; ++i) {
+		if (chainKey(side, i, 0) == part) {
+			return false;
+		}
+	}
+	range[0] = start;
+	range[1] = end;
+	return start < end;
+}
+
+// The counterpart in block `part` of another team block's call chain, added to the path table if
+// new.
+static uint32_t movedPath(Serialised *serialised, uint32_t path, uint32_t part) {
+	const char *rest = strchr(serialised->paths[path], '>');
+	char chain[512];
+	int written = snprintf(chain, sizeof chain, "%x%s", (unsigned)part, rest ? rest : "");
+	if (written < 0 || (size_t)written >= sizeof chain) {
+		return UINT32_MAX;
+	}
+	return trace_findPath(serialised, chain);
+}
+
+// Appends `from`'s records [start, end) to `to`'s bytes and records. With `paths` (per path: its
+// counterpart in block `toPart`, or UINT32_MAX until looked up), they move from block `fromPart`.
+static bool copyRecords(
+	Serialised *to,
+	Serialised *from,
+	size_t start,
+	size_t end,
+	uint32_t *paths,
+	const uint32_t parts[2]
+) {
+	for (size_t i = start; i < end; ++i) {
+		TraceRecord record = from->records[i];
+		const uint8_t *bytes = from->bytes.data + record.offset;
+		if (paths) {
+			if (paths[record.path] == UINT32_MAX) {
+				paths[record.path] = movedPath(from, record.path, parts[1]);
+			}
+			if (paths[record.path] == UINT32_MAX) {
+				return false;
+			}
+			record.path = paths[record.path];
+			record.caller = record.caller == parts[0] ? parts[1] : record.caller;
+		}
+		record.offset = (uint32_t)to->bytes.length;
+		if (!buffer_append(&to->bytes, bytes, record.length) || !trace_appendRecord(to, record)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Writes side `from`'s team block (0: home, 1: away) in the other side's place: the same players,
+// line-up and tactic on both sides, the same for every seed.
+static bool mirrorSide(Serialised *built, unsigned from) {
+	const uint32_t parts[2] = {
+		from ? SITE_PART_AWAY : SITE_PART_HOME, from ? SITE_PART_HOME : SITE_PART_AWAY};
+	Side side = {.serialised = built};
+	size_t source[2] = {0};
+	size_t target[2] = {0};
+	bool ok = parseChains(built, &side.chains) && findPart(&side, parts[0], source) &&
+						findPart(&side, parts[1], target);
+	freeChains(&side.chains);
+	if (!ok) {
+		log_message("cannot find both teams' blocks to copy one over the other");
 		return false;
 	}
-	uint8_t *match = match_build(builder->next.fixture, seed);
-	bool ok = match && trace_serialize(match, out, traced);
+	uint32_t *paths = malloc(built->pathCount * sizeof *paths);
+	ok = paths != NULL;
+	for (size_t p = 0; ok && p < built->pathCount; ++p) {
+		paths[p] = UINT32_MAX;
+	}
+	Serialised mirrored = {0};
+	ok = ok && copyRecords(&mirrored, built, 0, target[0], NULL, parts) &&
+			 copyRecords(&mirrored, built, source[0], source[1], paths, parts) &&
+			 copyRecords(&mirrored, built, target[1], built->recordCount, NULL, parts);
+	free(paths);
+	if (!ok) {
+		log_message("cannot copy one team's block over the other's");
+		trace_free(&mirrored);
+		return false;
+	}
+	log_message(
+		"same team on both sides: %zu %s fields replace %zu %s fields",
+		source[1] - source[0],
+		from ? "away" : "home",
+		target[1] - target[0],
+		from ? "home" : "away"
+	);
+	buffer_free(&built->bytes);
+	free(built->records);
+	built->bytes = mirrored.bytes;
+	built->records = mirrored.records;
+	built->recordCount = mirrored.recordCount;
+	built->recordCapacity = mirrored.recordCapacity;
+	return true;
+}
+
+// The game's build of the fixture with `seed` (with team overrides if set), serialised with
+// its write records. A team playing itself is traced either way, to copy its block (planBuild()).
+static bool
+buildSerialised(const SeedBuilder *builder, uint32_t seed, Serialised *out, bool traced) {
+	SeedBuilder build;
+	unsigned from = planBuild(builder, &build);
+	bool selfPlay = from < 2;
+	Swap swaps[MAX_SWAPS];
+	size_t swapped = 0;
+	if (!swapTeams(&build, swaps, &swapped)) {
+		return false;
+	}
+	uint8_t *match = match_build(build.next.fixture, seed);
+	bool ok = match && trace_serialize(match, out, traced || selfPlay) &&
+						(!selfPlay || mirrorSide(out, from));
 	if (match) {
 		match_freeBuilt(match);
 	}

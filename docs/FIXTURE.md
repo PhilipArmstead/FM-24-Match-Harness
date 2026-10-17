@@ -1171,20 +1171,31 @@ You can replace either side repeatedly; replacing one preserves the other.
 Selecting the fixture's original team clears that side's override.
 The viewer's edit icons use these same commands.
 
-The team may be your own: it then plays itself, with the same line-up and
-tactic on both sides. The game fills the away bench itself, though, with
-different players and unnamed filler players, and it gives the fillers new
-positions every time it builds the match. Their fields then don't line up from
-one build to the next, so `run` can't rebuild the file for other seeds; use
-`run --keep-build`, which plays the file's own build with each seed (the
-officials, weather and the players' per-match values stay those of the seed it
-was built with).
+A team can play itself: pick the same team for both sides. The game can't
+build a team against itself (it gives the away side, or once you have
+submitted your team for the match both sides, unnamed filler players), so
+the harness builds the team against the fixture's other team and copies its
+block over that team's in every build. The block comes from the team's own
+side in the fixture, or the home side if it isn't in the fixture. Both sides
+then have the same players, line-up and tactic, and `run` rebuilds the file
+for every seed as usual. Your edits to the side that stayed are kept:
+replacing Bristol City (home) by Aston Villa in Bristol City vs Aston Villa
+keeps your edits to Villa's away block. Values in the copied block that the
+game derives from the opponent (a few unnamed manager fields seem to hold its
+reputation) are those of the fixture's other team.
+
+For your managed team, export after clicking "Simulate Match" and before
+"Continue", as for comparing with the game: before you submit the team, the
+game picks a line-up and a plain tactic for it itself.
+
+Files made before this copy (with fillers) no longer match a fresh build;
+make them again from the next fixture.
 
 Limits:
 
 - The input must still be based on the human manager's next fixture, as for
-  `run`. Either side can be replaced, including the managed team, but a team
-  cannot play against itself. A replacement side uses the game's selected
+  `run`. Either side can be replaced, including the managed team. A
+  replacement side uses the game's selected
   squad and tactic, not the old side's stored selections.
 - The match stays a match of the original competition, venue and date. Only
   the team changes; the game doesn't check that the new team could play in
