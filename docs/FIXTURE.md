@@ -1071,6 +1071,9 @@ width) and the `penalty_spot` (10.97 m, 12 yards, from the goal line). All of
 them follow from the length and width: if you change the pitch size, change
 them too.
 
+The viewer's **Venue** tab does this automatically when saving or simulating,
+including the engine's opposite post/corner numbering at the two ends.
+
 **Stadium.**
 
 | Name                          | Type  | Meaning                                                                                                            |
@@ -1096,6 +1099,9 @@ them too.
 `fixture.attendance` and `fixture.away_fans`, and the `fixture_extra` block
 (whose first field is the attendance) with `fixture_extra.home_fans` and
 `fixture_extra.away_fans`. If you edit it, change every copy.
+The Venue tab synchronizes these copies and computes `venue.used_capacity`
+from home fans plus away fans. It rejects attendance or seating capacity
+above the venue capacity.
 
 **Stands.** `venue.stand[0..7]` are 8-byte records, going round the ground:
 side, corner, side, corner, ... `.capacity` is the stand's capacity (the four

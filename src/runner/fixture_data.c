@@ -5,6 +5,7 @@
 #include "match_config.h"
 #include "tactic_names.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,36 @@ typedef struct Reader {
 	char firstName[FIXTURE_TEXT];
 	char error[192];
 } Reader;
+
+static const struct {
+	const char *name;
+	ConfigValueKind kind;
+} venueFields[VENUE_FIELD_COUNT] = {
+	{"venue.pitch.width", CONFIG_U32},
+	{"venue", CONFIG_U32},
+	{"venue.city_longitude", CONFIG_U32},
+	{"venue.city_latitude", CONFIG_U32},
+	{"venue.capacity", CONFIG_U32},
+	{"venue.seating_capacity", CONFIG_U32},
+	{"venue.home_fans", CONFIG_U32},
+	{"venue.away_fans", CONFIG_U32},
+	{"venue.season_ticket_holders", CONFIG_U32},
+	{"venue.surface", CONFIG_U8},
+	{"venue.pitch_condition", CONFIG_U16},
+};
+
+float fixtureData_toFloat(uint32_t bits) {
+	float value;
+	_Static_assert(sizeof value == sizeof bits, "fixture floats must be 32-bit");
+	memcpy(&value, &bits, sizeof value);
+	return value;
+}
+
+uint32_t fixtureData_fromFloat(float value) {
+	uint32_t bits;
+	memcpy(&bits, &value, sizeof bits);
+	return bits;
+}
 
 static void copyText(Reader *reader, char *out, size_t size, const char *text, size_t length) {
 	if (length >= size || memchr(text, 0, length)) {
@@ -116,6 +147,14 @@ static void teamField(Reader *reader, const ConfigField *field, const char *name
 
 static void namedField(Reader *reader, const ConfigField *field) {
 	const char *name = field->name;
+	if (strcmp(name, "venue") == 0 || strncmp(name, "venue.", 6) == 0) {
+		for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+			if (strcmp(name, venueFields[i].name) == 0 &&
+					!scalar(field, venueFields[i].kind, &reader->out->venueValues[i])) {
+				(void)snprintf(reader->error, sizeof reader->error, "wrong type for %s", name);
+			}
+		}
+	}
 	if (strncmp(name, "home.", 5) == 0 || strncmp(name, "away.", 5) == 0) {
 		reader->side = name[0] == 'h' ? 0 : 1;
 		teamField(reader, field, name + 5);
@@ -135,6 +174,216 @@ static void namedField(Reader *reader, const ConfigField *field) {
 						 strncmp(name, "venue.", 6) != 0) {
 		setSection(reader, SECTION_NONE);
 	}
+}
+
+bool fixtureData_validateVenue(
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	char *error,
+	size_t errorSize
+) {
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		if (!values[i].known) {
+			continue;
+		}
+		uint64_t maximum = i == VENUE_SURFACE ? UINT8_MAX : i == VENUE_CONDITION ? 255 : UINT32_MAX;
+		if (values[i].value > maximum) {
+			(void)snprintf(error, errorSize, "%s is out of range.", venueFields[i].name);
+			return false;
+		}
+		if (i <= VENUE_LATITUDE) {
+			float value = fixtureData_toFloat((uint32_t)values[i].value);
+			float limit = i == VENUE_LONGITUDE ? 180.0f : 90.0f;
+			if (!isfinite(value) || (i <= VENUE_LENGTH ? value <= 0 : fabsf(value) > limit)) {
+				(void)snprintf(
+					error,
+					errorSize,
+					"Invalid %s: enter a finite %s.",
+					venueFields[i].name,
+					i <= VENUE_LENGTH ? "positive pitch dimension" : "coordinate within range"
+				);
+				return false;
+			}
+		}
+	}
+	if (values[VENUE_SURFACE].known && values[VENUE_SURFACE].value != 1 &&
+			values[VENUE_SURFACE].value != 8) {
+		(void)snprintf(error, errorSize, "Select Grass or Grass/Synthetic mix.");
+		return false;
+	}
+	uint64_t fans = (values[VENUE_HOME_FANS].known ? values[VENUE_HOME_FANS].value : 0) +
+									(values[VENUE_AWAY_FANS].known ? values[VENUE_AWAY_FANS].value : 0);
+	if (fans > UINT32_MAX || (values[VENUE_CAPACITY].known && fans > values[VENUE_CAPACITY].value)) {
+		(void)snprintf(error, errorSize, "Home fans + Away fans cannot exceed Capacity.");
+		return false;
+	}
+	if (values[VENUE_CAPACITY].known && values[VENUE_SEATS].known &&
+			values[VENUE_SEATS].value > values[VENUE_CAPACITY].value) {
+		(void)snprintf(error, errorSize, "Seat Capacity cannot exceed Capacity.");
+		return false;
+	}
+	return true;
+}
+
+typedef struct VenueWriter {
+	const char *json;
+	const FixtureNumber *values;
+	ByteBuffer *out;
+	size_t copied;
+	unsigned found;
+	char error[192];
+} VenueWriter;
+
+static bool derivedVenueValue(const VenueWriter *writer, const char *name, uint32_t *out) {
+	const FixtureNumber *values = writer->values;
+	if (values[VENUE_HOME_FANS].known && values[VENUE_AWAY_FANS].known &&
+			(strcmp(name, "venue.used_capacity") == 0 || strcmp(name, "venue.attendance") == 0 ||
+				strcmp(name, "fixture.attendance") == 0 || strcmp(name, "fixture_extra") == 0)) {
+		*out = (uint32_t)(values[VENUE_HOME_FANS].value + values[VENUE_AWAY_FANS].value);
+		return true;
+	}
+	if (values[VENUE_HOME_FANS].known && strcmp(name, "fixture_extra.home_fans") == 0) {
+		*out = (uint32_t)values[VENUE_HOME_FANS].value;
+		return true;
+	}
+	if (values[VENUE_AWAY_FANS].known &&
+			(strcmp(name, "fixture.away_fans") == 0 || strcmp(name, "fixture_extra.away_fans") == 0)) {
+		*out = (uint32_t)values[VENUE_AWAY_FANS].value;
+		return true;
+	}
+	if (strncmp(name, "venue.pitch.", 12) != 0) {
+		return false;
+	}
+	const char *point = name + 12;
+	for (unsigned i = 0; i < 2; ++i) {
+		unsigned dimension = i ? VENUE_LENGTH : VENUE_WIDTH;
+		if (!values[dimension].known) {
+			continue;
+		}
+		float value = fixtureData_toFloat((uint32_t)values[dimension].value);
+		if (strcmp(point, i ? "half_length" : "half_width") == 0) {
+			*out = fixtureData_fromFloat(value * 0.5f);
+			return true;
+		}
+		if (strcmp(point, i ? "quarter_length" : "quarter_width") == 0) {
+			*out = fixtureData_fromFloat(value * 0.25f);
+			return true;
+		}
+	}
+	if (!values[VENUE_WIDTH].known || !values[VENUE_LENGTH].known) {
+		return false;
+	}
+	float halfWidth = fixtureData_toFloat((uint32_t)values[VENUE_WIDTH].value) * 0.5f;
+	float halfLength = fixtureData_toFloat((uint32_t)values[VENUE_LENGTH].value) * 0.5f;
+	static const char *const points[] = {
+		"goal", "post[0]", "post[1]", "corner[0]", "corner[1]", "penalty_spot"};
+	const char *axis = strrchr(point, '.');
+	if (!axis || !axis[1] || axis[2] || !strchr("xyz", axis[1])) {
+		return false;
+	}
+	if ((size_t)(axis - point) == 11 && strncmp(point, "centre_spot", 11) == 0) {
+		*out = fixtureData_fromFloat(0);
+		return true;
+	}
+	bool end = strncmp(point, "end[1].", 7) == 0;
+	if (!end && strncmp(point, "end[0].", 7) != 0) {
+		return false;
+	}
+	point += 7;
+	for (unsigned p = 0; p < 6; ++p) {
+		size_t length = strlen(points[p]);
+		if (axis - point != (ptrdiff_t)length || strncmp(point, points[p], length) != 0) {
+			continue;
+		}
+		float result = 0;
+		if (axis[1] == 'x') {
+			result = p == 1 ? 3.66f : p == 2 ? -3.66f : p == 3 ? -halfWidth : p == 4 ? halfWidth : 0;
+			// The engine numbers posts and corners in opposite directions at the two ends.
+			if (end && result != 0) {
+				result = -result;
+			}
+		} else if (axis[1] == 'y') {
+			result = (end ? 1.0f : -1.0f) * (halfLength - (p == 5 ? 10.97f : 0));
+		}
+		*out = fixtureData_fromFloat(result);
+		return true;
+	}
+	return false;
+}
+
+static void writeVenueField(void *context, const ConfigField *field) {
+	VenueWriter *writer = context;
+	if (writer->error[0] || (field->name[0] != 'v' && field->name[0] != 'f')) {
+		return;
+	}
+	uint32_t value = 0;
+	ConfigValueKind kind = CONFIG_U32;
+	bool found = false;
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		if (writer->values[i].known && strcmp(field->name, venueFields[i].name) == 0) {
+			value = (uint32_t)writer->values[i].value;
+			kind = venueFields[i].kind;
+			writer->found |= 1U << i;
+			found = true;
+			break;
+		}
+	}
+	if (!found && !derivedVenueValue(writer, field->name, &value)) {
+		return;
+	}
+	if (field->kind != kind) {
+		(void)snprintf(writer->error, sizeof writer->error, "Wrong type for %s.", field->name);
+		return;
+	}
+	FixtureNumber current;
+	(void)scalar(field, kind, &current);
+	if (current.value == value) {
+		return;
+	}
+	char number[16];
+	int length = snprintf(number, sizeof number, "%u", value);
+	if (!buffer_append(
+				writer->out, writer->json + writer->copied, field->valueOffset - writer->copied
+			) ||
+			!buffer_append(writer->out, number, (size_t)length)) {
+		(void)snprintf(writer->error, sizeof writer->error, "Out of memory editing the venue.");
+	}
+	writer->copied = field->valueOffset + field->valueLength;
+}
+
+bool fixtureData_writeVenue(
+	const char *json,
+	size_t length,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	ByteBuffer *out,
+	char *error,
+	size_t errorSize
+) {
+	buffer_clear(out);
+	if (!fixtureData_validateVenue(values, error, errorSize)) {
+		return false;
+	}
+	VenueWriter writer = {.json = json, .values = values, .out = out};
+	ConfigVisitor visitor = {.context = &writer, .field = writeVenueField};
+	bool ok = matchConfig_visit(json, length, &visitor, error, errorSize);
+	for (unsigned i = 0; ok && !writer.error[0] && i < VENUE_FIELD_COUNT; ++i) {
+		if (values[i].known && !(writer.found & (1U << i))) {
+			(void)snprintf(
+				writer.error, sizeof writer.error, "Missing %s in the fixture.", venueFields[i].name
+			);
+		}
+	}
+	if (ok && writer.error[0]) {
+		(void)snprintf(error, errorSize, "%s", writer.error);
+		ok = false;
+	}
+	if (ok && !buffer_append(out, json + writer.copied, length - writer.copied)) {
+		(void)snprintf(error, errorSize, "Out of memory editing the venue.");
+		ok = false;
+	}
+	if (!ok) {
+		buffer_clear(out);
+	}
+	return ok;
 }
 
 static void playerValue(Reader *reader, const ConfigField *field) {

@@ -13,3 +13,12 @@ bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t
 // Copies or converts the complete fixture, replacing the destination only after writing succeeds.
 // JSON-to-binary conversion is local; binary-to-JSON conversion needs the running game's harness.
 bool fixtureLoad_save(const wchar_t *input, const wchar_t *output, char *error, size_t errorSize);
+
+// Applies venue edits and derived fields before saving either format; NULL keeps the input intact.
+bool fixtureLoad_saveVenue(
+	const wchar_t *input,
+	const wchar_t *output,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	char *error,
+	size_t errorSize
+);

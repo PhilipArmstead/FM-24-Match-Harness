@@ -83,6 +83,8 @@ static const wchar_t *expectedSeeds;
 static const wchar_t *expectedThreads;
 static wchar_t expectedInput[HARNESS_PATH_LENGTH];
 static bool expectedDetailed;
+static bool expectedVenueInput;
+static wchar_t simulationTemporary[HARNESS_PATH_LENGTH];
 static unsigned simulationCalls;
 static int simulationResult;
 static HANDLE simulationRelease;
@@ -322,14 +324,32 @@ unsigned long commands_defaultThreads(void) {
 
 int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow) {
 	ASSERT_BOOL_EQ(progressWindow == (uintptr_t)expectedProgressWindow, true);
-	ASSERT_BOOL_EQ(argc == (expectedDetailed ? 7 : 6), true);
+	ASSERT_BOOL_EQ(argc == (expectedDetailed ? 7 : 6) + (int)expectedVenueInput, true);
 	ASSERT_INT_EQ(wcscmp(argv[1], L"run"), 0);
-	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
+	if (expectedVenueInput) {
+		ASSERT_BOOL_EQ(wcscmp(argv[2], expectedInput) != 0, true);
+		wcscpy(simulationTemporary, argv[2]);
+		wchar_t output[HARNESS_PATH_LENGTH];
+		wcscpy(output, expectedInput);
+		wcscpy(wcsrchr(output, L'.'), L".csv");
+		ASSERT_INT_EQ(wcscmp(argv[4], output), 0);
+		ByteBuffer json = {0};
+		ASSERT_BOOL_EQ(files_read(argv[2], &json), true);
+		char width[32], half[32];
+		(void)snprintf(width, sizeof width, "\"u32\":%u", fixtureData_fromFloat(72.5f));
+		(void)snprintf(half, sizeof half, "\"u32\":%u", fixtureData_fromFloat(36.25f));
+		ASSERT_BOOL_EQ(strstr(buffer_string(&json), width) != NULL, true);
+		ASSERT_BOOL_EQ(strstr(buffer_string(&json), half) != NULL, true);
+		buffer_free(&json);
+	} else {
+		ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
+	}
 	ASSERT_INT_EQ(wcscmp(argv[3], expectedSeeds), 0);
-	ASSERT_INT_EQ(wcscmp(argv[4], L"--threads"), 0);
-	ASSERT_INT_EQ(wcscmp(argv[5], expectedThreads), 0);
+	unsigned option = expectedVenueInput ? 5 : 4;
+	ASSERT_INT_EQ(wcscmp(argv[option], L"--threads"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[option + 1], expectedThreads), 0);
 	if (expectedDetailed) {
-		ASSERT_INT_EQ(wcscmp(argv[6], L"--detailed"), 0);
+		ASSERT_INT_EQ(wcscmp(argv[option + 2], L"--detailed"), 0);
 	}
 	ASSERT_BOOL_EQ(argv[argc] == NULL, true);
 	++simulationCalls;
@@ -426,6 +446,26 @@ bool fixtureLoad_save(const wchar_t *input, const wchar_t *output, char *error, 
 	}
 	return CopyFileW(input, output, FALSE) != 0;
 }
+
+bool fixtureLoad_saveVenue(
+	const wchar_t *input,
+	const wchar_t *output,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	char *error,
+	size_t errorSize
+) {
+	if (!values) {
+		return fixtureLoad_save(input, output, error, errorSize);
+	}
+	ByteBuffer json = {0}, edited = {0};
+	bool ok =
+		files_read(input, &json) &&
+		fixtureData_writeVenue(buffer_string(&json), json.length, values, &edited, error, errorSize) &&
+		files_write(output, edited.data, edited.length);
+	buffer_free(&edited);
+	buffer_free(&json);
+	return ok;
+}
 static void firstLine(HWND metadata, const wchar_t *expected) {
 	wchar_t text[8192] = {0};
 	ASSERT_BOOL_EQ(GetWindowTextW(metadata, text, 8192) > 0, true);
@@ -499,7 +539,11 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 		ASSERT_BOOL_EQ(controlVisible(state->lists[i]), tab == 0);
 	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
-		ASSERT_BOOL_EQ(controlVisible(state->simulation[i]), tab == 1);
+		ASSERT_BOOL_EQ(controlVisible(state->simulation[i]), tab == 2);
+	}
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(controlVisible(state->venueLabels[i]), tab == 1);
+		ASSERT_BOOL_EQ(controlVisible(state->venueInputs[i]), tab == 1);
 	}
 	for (unsigned side = 0; side < 2; ++side) {
 		for (unsigned i = 0; i < TEAM_CONTROL_COUNT; ++i) {
@@ -1182,6 +1226,113 @@ static void checkFonts(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(setFonts(state), true);
 }
 
+static void checkVenueForm(HWND window, WindowState *state) {
+	int errors = errorMessages;
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->venueInputs[i]), false);
+	}
+	const uint32_t initial[] = {
+		1116156723,
+		1121071923,
+		3211914117,
+		1112666544,
+		42000,
+		40000,
+		30000,
+		2000,
+		30000,
+		8,
+		200,
+	};
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		state->data->venueValues[i] = (FixtureNumber){.value = initial[i], .known = true};
+	}
+	ASSERT_BOOL_EQ(setVenue(state), true);
+	changeTab(window, state, 1);
+	HWND surface = state->venueInputs[VENUE_SURFACE];
+	ASSERT_INT_EQ((int)SendMessageW(surface, CB_GETCOUNT, 0, 0), 2);
+	ASSERT_INT_EQ((int)SendMessageW(surface, CB_GETCURSEL, 0, 0), 1);
+	ASSERT_INT_EQ((int)SendMessageW(surface, CB_GETITEMDATA, 0, 0), 1);
+	ASSERT_INT_EQ((int)SendMessageW(surface, CB_GETITEMDATA, 1, 0), 8);
+	FixtureNumber values[VENUE_FIELD_COUNT];
+	ASSERT_BOOL_EQ(readVenue(window, state, values), true);
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(values[i].value == initial[i], true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->venueInputs[i]), true);
+		RECT label = controlBounds(window, state->venueLabels[i]);
+		RECT input = controlBounds(window, state->venueInputs[i]);
+		ASSERT_BOOL_EQ(label.right < input.left && input.top <= label.top, true);
+		ASSERT_BOOL_EQ(
+			(HFONT)SendMessageW(state->venueInputs[i], WM_GETFONT, 0, 0) == state->font, true
+		);
+	}
+	static const struct {
+		unsigned field;
+		const wchar_t *text;
+	} invalid[] = {
+		{VENUE_WIDTH, L""},
+		{VENUE_WIDTH, L"nan"},
+		{VENUE_LENGTH, L"0"},
+		{VENUE_LONGITUDE, L"-181"},
+		{VENUE_LATITUDE, L"91"},
+		{VENUE_CAPACITY, L"4294967296"},
+		{VENUE_HOME_FANS, L"-1"},
+		{VENUE_HOME_FANS, L"1.5"},
+		{VENUE_HOME_FANS, L"41000"},
+		{VENUE_SEATS, L"42001"},
+		{VENUE_CONDITION, L"256"},
+	};
+	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		ASSERT_BOOL_EQ(setVenue(state), true);
+		ASSERT_BOOL_EQ(SetWindowTextW(state->venueInputs[invalid[i].field], invalid[i].text), true);
+		ASSERT_BOOL_EQ(readVenue(window, state, values), false);
+		ASSERT_INT_EQ(errorMessages, ++errors);
+	}
+	ASSERT_BOOL_EQ(setVenue(state), true);
+	SendMessageW(surface, CB_SETCURSEL, (WPARAM)-1, 0);
+	ASSERT_BOOL_EQ(readVenue(window, state, values), false);
+	ASSERT_INT_EQ(errorMessages, ++errors);
+	ASSERT_BOOL_EQ(setVenue(state), true);
+	SetWindowTextW(state->venueInputs[VENUE_HOME_FANS], L"40000");
+	SetWindowTextW(state->venueInputs[VENUE_CONDITION], L"255");
+	SetWindowTextW(state->venueInputs[VENUE_WIDTH], L"72.5");
+	SetWindowTextW(state->venueInputs[VENUE_LONGITUDE], L"-1.89");
+	SendMessageW(surface, CB_SETCURSEL, 0, 0);
+	ASSERT_BOOL_EQ(readVenue(window, state, values), true);
+	ASSERT_BOOL_EQ(values[VENUE_WIDTH].value == fixtureData_fromFloat(72.5f), true);
+	ASSERT_BOOL_EQ(values[VENUE_LONGITUDE].value == fixtureData_fromFloat(-1.89f), true);
+	ASSERT_BOOL_EQ(
+		values[VENUE_HOME_FANS].value == 40000 && values[VENUE_CONDITION].value == 255, true
+	);
+	ASSERT_BOOL_EQ(values[VENUE_SURFACE].value == 1, true);
+	windowProcedure(
+		window, WM_COMMAND, MAKEWPARAM(0, EN_CHANGE), (LPARAM)state->venueInputs[VENUE_WIDTH]
+	);
+	ASSERT_BOOL_EQ(state->venueDirty, true);
+	firstLine(state->metadata, L"Viewing fixture: temp-fixture.json (unsaved venue edits)");
+	unsigned prompts = discardPrompts;
+	discardAnswer = IDNO;
+	ASSERT_BOOL_EQ(closeBlocked(window, state), true);
+	discardAnswer = IDYES;
+	ASSERT_BOOL_EQ(closeBlocked(window, state), false);
+	ASSERT_BOOL_EQ(discardPrompts == prompts + 2, true);
+	discardAnswer = IDNO;
+	enableVenue(state, FALSE);
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->venueInputs[i]), false);
+	}
+	enableVenue(state, TRUE);
+	SetWindowTextW(state->venueInputs[VENUE_SEATS], L"42001");
+	ASSERT_BOOL_EQ(startFileJob(window, state, L"venue.json", true, false), false);
+	ASSERT_BOOL_EQ(state->fileThread == NULL && state->venueDirty, true);
+	ASSERT_INT_EQ(errorMessages, ++errors);
+	clickSimulate(window, state);
+	ASSERT_BOOL_EQ(state->simulationThread == NULL && state->venueDirty, true);
+	ASSERT_INT_EQ(errorMessages, ++errors);
+	memset(state->data->venueValues, 0, sizeof state->data->venueValues);
+	ASSERT_BOOL_EQ(setVenue(state), true);
+}
+
 static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	INITCOMMONCONTROLSEX controls = {.dwSize = sizeof controls,
 		.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS | ICC_PROGRESS_CLASS};
@@ -1208,6 +1359,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		ASSERT_INT_EQ(list.top, heading.bottom);
 	}
 	checkFonts(window, &state);
+	checkVenueForm(window, &state);
 	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
 	for (unsigned i = 0; i < 2; ++i) {
 		wchar_t label[16] = {0};
@@ -1218,12 +1370,14 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	}
 	state.taskbarCreated = RegisterWindowMessageW(L"TaskbarButtonCreated");
 	ASSERT_BOOL_EQ(state.taskbarCreated != 0 && state.taskbar == NULL && taskbarCreates == 0, true);
-	ASSERT_BOOL_EQ(TabCtrl_GetItemCount(state.tabs) == 2, true);
+	ASSERT_BOOL_EQ(TabCtrl_GetItemCount(state.tabs) == 3, true);
 	wchar_t text[256] = {0};
 	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = text, .cchTextMax = 256};
 	ASSERT_BOOL_EQ(SendMessageW(state.tabs, TCM_GETITEMW, 0, (LPARAM)&tab), true);
 	ASSERT_INT_EQ(wcscmp(text, L"Squads"), 0);
 	ASSERT_BOOL_EQ(SendMessageW(state.tabs, TCM_GETITEMW, 1, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Venue"), 0);
+	ASSERT_BOOL_EQ(SendMessageW(state.tabs, TCM_GETITEMW, 2, (LPARAM)&tab), true);
 	ASSERT_INT_EQ(wcscmp(text, L"Simulation"), 0);
 	int minimum = 0;
 	int maximum = 0;
@@ -1247,6 +1401,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	checkControlColors(window, state.simulation[SIM_DETAILED], WM_CTLCOLORBTN);
 	changeTab(window, &state, 0);
 	changeTab(window, &state, 1);
+	changeTab(window, &state, 2);
 	layout(window, &state);
 	checkPageLayout(window, &state);
 	state.dpi = 144;
@@ -1374,7 +1529,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		ASSERT_BOOL_EQ(IsWindow(window) && errorMessages == ++errors, true);
 		changeTab(window, &state, 0);
 		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
-		changeTab(window, &state, 1);
+		changeTab(window, &state, 2);
 		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
 		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1000, 700, SWP_NOMOVE | SWP_NOZORDER), true);
 		layout(window, &state);
@@ -1414,7 +1569,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		);
 		ASSERT_BOOL_EQ(taskbarStateCalls == stateCalls && taskbarValueCalls == valueCalls, true);
 		changeTab(window, &state, 0);
-		changeTab(window, &state, 1);
+		changeTab(window, &state, 2);
 		checkSimulationSummary(
 			&state,
 			simulationResult ? L"n = 750: home 375 (50.0%) / draw 125 (16.7%) / away 250 (33.3%)"
@@ -1447,6 +1602,30 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	taskbarStateResult = S_OK;
 	checkTeamEditor(window, &state, 1);
 	checkTeamEditor(window, &state, 0);
+	static const char venueFixture[] = "{\"format\":\"fm24-match-config/1\",\"fields\":["
+																		 "{\"name\":\"venue.pitch.width\",\"u32\":1116156723},"
+																		 "{\"name\":\"venue.pitch.half_width\",\"u32\":0}]}";
+	wchar_t venuePath[HARNESS_PATH_LENGTH];
+	ASSERT_BOOL_EQ(paths_absolute(L"venue-simulation.json", venuePath, HARNESS_PATH_LENGTH), true);
+	ASSERT_BOOL_EQ(files_write(venuePath, venueFixture, sizeof venueFixture - 1), true);
+	SimulationJob venueJob = {.progressWindow = (uintptr_t)window};
+	wcscpy(venueJob.input, venuePath);
+	wcscpy(venueJob.seeds, L"keep");
+	wcscpy(venueJob.threads, L"1");
+	venueJob.venueValues[VENUE_WIDTH] =
+		(FixtureNumber){.value = fixtureData_fromFloat(72.5f), .known = true};
+	wcscpy(expectedInput, venuePath);
+	expectedSeeds = L"keep";
+	expectedThreads = L"1";
+	expectedDetailed = false;
+	expectedVenueInput = true;
+	simulationResult = 0;
+	ASSERT_BOOL_EQ(SetEvent(simulationRelease), true);
+	ASSERT_INT_EQ((int)simulateFixture(&venueJob), 0);
+	ASSERT_BOOL_EQ(fileMissing(simulationTemporary), true);
+	checkContents(venuePath, venueFixture);
+	expectedVenueInput = false;
+	ASSERT_BOOL_EQ(DeleteFileW(venuePath), true);
 	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
 	ASSERT_BOOL_EQ(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS, true);
 	releaseTaskbar(&state);
@@ -1543,6 +1722,7 @@ static void checkFileOperations(FixtureData *data) {
 	unsigned creates = dialogCreates;
 	unsigned releases = dialogReleases;
 	unsigned shells = shellReleases;
+	unsigned discards = discardPrompts;
 
 	// Cancelling and setup failures must leave the current source untouched.
 	dialogShowResult = HRESULT_FROM_WIN32(ERROR_CANCELLED);
@@ -1567,11 +1747,13 @@ static void checkFileOperations(FixtureData *data) {
 	fileLoadPath = source;
 	discardAnswer = IDNO;
 	clickFile(window, &state, false);
-	ASSERT_BOOL_EQ(state.fileThread == NULL && state.temporary && discardPrompts == 1, true);
+	ASSERT_BOOL_EQ(
+		state.fileThread == NULL && state.temporary && discardPrompts == discards + 1, true
+	);
 	discardAnswer = IDYES;
 	fileFailure = true;
 	clickFile(window, &state, false);
-	ASSERT_BOOL_EQ(state.fileThread != NULL && discardPrompts == 2, true);
+	ASSERT_BOOL_EQ(state.fileThread != NULL && discardPrompts == discards + 2, true);
 	ASSERT_BOOL_EQ(state.path == source && state.temporary, true);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		ASSERT_BOOL_EQ(!IsWindowEnabled(state.fileButtons[i]), true);
@@ -1595,7 +1777,7 @@ static void checkFileOperations(FixtureData *data) {
 	ASSERT_INT_EQ(strcmp(state.data->teams[0].name, "Opened home"), 0);
 	ASSERT_INT_EQ(strcmp(state.data->teams[1].name, "Opened away"), 0);
 	ASSERT_INT_EQ(GetWindowTextLengthW(state.simulation[SIM_SUMMARY]), 0);
-	ASSERT_BOOL_EQ(discardPrompts == 3 && fileLoads == 2, true);
+	ASSERT_BOOL_EQ(discardPrompts == discards + 3 && fileLoads == 2, true);
 
 	dialogFilename = L"source.json";
 	dialogPath = json;
@@ -1651,7 +1833,7 @@ static void checkFileOperations(FixtureData *data) {
 	finishFile(window, &state);
 	ASSERT_INT_EQ(wcscmp(state.savedFilename, binary), 0);
 	ASSERT_BOOL_EQ(fileLoads == 3 && fileSaves == 4 && errorMessages == errors, true);
-	ASSERT_BOOL_EQ(discardPrompts == 3, true);
+	ASSERT_BOOL_EQ(discardPrompts == discards + 3, true);
 	wcscpy(state.replacementPath, binary);
 	setActivePath(&state, binary, false);
 	ASSERT_BOOL_EQ(state.replacementPath[0] == 0 && !fileMissing(binary), true);

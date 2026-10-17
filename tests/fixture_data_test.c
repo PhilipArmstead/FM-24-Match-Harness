@@ -6,6 +6,7 @@
 #include "test.h"
 #include "tests.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -594,6 +595,321 @@ TEST(reads_swapped_control) {
 	checkConfig(true, true);
 }
 
+static const char *const venueNames[VENUE_FIELD_COUNT] = {
+	"venue.pitch.width",
+	"venue",
+	"venue.city_longitude",
+	"venue.city_latitude",
+	"venue.capacity",
+	"venue.seating_capacity",
+	"venue.home_fans",
+	"venue.away_fans",
+	"venue.season_ticket_holders",
+	"venue.surface",
+	"venue.pitch_condition",
+};
+static const char *const venuePoints[] = {
+	"centre_spot",
+	"end[0].goal",
+	"end[0].post[0]",
+	"end[0].post[1]",
+	"end[0].corner[0]",
+	"end[0].corner[1]",
+	"end[0].penalty_spot",
+	"end[1].goal",
+	"end[1].post[0]",
+	"end[1].post[1]",
+	"end[1].corner[0]",
+	"end[1].corner[1]",
+	"end[1].penalty_spot",
+};
+static const char *const attendanceNames[] = {
+	"venue.used_capacity",
+	"venue.attendance",
+	"fixture.attendance",
+	"fixture.away_fans",
+	"fixture_extra",
+	"fixture_extra.home_fans",
+	"fixture_extra.away_fans",
+};
+
+static void makeVenue(ByteBuffer *json) {
+	ASSERT_BOOL_EQ(
+		append(
+			json, "{\"format\":\"fm24-match-config/1\",\"home_team\":678,\"away_team\":677,\"fields\":["
+		),
+		true
+	);
+	const uint32_t values[] = {
+		1116156723,
+		1121071923,
+		3211914117,
+		1112666544,
+		42777,
+		42000,
+		30000,
+		2000,
+		30000,
+		8,
+		200,
+	};
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(
+			append(
+				json,
+				"%s{\"u%u\": %u,\"name\":\"%s\",\"note\":\"preserve me\"}",
+				i ? "," : "",
+				i == VENUE_SURFACE     ? 8
+				: i == VENUE_CONDITION ? 16
+															 : 32,
+				values[i],
+				venueNames[i]
+			),
+			true
+		);
+	}
+	static const char *const fractions[] = {
+		"half_width", "half_length", "quarter_width", "quarter_length"};
+	for (unsigned i = 0; i < 4; ++i) {
+		ASSERT_BOOL_EQ(append(json, ",{\"name\":\"venue.pitch.%s\",\"u32\":123}", fractions[i]), true);
+	}
+	for (unsigned p = 0; p < 13; ++p) {
+		for (unsigned axis = 0; axis < 3; ++axis) {
+			ASSERT_BOOL_EQ(
+				append(json, ",{\"name\":\"venue.pitch.%s.%c\",\"u32\":123}", venuePoints[p], "xyz"[axis]),
+				true
+			);
+		}
+	}
+	for (unsigned i = 0; i < 7; ++i) {
+		ASSERT_BOOL_EQ(append(json, ",{\"name\":\"%s\",\"u32\":123}", attendanceNames[i]), true);
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		const char *team = side ? "away" : "home";
+		ASSERT_BOOL_EQ(
+			append(
+				json,
+				",{\"name\":\"%s.team\",\"u8\":0},{\"str\":\"Test team\"},"
+				"{\"name\":\"%s.player_count\",\"u8\":11}",
+				team,
+				team
+			),
+			true
+		);
+		for (unsigned player = 0; player < 11; ++player) {
+			ASSERT_BOOL_EQ(append(json, ",{\"name\":\"%s.player[%u]\",\"u8\":0}", team, player), true);
+		}
+	}
+	ASSERT_BOOL_EQ(
+		append(
+			json,
+			",{\"u32\": 987654321, \"name\":\"unrelated\", \"strange\":{\"keep\":[true,null]}}"
+			"],\"source\":\"unchanged source annotation\"}"
+		),
+		true
+	);
+}
+
+typedef struct VenueCheck {
+	unsigned checked;
+} VenueCheck;
+
+static void checkVenueField(void *context, const ConfigField *field) {
+	VenueCheck *check = context;
+	uint32_t bits = 0;
+	if (field->kind != CONFIG_U32) {
+		return;
+	}
+	for (unsigned i = 0; i < 4; ++i) {
+		bits |= (uint32_t)field->bytes[i] << (8 * i);
+	}
+	static const float points[13][3] = {
+		{0, 0, 0},
+		{0, -55.125f, 0},
+		{3.66f, -55.125f, 0},
+		{-3.66f, -55.125f, 0},
+		{-36.25f, -55.125f, 0},
+		{36.25f, -55.125f, 0},
+		{0, -(55.125f - 10.97f), 0},
+		{0, 55.125f, 0},
+		{-3.66f, 55.125f, 0},
+		{3.66f, 55.125f, 0},
+		{36.25f, 55.125f, 0},
+		{-36.25f, 55.125f, 0},
+		{0, 55.125f - 10.97f, 0},
+	};
+	for (unsigned p = 0; p < 13; ++p) {
+		for (unsigned axis = 0; axis < 3; ++axis) {
+			char name[80];
+			(void)snprintf(name, sizeof name, "venue.pitch.%s.%c", venuePoints[p], "xyz"[axis]);
+			if (strcmp(name, field->name) == 0) {
+				ASSERT_BOOL_EQ(bits == fixtureData_fromFloat(points[p][axis]), true);
+				++check->checked;
+			}
+		}
+	}
+	static const char *const fractions[] = {"venue.pitch.half_width",
+		"venue.pitch.half_length",
+		"venue.pitch.quarter_width",
+		"venue.pitch.quarter_length"};
+	static const float sizes[] = {36.25f, 55.125f, 18.125f, 27.5625f};
+	for (unsigned i = 0; i < 4; ++i) {
+		if (strcmp(fractions[i], field->name) == 0) {
+			ASSERT_BOOL_EQ(bits == fixtureData_fromFloat(sizes[i]), true);
+			++check->checked;
+		}
+	}
+	static const uint32_t attendance[] = {42000, 42000, 42000, 2000, 42000, 40000, 2000};
+	for (unsigned i = 0; i < 7; ++i) {
+		if (strcmp(attendanceNames[i], field->name) == 0) {
+			ASSERT_BOOL_EQ(bits == attendance[i], true);
+			++check->checked;
+		}
+	}
+}
+
+TEST(edits_venue_and_recomputes_geometry_and_attendance) {
+	ByteBuffer json = {0}, edited = {0}, encoded = {0};
+	makeVenue(&json);
+	FixtureData *data = malloc(sizeof *data);
+	ASSERT_BOOL_EQ(data != NULL, true);
+	if (!data) {
+		buffer_free(&json);
+		return;
+	}
+	char error[256] = "";
+	ASSERT_BOOL_EQ(
+		fixtureData_read(buffer_string(&json), json.length, data, error, sizeof error), true
+	);
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(data->venueValues[i].known, true);
+	}
+	ASSERT_BOOL_EQ(
+		fixtureData_toFloat((uint32_t)data->venueValues[VENUE_WIDTH].value) == 67.6f, true
+	);
+	ASSERT_BOOL_EQ(
+		fixtureData_toFloat((uint32_t)data->venueValues[VENUE_LENGTH].value) == 105.1f, true
+	);
+	FixtureNumber *values = data->venueValues;
+	values[VENUE_WIDTH].value = fixtureData_fromFloat(72.5f);
+	values[VENUE_LENGTH].value = fixtureData_fromFloat(110.25f);
+	values[VENUE_LONGITUDE].value = fixtureData_fromFloat(-1.89f);
+	values[VENUE_LATITUDE].value = fixtureData_fromFloat(52.486f);
+	values[VENUE_CAPACITY].value = 42000;
+	values[VENUE_HOME_FANS].value = 40000;
+	values[VENUE_SURFACE].value = 1;
+	values[VENUE_CONDITION].value = 255;
+	ASSERT_BOOL_EQ(
+		fixtureData_writeVenue(buffer_string(&json), json.length, values, &edited, error, sizeof error),
+		true
+	);
+	ASSERT_BOOL_EQ(
+		strstr(
+			buffer_string(&edited),
+			"{\"u32\": 987654321, \"name\":\"unrelated\", \"strange\":{\"keep\":[true,null]}}"
+		) != NULL,
+		true
+	);
+	ASSERT_BOOL_EQ(strstr(buffer_string(&edited), "\"note\":\"preserve me\"") != NULL, true);
+	ASSERT_BOOL_EQ(
+		strstr(buffer_string(&edited), "\"source\":\"unchanged source annotation\"") != NULL, true
+	);
+	VenueCheck check = {0};
+	ConfigVisitor visitor = {.context = &check, .field = checkVenueField};
+	ASSERT_BOOL_EQ(
+		matchConfig_visit(buffer_string(&edited), edited.length, &visitor, error, sizeof error), true
+	);
+	ASSERT_INT_EQ((int)check.checked, 50);
+	ASSERT_BOOL_EQ(
+		fixtureData_read(buffer_string(&edited), edited.length, data, error, sizeof error), true
+	);
+	ASSERT_BOOL_EQ(fixtureData_toFloat((uint32_t)values[VENUE_LONGITUDE].value) == -1.89f, true);
+	ASSERT_BOOL_EQ(fixtureData_toFloat((uint32_t)values[VENUE_LATITUDE].value) == 52.486f, true);
+	ASSERT_BOOL_EQ(values[VENUE_SURFACE].value == 1 && values[VENUE_CONDITION].value == 255, true);
+	uint32_t teams[2];
+	ASSERT_BOOL_EQ(
+		matchConfig_encode(buffer_string(&edited), edited.length, &encoded, teams, error, sizeof error),
+		true
+	);
+	ASSERT_BOOL_EQ(teams[0] == 678 && teams[1] == 677, true);
+	ByteBuffer repeated = {0};
+	ASSERT_BOOL_EQ(
+		fixtureData_writeVenue(
+			buffer_string(&edited), edited.length, values, &repeated, error, sizeof error
+		),
+		true
+	);
+	ASSERT_BOOL_EQ(repeated.length == edited.length, true);
+	if (repeated.length == edited.length) {
+		ASSERT_INT_EQ(memcmp(repeated.data, edited.data, edited.length), 0);
+	}
+	buffer_free(&repeated);
+	free(data);
+	buffer_free(&json);
+	buffer_free(&edited);
+	buffer_free(&encoded);
+}
+
+TEST(validates_venue_constraints_and_patch_failures) {
+	FixtureNumber values[VENUE_FIELD_COUNT] = {0};
+	char error[256] = "";
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), true);
+	values[VENUE_CAPACITY] = (FixtureNumber){.value = UINT32_MAX, .known = true};
+	values[VENUE_HOME_FANS] = (FixtureNumber){.value = UINT32_MAX, .known = true};
+	values[VENUE_AWAY_FANS] = (FixtureNumber){.value = 1, .known = true};
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	values[VENUE_AWAY_FANS].value = 0;
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), true);
+	values[VENUE_CAPACITY].value = 100;
+	values[VENUE_HOME_FANS].value = 90;
+	values[VENUE_AWAY_FANS].value = 11;
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	values[VENUE_AWAY_FANS].value = 10;
+	values[VENUE_SEATS] = (FixtureNumber){.value = 101, .known = true};
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	values[VENUE_SEATS].value = 100;
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), true);
+	values[VENUE_SURFACE] = (FixtureNumber){.value = 2, .known = true};
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	values[VENUE_SURFACE].value = 8;
+	values[VENUE_CONDITION] = (FixtureNumber){.value = 256, .known = true};
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	values[VENUE_CONDITION].value = 0;
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), true);
+	const float invalid[] = {0, -1, INFINITY, NAN};
+	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		values[VENUE_WIDTH] =
+			(FixtureNumber){.value = fixtureData_fromFloat(invalid[i]), .known = true};
+		ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	}
+	values[VENUE_WIDTH].value = fixtureData_fromFloat(68);
+	values[VENUE_LONGITUDE] = (FixtureNumber){.value = fixtureData_fromFloat(-180), .known = true};
+	values[VENUE_LATITUDE] = (FixtureNumber){.value = fixtureData_fromFloat(90), .known = true};
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), true);
+	values[VENUE_LATITUDE].value = fixtureData_fromFloat(90.01f);
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+	values[VENUE_LATITUDE].value = fixtureData_fromFloat(-90);
+	values[VENUE_LONGITUDE].value = fixtureData_fromFloat(-180.01f);
+	ASSERT_BOOL_EQ(fixtureData_validateVenue(values, error, sizeof error), false);
+
+	memset(values, 0, sizeof values);
+	values[VENUE_WIDTH] = (FixtureNumber){.value = fixtureData_fromFloat(68), .known = true};
+	static const char *const bad[] = {
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"name\":\"venue.pitch.width\",\"u16\":1}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u32\":1}]}",
+		"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"name\":\"venue.pitch.width\",\"u32\":1}],",
+	};
+	ByteBuffer out = {0};
+	for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; ++i) {
+		error[0] = 0;
+		ASSERT_BOOL_EQ(
+			fixtureData_writeVenue(bad[i], strlen(bad[i]), values, &out, error, sizeof error), false
+		);
+		ASSERT_BOOL_EQ(out.length == 0 && error[0] != 0, true);
+	}
+	buffer_free(&out);
+}
+
 void registerFixtureDataTests(void) {
 	test_run("fixture data reads unlabelled configs", test_reads_unlabelled_config);
 	test_run("fixture data reads labelled configs", test_reads_labelled_config);
@@ -608,6 +924,14 @@ void registerFixtureDataTests(void) {
 	test_run(
 		"config encoding reads replacement metadata once",
 		test_reads_replacement_metadata_during_encoding
+	);
+	test_run(
+		"venue edits recompute all pitch geometry and attendance copies",
+		test_edits_venue_and_recomputes_geometry_and_attendance
+	);
+	test_run(
+		"venue validation rejects invalid values and incomplete edits",
+		test_validates_venue_constraints_and_patch_failures
 	);
 }
 

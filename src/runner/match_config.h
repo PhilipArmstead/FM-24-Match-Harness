@@ -36,6 +36,8 @@ typedef struct ConfigField {
 	ConfigValueKind kind;
 	const uint8_t *bytes; // encoded value, including the length prefix for strings
 	size_t length;
+	size_t valueOffset; // value token's span in the source JSON, for lossless edits
+	size_t valueLength;
 } ConfigField;
 
 typedef struct ConfigVisitor {

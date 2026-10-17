@@ -24,6 +24,8 @@ typedef struct Encoder {
 typedef struct FieldState {
 	int values; // how many value keys the field had (must be 1)
 	ConfigValueKind kind;
+	size_t valueOffset;
+	size_t valueLength;
 } FieldState;
 
 static bool
@@ -203,7 +205,15 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	++field->values;
 	if (width) {
 		field->kind = (ConfigValueKind)width;
-		return readUnsignedValue(encoder, width);
+		const char *start = encoder->reader.position;
+		bool ok = readUnsignedValue(encoder, width);
+		while (ok && (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')) {
+			++start;
+		}
+		field->valueOffset = (size_t)(start - encoder->reader.begin);
+		field->valueLength =
+			(size_t)(encoder->reader.position - encoder->reader.begin) - field->valueOffset;
+		return ok;
 	}
 	if (strcmp(key, "u8map") == 0) {
 		field->kind = CONFIG_RATINGS;
@@ -241,6 +251,8 @@ static bool readField(Encoder *encoder) {
 			.kind = field.kind,
 			.bytes = encoder->out->data ? encoder->out->data + start : NULL,
 			.length = encoder->out->length - start,
+			.valueOffset = field.valueOffset,
+			.valueLength = field.valueLength,
 		};
 		encoder->visitor->field(encoder->visitor->context, &value);
 	}

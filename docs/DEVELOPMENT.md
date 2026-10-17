@@ -108,8 +108,15 @@ and is warning-free; `format.sh --check` and `tidy.sh` are clean.
 The viewer uses only Windows system libraries (`user32`, `gdi32`,
 `comctl32`, `msftedit` and `ole32`, with COM identifiers from `uuid`),
 with no third-party UI or parsing dependencies.
-Fixture inspection is read-only; `fm24ctl <fixture.json|fixture.bin>` leaves
-the existing CLI commands unchanged. With no arguments, it exports the next fixture to
+Opening a fixture does not change its source; `fm24ctl <fixture.json|fixture.bin>` leaves
+the existing CLI commands unchanged. The Venue tab edits labelled venue values.
+Float values are bit-copied to/from their serialized `u32` representation.
+The config visitor exposes numeric source spans so venue saves can patch only
+the values, retaining unrelated fields, annotations and team replacement IDs.
+Shared validation rejects invalid dimensions, coordinates, surfaces, condition
+and capacity relationships. The same writer derives pitch geometry and every
+attendance copy for saving, exporting, team replacement and simulation.
+With no arguments, it exports the next fixture to
 `temp-fixture.json` in the OS temp directory and opens it only if the export
 succeeds; failures are printed to the console before exiting. Viewing an
 unsaved fixture shows a red warning and an export link in the summary;
@@ -121,13 +128,19 @@ existing JSON file does not connect to the game. Binary inspection uses an
 deserialises and traces the existing match without running preparation,
 building another fixture or invoking the engine's match runner.
 
-The adjacent Simulation tab calls the existing `commands_run` on a worker
+The Simulation tab calls the existing `commands_runWithProgress` on a worker
 thread, with a timer collecting its exit code on the UI thread. Only one
 simulation can run per window; controls are disabled and closing is blocked until it
 finishes. Thread bounds reuse the CLI default (logical CPUs minus one,
 clamped to 1-16). Seed patterns are limited to 255 characters, checked for
 job-safe characters before submission, and fully parsed by the DLL. Outputs
 follow the CLI's fixture-based naming, using the saved copy after export.
+With venue values, the worker writes an edited temporary JSON fixture and
+passes an explicit results path beside the viewed fixture, then removes the
+temporary input. The source is never overwritten by simulation. Save operations
+snapshot the venue controls before starting their worker and replace the
+destination atomically. Unstored edits are marked in the summary, and opening
+another fixture or closing asks before discarding them.
 
 When configuring CMake directly, use `-DFM24_BUILD_TESTS=ON` to include the
 test executable. Its portable reader and filename checks can also be built

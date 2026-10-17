@@ -58,6 +58,8 @@ enum {
 
 typedef struct SimulationJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
+	FixtureNumber venueValues[VENUE_FIELD_COUNT];
+	char error[CLIENT_RESULT_LENGTH];
 	wchar_t seeds[256];
 	wchar_t threads[16];
 	uintptr_t progressWindow;
@@ -70,6 +72,7 @@ typedef struct ReplaceTeamJob {
 	wchar_t team[256];
 	char error[CLIENT_RESULT_LENGTH];
 	FixtureData *data;
+	FixtureNumber venueValues[VENUE_FIELD_COUNT];
 	unsigned side;
 } ReplaceTeamJob;
 
@@ -90,6 +93,7 @@ typedef struct FileJob {
 	wchar_t output[HARNESS_PATH_LENGTH];
 	char error[CLIENT_RESULT_LENGTH];
 	FixtureData *data;
+	FixtureNumber venueValues[VENUE_FIELD_COUNT];
 	bool save;
 	bool temporary;
 } FileJob;
@@ -108,6 +112,8 @@ typedef struct WindowState {
 	HWND pitches[2];
 	HWND lists[2];
 	HWND simulation[SIM_CONTROL_COUNT];
+	HWND venueLabels[VENUE_FIELD_COUNT];
+	HWND venueInputs[VENUE_FIELD_COUNT];
 	HWND teamControls[2][TEAM_CONTROL_COUNT];
 	HANDLE simulationThread;
 	HANDLE replacementThread;
@@ -139,6 +145,8 @@ typedef struct WindowState {
 	bool missing;
 	bool editingTeam[2];
 	bool filteringTeams; // a picker's list is being refilled (ignore its own edit notifications)
+	bool fillingVenue;
+	bool venueDirty;
 } WindowState;
 
 static const wchar_t windowClass[] = L"FM24MatchHarness";
@@ -160,6 +168,19 @@ static const wchar_t *const columns[] = {
 	L"Fatigue",
 };
 static const int columnWidths[] = {38, 210, 65, 185, 75, 65, 85, 90, 70};
+static const wchar_t *const venueLabels[VENUE_FIELD_COUNT] = {
+	L"Pitch width (m):",
+	L"Pitch length (m):",
+	L"City longitude:",
+	L"City latitude:",
+	L"Capacity:",
+	L"Seat Capacity:",
+	L"Home fans:",
+	L"Away fans:",
+	L"Season ticket holders:",
+	L"Surface:",
+	L"Pitch condition (0-255):",
+};
 
 static int scaled(const WindowState *state, int value) {
 	return MulDiv(value, (int)state->dpi, 96);
@@ -174,8 +195,136 @@ static void showError(HWND window, const wchar_t *message) {
 }
 
 static void layout(HWND window, WindowState *state);
+static void selectTab(WindowState *state);
+static void showFileError(HWND window, const char *error);
+static void removeReplacement(const wchar_t *path);
 static bool
 startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary);
+
+static bool hasVenue(const FixtureNumber values[VENUE_FIELD_COUNT]) {
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		if (values[i].known) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void enableVenue(const WindowState *state, BOOL enabled) {
+	bool pitchKnown =
+		state->data->venueValues[VENUE_WIDTH].known && state->data->venueValues[VENUE_LENGTH].known;
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		EnableWindow(
+			state->venueInputs[i],
+			enabled && state->data->venueValues[i].known && (i > VENUE_LENGTH || pitchKnown)
+		);
+	}
+}
+
+static bool setVenue(WindowState *state) {
+	state->fillingVenue = true;
+	bool ok = true;
+	for (unsigned i = 0; ok && i < VENUE_FIELD_COUNT; ++i) {
+		FixtureNumber number = state->data->venueValues[i];
+		HWND control = state->venueInputs[i];
+		if (i == VENUE_SURFACE) {
+			int selected = !number.known ? -1 : number.value == 1 ? 0 : number.value == 8 ? 1 : -1;
+			SendMessageW(control, CB_SETCURSEL, (WPARAM)selected, 0);
+		} else {
+			wchar_t text[64] = L"";
+			if (number.known) {
+				if (i <= VENUE_LATITUDE) {
+					(void)swprintf(text, 64, L"%.9g", (double)fixtureData_toFloat((uint32_t)number.value));
+				} else {
+					(void)swprintf(text, 64, L"%llu", (unsigned long long)number.value);
+				}
+			}
+			ok = SetWindowTextW(control, text) != 0;
+		}
+	}
+	state->fillingVenue = false;
+	state->venueDirty = false;
+	enableVenue(state, TRUE);
+	return ok;
+}
+
+static bool readVenue(HWND window, WindowState *state, FixtureNumber values[VENUE_FIELD_COUNT]) {
+	memcpy(values, state->data->venueValues, sizeof state->data->venueValues);
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		if (!values[i].known) {
+			continue;
+		}
+		HWND control = state->venueInputs[i];
+		bool valid;
+		if (i == VENUE_SURFACE) {
+			LRESULT selected = SendMessageW(control, CB_GETCURSEL, 0, 0);
+			valid = selected == 0 || selected == 1;
+			values[i].value = selected == 0 ? 1 : 8;
+		} else {
+			wchar_t text[64];
+			int length = GetWindowTextW(control, text, 64);
+			wchar_t *end = NULL;
+			errno = 0;
+			if (i <= VENUE_LATITUDE) {
+				values[i].value = fixtureData_fromFloat(wcstof(text, &end));
+			} else {
+				values[i].value = wcstoull(text, &end, 10);
+			}
+			valid =
+				length > 0 && GetWindowTextLengthW(control) < 64 && !errno && !*end &&
+				wcsspn(text, i <= VENUE_LATITUDE ? L"+-0123456789.eE" : L"0123456789") == (size_t)length;
+		}
+		if (!valid) {
+			wchar_t message[192];
+			(void)swprintf(
+				message,
+				192,
+				L"%ls Enter a valid %ls.",
+				venueLabels[i],
+				i == VENUE_SURFACE    ? L"surface selection"
+				: i <= VENUE_LATITUDE ? L"number"
+															: L"whole number"
+			);
+			TabCtrl_SetCurSel(state->tabs, 1);
+			selectTab(state);
+			showError(window, message);
+			SetFocus(control);
+			return false;
+		}
+	}
+	char error[256];
+	if (!fixtureData_validateVenue(values, error, sizeof error)) {
+		TabCtrl_SetCurSel(state->tabs, 1);
+		selectTab(state);
+		showFileError(window, error);
+		return false;
+	}
+	return true;
+}
+
+static bool temporaryJson(wchar_t *out, char *error, size_t errorSize) {
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	wchar_t temporary[HARNESS_PATH_LENGTH];
+	out[0] = 0;
+	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
+	if (!length || length >= HARNESS_PATH_LENGTH ||
+			!GetTempFileNameW(directory, L"fmv", 0, temporary)) {
+		(void)snprintf(
+			error, errorSize, "Cannot create a temporary fixture (Windows error %lu).", GetLastError()
+		);
+		return false;
+	}
+	int count = swprintf(out, HARNESS_PATH_LENGTH, L"%ls.json", temporary);
+	if (count < 0 || count >= HARNESS_PATH_LENGTH || !MoveFileW(temporary, out)) {
+		(void)snprintf(
+			error, errorSize, "Cannot create temporary JSON (Windows error %lu).", GetLastError()
+		);
+		removeReplacement(temporary);
+		out[0] = 0;
+		return false;
+	}
+	return true;
+}
 
 static void releaseTaskbar(WindowState *state) {
 	if (state->taskbar) {
@@ -284,13 +433,43 @@ static void createTaskbar(HWND window, WindowState *state) {
 
 static DWORD WINAPI simulateFixture(LPVOID parameter) {
 	SimulationJob *job = parameter;
-	wchar_t *arguments[] = {
-		L"fm24ctl.exe", L"run", job->input, job->seeds, L"--threads", job->threads, NULL, NULL};
-	int count = 6;
+	wchar_t temporary[HARNESS_PATH_LENGTH] = L"";
+	wchar_t output[HARNESS_PATH_LENGTH];
+	if (hasVenue(job->venueValues)) {
+		if (!temporaryJson(temporary, job->error, sizeof job->error)) {
+			return 1;
+		}
+		if (!fixtureLoad_saveVenue(
+					job->input, temporary, job->venueValues, job->error, sizeof job->error
+				)) {
+			removeReplacement(temporary);
+			return 1;
+		}
+		wcscpy(output, job->input);
+		wchar_t *extension = wcsrchr(output, L'.');
+		wcscpy(extension, L".csv"); // input is a .json or .bin fixture
+	}
+	wchar_t *arguments[] = {L"fm24ctl.exe",
+		L"run",
+		temporary[0] ? temporary : job->input,
+		job->seeds,
+		NULL,
+		NULL,
+		NULL,
+		NULL,
+		NULL};
+	int count = 4;
+	if (temporary[0]) {
+		arguments[count++] = output;
+	}
+	arguments[count++] = L"--threads";
+	arguments[count++] = job->threads;
 	if (job->detailed) {
 		arguments[count++] = L"--detailed";
 	}
-	return (DWORD)commands_runWithProgress(count, arguments, job->progressWindow);
+	DWORD result = (DWORD)commands_runWithProgress(count, arguments, job->progressWindow);
+	removeReplacement(temporary);
+	return result;
 }
 
 static void startSimulation(HWND window, WindowState *state) {
@@ -327,6 +506,10 @@ static void startSimulation(HWND window, WindowState *state) {
 	if (length == 0) {
 		wcscpy(job->seeds, L"keep");
 	}
+	if (!readVenue(window, state, job->venueValues)) {
+		return;
+	}
+	job->error[0] = 0;
 	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
 		showError(window, L"Cannot resolve the fixture path.");
@@ -360,6 +543,7 @@ static void startSimulation(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], FALSE);
 	}
+	enableVenue(state, FALSE);
 	SendMessageW(state->progress, PBM_SETRANGE32, 0, 1);
 	SendMessageW(state->progress, PBM_SETPOS, 0, 0);
 	ShowWindow(state->progress, SW_SHOW);
@@ -411,29 +595,39 @@ static void checkSimulation(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
+	enableVenue(state, TRUE);
 	const wchar_t *message =
 		result == 0
 			? L"Simulation complete. Results were saved beside the fixture; see the console for paths."
 			: L"Simulation failed. Check the console and harness.log for details.";
 	SetWindowTextW(state->simulation[SIM_STATUS], message);
 	if (result != 0) {
-		showError(window, message);
+		if (state->simulationJob.error[0]) {
+			showFileError(window, state->simulationJob.error);
+		} else {
+			showError(window, message);
+		}
 	}
 }
 
 static void selectTab(WindowState *state) {
-	bool simulation = TabCtrl_GetCurSel(state->tabs) == 1;
+	int tab = TabCtrl_GetCurSel(state->tabs);
+	bool simulation = tab == 2;
 	for (unsigned i = 0; i < 2; ++i) {
-		ShowWindow(state->headings[i], simulation ? SW_HIDE : SW_SHOW);
-		ShowWindow(state->pitches[i], simulation ? SW_HIDE : SW_SHOW);
-		ShowWindow(state->lists[i], simulation ? SW_HIDE : SW_SHOW);
+		ShowWindow(state->headings[i], tab == 0 ? SW_SHOW : SW_HIDE);
+		ShowWindow(state->pitches[i], tab == 0 ? SW_SHOW : SW_HIDE);
+		ShowWindow(state->lists[i], tab == 0 ? SW_SHOW : SW_HIDE);
+	}
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		ShowWindow(state->venueLabels[i], tab == 1 ? SW_SHOW : SW_HIDE);
+		ShowWindow(state->venueInputs[i], tab == 1 ? SW_SHOW : SW_HIDE);
 	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		ShowWindow(state->simulation[i], simulation ? SW_SHOW : SW_HIDE);
 	}
 	for (unsigned side = 0; side < 2; ++side) {
 		for (unsigned i = 0; i < TEAM_CONTROL_COUNT; ++i) {
-			bool visible = !simulation &&
+			bool visible = tab == 0 &&
 										 (i == TEAM_ICON ? !state->editingTeam[side] : state->editingTeam[side]) &&
 										 (i != TEAM_ERROR || GetWindowTextLengthW(state->teamControls[side][i]) > 0);
 			ShowWindow(state->teamControls[side][i], visible ? SW_SHOW : SW_HIDE);
@@ -489,7 +683,14 @@ static bool setMetadata(WindowState *state) {
 							 ? swprintf(wide, 8192, L"%ls\r\n", missingFixture)
 							 : swprintf(wide, 8192, L"%ls%ls to export it\r\n", unsavedPrefix, exportLink);
 	} else {
-		length = swprintf(wide, 8192, L"%ls%ls\r\n", filenamePrefix, state->filename);
+		length = swprintf(
+			wide,
+			8192,
+			L"%ls%ls%ls\r\n",
+			filenamePrefix,
+			state->filename,
+			state->venueDirty ? L" (unsaved venue edits)" : L""
+		);
 	}
 	if (length < 0 || !widen(text, wide + length, 8192 - (size_t)length) ||
 			!SetWindowTextW(state->metadata, wide)) {
@@ -570,12 +771,35 @@ static void exportFixture(HWND window, WindowState *state) {
 			showError(window, L"Fixture export filename is too long.");
 			return;
 		}
-		if (CopyFileW(state->path, filename, TRUE)) {
+		FixtureNumber values[VENUE_FIELD_COUNT];
+		if (!readVenue(window, state, values)) {
+			return;
+		}
+		wchar_t edited[HARNESS_PATH_LENGTH] = L"";
+		const wchar_t *input = state->path;
+		char error[512];
+		if (hasVenue(values)) {
+			if (!temporaryJson(edited, error, sizeof error)) {
+				showFileError(window, error);
+				return;
+			}
+			if (!fixtureLoad_saveVenue(state->path, edited, values, error, sizeof error)) {
+				removeReplacement(edited);
+				showFileError(window, error);
+				return;
+			}
+			input = edited;
+		}
+		BOOL copied = CopyFileW(input, filename, TRUE);
+		DWORD copyError = GetLastError();
+		removeReplacement(edited);
+		if (copied) {
 			wcscpy(state->savedFilename, filename);
 			state->filename = state->savedFilename;
 			state->temporary = false;
+			memcpy(state->data->venueValues, values, sizeof values);
+			state->venueDirty = false;
 		} else {
-			DWORD error = GetLastError();
 			if (fileMissing(state->path)) {
 				state->missing = true;
 			} else {
@@ -584,9 +808,9 @@ static void exportFixture(HWND window, WindowState *state) {
 					message,
 					256,
 					L"Cannot export fixture (Windows error %lu). No file was overwritten.",
-					error
+					copyError
 				);
-				fprintf(stderr, "fixture viewer: cannot export fixture (Windows error %lu)\n", error);
+				fprintf(stderr, "fixture viewer: cannot export fixture (Windows error %lu)\n", copyError);
 				showError(window, message);
 				return;
 			}
@@ -1001,29 +1225,7 @@ static void editTeam(HWND window, WindowState *state, unsigned side, bool editin
 
 static DWORD WINAPI replaceTeam(LPVOID parameter) {
 	ReplaceTeamJob *job = parameter;
-	wchar_t directory[HARNESS_PATH_LENGTH];
-	wchar_t temporary[HARNESS_PATH_LENGTH];
-	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
-	if (!length || length >= HARNESS_PATH_LENGTH ||
-			!GetTempFileNameW(directory, L"fma", 0, temporary)) {
-		(void)snprintf(
-			job->error,
-			sizeof job->error,
-			"Cannot create a replacement fixture (Windows error %lu).",
-			GetLastError()
-		);
-		return 1;
-	}
-	int count = swprintf(job->output, HARNESS_PATH_LENGTH, L"%ls.json", temporary);
-	if (count < 0 || count >= HARNESS_PATH_LENGTH || !MoveFileW(temporary, job->output)) {
-		(void)snprintf(
-			job->error,
-			sizeof job->error,
-			"Cannot create replacement JSON (Windows error %lu).",
-			GetLastError()
-		);
-		removeReplacement(temporary);
-		job->output[0] = 0;
+	if (!temporaryJson(job->output, job->error, sizeof job->error)) {
 		return 1;
 	}
 	wchar_t *arguments[] = {L"fm24ctl.exe",
@@ -1039,6 +1241,12 @@ static DWORD WINAPI replaceTeam(LPVOID parameter) {
 		arguments[2] = job->output;
 	}
 	int result = commands_replaceTeamWithResult(5, arguments, job->error, sizeof job->error);
+	if (result == 0 && hasVenue(job->venueValues) &&
+			!fixtureLoad_saveVenue(
+				job->output, job->output, job->venueValues, job->error, sizeof job->error
+			)) {
+		result = 1;
+	}
 	if (result == 0 && !fixtureLoad_open(job->output, job->data, job->error, sizeof job->error)) {
 		result = 1;
 	}
@@ -1064,6 +1272,9 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 	wchar_t id[16];
 	if (pickedTeamId(state, job->team, id, sizeof id / sizeof id[0])) {
 		wcscpy(job->team, id);
+	}
+	if (!readVenue(window, state, job->venueValues)) {
+		return;
 	}
 	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
@@ -1102,6 +1313,7 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], FALSE);
 	}
+	enableVenue(state, FALSE);
 	SetFocus(state->tabs);
 }
 
@@ -1133,6 +1345,7 @@ static void checkReplacement(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
+	enableVenue(state, TRUE);
 	ReplaceTeamJob *job = &state->replacementJob;
 	unsigned side = job->side;
 	if (result == 0) {
@@ -1146,7 +1359,8 @@ static void checkReplacement(HWND window, WindowState *state) {
 		*state->data = *job->data;
 		state->editingTeam[0] = false;
 		state->editingTeam[1] = false;
-		if (!setMetadata(state) || !setHeadings(state) || !fillList(state, 0) || !fillList(state, 1)) {
+		if (!setVenue(state) || !setMetadata(state) || !setHeadings(state) || !fillList(state, 0) ||
+				!fillList(state, 1)) {
 			showError(window, L"Cannot display the replacement fixture.");
 			state->failed = true;
 			DestroyWindow(window);
@@ -1209,7 +1423,13 @@ static void showFileError(HWND window, const char *error) {
 static DWORD WINAPI fixtureFile(LPVOID parameter) {
 	FileJob *job = parameter;
 	return !(
-		job->save ? fixtureLoad_save(job->input, job->output, job->error, sizeof job->error)
+		job->save ? fixtureLoad_saveVenue(
+									job->input,
+									job->output,
+									hasVenue(job->venueValues) ? job->venueValues : NULL,
+									job->error,
+									sizeof job->error
+								)
 							: fixtureLoad_open(job->input, job->data, job->error, sizeof job->error)
 	);
 }
@@ -1225,6 +1445,7 @@ static void enableFileControls(const WindowState *state, BOOL enable) {
 		}
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], enable);
+	enableVenue(state, enable);
 }
 
 static bool
@@ -1235,6 +1456,9 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 	}
 	FileJob *job = &state->fileJob;
 	*job = (FileJob){.save = save, .temporary = temporary};
+	if (save && !readVenue(window, state, job->venueValues)) {
+		return false;
+	}
 	const wchar_t *input =
 		save ? (state->savedFilename[0] ? state->savedFilename : state->path) : path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH) ||
@@ -1271,6 +1495,9 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 // Shows the fixture a successful file operation opened or saved.
 static void showFileResult(HWND window, WindowState *state, const FileJob *job) {
 	setActivePath(state, job->save ? job->output : job->input, job->temporary);
+	if (job->save) {
+		memcpy(state->data->venueValues, job->venueValues, sizeof job->venueValues);
+	}
 	if (!job->save) {
 		*state->data = *job->data;
 		for (unsigned side = 0; side < 2; ++side) {
@@ -1285,7 +1512,7 @@ static void showFileResult(HWND window, WindowState *state, const FileJob *job) 
 			L"Results are saved beside the fixture, using its filename with .csv."
 		);
 	}
-	bool ok = setMetadata(state);
+	bool ok = setVenue(state) && setMetadata(state);
 	if (!job->save) {
 		ok = ok && setHeadings(state) && fillList(state, 0) && fillList(state, 1);
 	}
@@ -1387,10 +1614,11 @@ static void useSelectedFile(HWND window, WindowState *state, const wchar_t *path
 		showError(window, L"Select a .json or .bin fixture with a path shorter than 1024 characters.");
 	} else if (save) {
 		(void)startFileJob(window, state, path, true, false);
-	} else if (!state->temporary ||
+	} else if ((!state->temporary && !state->venueDirty) ||
 						 MessageBoxW(
 							 window,
-							 L"The current fixture is not saved. Discard it and open the selected fixture?",
+							 L"The current fixture has unsaved changes. Discard them and open the selected "
+							 L"fixture?",
 							 L"Open fixture",
 							 MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
 						 ) == IDYES) {
@@ -1519,6 +1747,10 @@ static bool setFonts(WindowState *state) {
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		SendMessageW(state->venueLabels[i], WM_SETFONT, (WPARAM)font, TRUE);
+		SendMessageW(state->venueInputs[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
 	for (unsigned i = 0; i < 2; ++i) {
 		for (unsigned control = 0; control < TEAM_CONTROL_COUNT; ++control) {
 			SendMessageW(state->teamControls[i][control], WM_SETFONT, (WPARAM)font, TRUE);
@@ -1590,6 +1822,21 @@ static void layout(HWND window, WindowState *state) {
 	int left = page.left + margin;
 	top = page.top + margin;
 	width = page.right - left - margin;
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		int x = left + (int)(i / 6) * (width / 2);
+		int y = top + (int)(i % 6) * scaled(state, 42);
+		MoveWindow(
+			state->venueLabels[i], x, y + scaled(state, 5), scaled(state, 180), scaled(state, 24), TRUE
+		);
+		MoveWindow(
+			state->venueInputs[i],
+			x + scaled(state, 184),
+			y,
+			scaled(state, 210),
+			scaled(state, i == VENUE_SURFACE ? 100 : 28),
+			TRUE
+		);
+	}
 	static const struct {
 		int x, y, width, height;
 	} positions[SIM_CONTROL_COUNT] = {
@@ -1774,6 +2021,43 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 	return true;
 }
 
+static bool createVenueControls(HWND window, WindowState *state) {
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		state->venueLabels[i] = CreateWindowExW(
+			0, L"STATIC", venueLabels[i], WS_CHILD, 0, 0, 0, 0, window, NULL, GetModuleHandleW(NULL), NULL
+		);
+		state->venueInputs[i] = CreateWindowExW(
+			i == VENUE_SURFACE ? 0 : WS_EX_CLIENTEDGE,
+			i == VENUE_SURFACE ? L"COMBOBOX" : L"EDIT",
+			L"",
+			WS_CHILD | WS_TABSTOP | (i == VENUE_SURFACE ? CBS_DROPDOWNLIST | WS_VSCROLL : ES_AUTOHSCROLL),
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			GetModuleHandleW(NULL),
+			NULL
+		);
+		if (!state->venueLabels[i] || !state->venueInputs[i]) {
+			return false;
+		}
+		if (i != VENUE_SURFACE) {
+			SendMessageW(state->venueInputs[i], EM_SETLIMITTEXT, 63, 0);
+			SendMessageW(state->venueInputs[i], EM_SETCUEBANNER, TRUE, (LPARAM)L"Not stored");
+		}
+	}
+	HWND surface = state->venueInputs[VENUE_SURFACE];
+	if (SendMessageW(surface, CB_ADDSTRING, 0, (LPARAM)L"Grass") != 0 ||
+			SendMessageW(surface, CB_ADDSTRING, 0, (LPARAM)L"Grass/Synthetic mix") != 1) {
+		return false;
+	}
+	SendMessageW(surface, CB_SETITEMDATA, 0, 1);
+	SendMessageW(surface, CB_SETITEMDATA, 1, 8);
+	return setVenue(state);
+}
+
 static bool createControls(HWND window, WindowState *state) {
 	HINSTANCE instance = GetModuleHandleW(NULL);
 	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
@@ -1848,8 +2132,12 @@ static bool createControls(HWND window, WindowState *state) {
 	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 0, (LPARAM)&tab) == -1) {
 		return false;
 	}
-	tab.pszText = L"Simulation";
+	tab.pszText = L"Venue";
 	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 1, (LPARAM)&tab) == -1) {
+		return false;
+	}
+	tab.pszText = L"Simulation";
+	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 2, (LPARAM)&tab) == -1) {
 		return false;
 	}
 	for (unsigned i = 0; i < 2; ++i) {
@@ -1912,8 +2200,9 @@ static bool createControls(HWND window, WindowState *state) {
 		}
 	}
 	bool ok = createTeamControls(window, state, 0) && createTeamControls(window, state, 1) &&
-						createSimulationControls(window, state) && setFonts(state) && setMetadata(state) &&
-						setHeadings(state) && fillList(state, 0) && fillList(state, 1);
+						createVenueControls(window, state) && createSimulationControls(window, state) &&
+						setFonts(state) && setMetadata(state) && setHeadings(state) && fillList(state, 0) &&
+						fillList(state, 1);
 	if (ok) {
 		selectTab(state);
 	}
@@ -2355,6 +2644,14 @@ static bool closeBlocked(HWND window, const WindowState *state) {
 		showError(window, L"A simulation is running. Please wait for it to finish before closing.");
 		return true;
 	}
+	if (state->venueDirty && MessageBoxW(
+														 window,
+														 L"Venue changes are not saved. Discard them and close?",
+														 L"Close fixture",
+														 MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+													 ) != IDYES) {
+		return true;
+	}
 	return false;
 }
 
@@ -2362,6 +2659,20 @@ static LRESULT
 actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
 		case WM_COMMAND:
+			if (!state->fillingVenue &&
+					(HIWORD(wParam) == EN_CHANGE || HIWORD(wParam) == CBN_SELCHANGE)) {
+				for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+					if ((HWND)lParam == state->venueInputs[i]) {
+						state->venueDirty = true;
+						if (!setMetadata(state)) {
+							showError(window, L"Cannot update fixture summary.");
+							state->failed = true;
+							DestroyWindow(window);
+						}
+						return 0;
+					}
+				}
+			}
 			if (HIWORD(wParam) == BN_CLICKED && clickFixtureButton(window, state, (HWND)lParam)) {
 				return 0;
 			}

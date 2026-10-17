@@ -16,17 +16,20 @@ static bool inspectSucceeded(const char *result);
 
 #define fixtureLoad_open fixtureLoadTest_open
 #define fixtureLoad_save fixtureLoadTest_save
+#define fixtureLoad_saveVenue fixtureLoadTest_saveVenue
 #define client_submit inspectSubmit
 #define client_succeeded inspectSucceeded
 #include "../src/runner/fixture_load.c" // NOLINT(bugprone-suspicious-include): isolate the game connection.
 #undef fixtureLoad_open
 #undef fixtureLoad_save
+#undef fixtureLoad_saveVenue
 #undef client_submit
 #undef client_succeeded
 
 static const char config[] =
 	"{\"format\":\"fm24-match-config/1\",\"fields\":[{\"u8\":42}],"
 	"\"source\":\"preserve annotations\",\"home_team\":678,\"away_team\":677}";
+static const char *decodedConfig = config;
 static unsigned inspectCalls;
 static bool inspectFailure;
 
@@ -54,7 +57,7 @@ static bool inspectSubmit(const char *job, unsigned timeout, char *result, size_
 		return false;
 	}
 	path[count] = 0;
-	ASSERT_BOOL_EQ(files_write(path, config, sizeof config - 1), true);
+	ASSERT_BOOL_EQ(files_write(path, decodedConfig, strlen(decodedConfig)), true);
 	(void)snprintf(result, resultSize, "ok: decoded");
 	return true;
 }
@@ -157,6 +160,48 @@ TEST(saves_complete_fixtures_without_partial_overwrites) {
 	);
 	ASSERT_BOOL_EQ(fixtureLoadTest_save(json, missing, error, sizeof error), false);
 	ASSERT_BOOL_EQ(error[0] != 0, true);
+
+	static const char venue[] = "{\"format\":\"fm24-match-config/1\",\"fields\":["
+															"{\"name\":\"venue.capacity\",\"u32\":100},"
+															"{\"name\":\"venue.seating_capacity\",\"u32\":80},"
+															"{\"name\":\"venue.home_fans\",\"u32\":70},"
+															"{\"name\":\"venue.away_fans\",\"u32\":10},"
+															"{\"name\":\"venue.used_capacity\",\"u32\":0}],"
+															"\"home_team\":678,\"source\":\"preserve annotations\"}";
+	FixtureNumber values[VENUE_FIELD_COUNT] = {0};
+	values[VENUE_CAPACITY] = (FixtureNumber){.value = 90, .known = true};
+	values[VENUE_SEATS] = (FixtureNumber){.value = 85, .known = true};
+	values[VENUE_HOME_FANS] = (FixtureNumber){.value = 75, .known = true};
+	values[VENUE_AWAY_FANS] = (FixtureNumber){.value = 15, .known = true};
+	ASSERT_BOOL_EQ(files_write(json, venue, sizeof venue - 1), true);
+	ByteBuffer edited = {0}, editedBinary = {0};
+	ASSERT_BOOL_EQ(
+		fixtureData_writeVenue(venue, sizeof venue - 1, values, &edited, error, sizeof error), true
+	);
+	ASSERT_BOOL_EQ(
+		matchConfig_encode(
+			buffer_string(&edited), edited.length, &editedBinary, NULL, error, sizeof error
+		),
+		true
+	);
+	ASSERT_BOOL_EQ(fixtureLoadTest_saveVenue(json, jsonCopy, values, error, sizeof error), true);
+	checkFile(jsonCopy, edited.data, edited.length);
+	checkFile(json, venue, sizeof venue - 1);
+	ASSERT_BOOL_EQ(fixtureLoadTest_saveVenue(json, binaryCopy, values, error, sizeof error), true);
+	checkFile(binaryCopy, editedBinary.data, editedBinary.length);
+	decodedConfig = venue;
+	ASSERT_BOOL_EQ(fixtureLoadTest_saveVenue(binary, jsonCopy, values, error, sizeof error), true);
+	checkFile(jsonCopy, edited.data, edited.length);
+	ASSERT_BOOL_EQ(fixtureLoadTest_saveVenue(binary, binaryCopy, values, error, sizeof error), true);
+	checkFile(binaryCopy, editedBinary.data, editedBinary.length);
+	decodedConfig = config;
+	ASSERT_BOOL_EQ(fixtureLoadTest_saveVenue(json, json, values, error, sizeof error), true);
+	checkFile(json, edited.data, edited.length);
+	values[VENUE_HOME_FANS].value = 90;
+	ASSERT_BOOL_EQ(fixtureLoadTest_saveVenue(json, jsonCopy, values, error, sizeof error), false);
+	checkFile(jsonCopy, edited.data, edited.length);
+	buffer_free(&edited);
+	buffer_free(&editedBinary);
 
 	wchar_t pattern[HARNESS_PATH_LENGTH];
 	ASSERT_BOOL_EQ(paths_join(pattern, HARNESS_PATH_LENGTH, directory, L"fms*.tmp"), true);

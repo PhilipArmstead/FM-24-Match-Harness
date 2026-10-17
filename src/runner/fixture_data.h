@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "buffer.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -13,6 +15,21 @@ typedef struct FixtureNumber {
 	uint64_t value;
 	bool known;
 } FixtureNumber;
+
+enum {
+	VENUE_WIDTH,
+	VENUE_LENGTH,
+	VENUE_LONGITUDE,
+	VENUE_LATITUDE,
+	VENUE_CAPACITY,
+	VENUE_SEATS,
+	VENUE_HOME_FANS,
+	VENUE_AWAY_FANS,
+	VENUE_SEASON_TICKETS,
+	VENUE_SURFACE,
+	VENUE_CONDITION,
+	VENUE_FIELD_COUNT,
+};
 
 typedef struct FixturePlayer {
 	char name[FIXTURE_TEXT];
@@ -45,7 +62,8 @@ typedef struct FixtureData {
 	char venue[FIXTURE_TEXT];
 	char source[FIXTURE_TEXT];
 	char when[128];
-	char officials[5][FIXTURE_TEXT]; // official[0..3], then referee
+	char officials[5][FIXTURE_TEXT];              // official[0..3], then referee
+	FixtureNumber venueValues[VENUE_FIELD_COUNT]; // floats retain their serialised u32 bits
 	FixtureTeam teams[2];
 } FixtureData;
 
@@ -54,6 +72,23 @@ bool fixtureData_read(
 	const char *json,
 	size_t length,
 	FixtureData *out,
+	char *error,
+	size_t errorSize
+);
+
+float fixtureData_toFloat(uint32_t bits);
+uint32_t fixtureData_fromFloat(float value);
+bool fixtureData_validateVenue(
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	char *error,
+	size_t errorSize
+);
+// Patches numeric tokens only, retaining all other fields, annotations and replacement-team IDs.
+bool fixtureData_writeVenue(
+	const char *json,
+	size_t length,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	ByteBuffer *out,
 	char *error,
 	size_t errorSize
 );
