@@ -686,6 +686,62 @@ TEST(labels_staff_attributes_byte_by_byte) {
 	free(labels);
 }
 
+TEST(labels_weather_and_venue_fields) {
+	TraceRecord records[] = {
+		{.site = 0x1A7BED3, .path = 0},                      // match header: kickoff weather follows
+		{.site = 0x1A7BEE9, .path = 0},                      // MATCH_BASE+0x6b0
+		{.site = 0x43CC669, .path = 0},                      // first weather change's temperature
+		{.site = SITE_WEATHER_CHANGE_TIME, .path = 0},       //   and its time
+		{.site = 0x43CC669, .path = 0},                      // second change's temperature
+		{.site = 0x1A8EB7E, .path = 1},                      // venue: the pitch length names the block
+		{.site = SITE_PITCH_WIDTH, .path = 1},               //
+		{.site = 0x1A8EC6C, .path = 1},                      // second landmark coordinate
+		{.site = 0x456AA30, .path = 1},                      // fn_456a9d0+0x158
+		{.site = 0x45844E1, .path = 1},                      // fn_45844b0+0x7
+		{.site = 0x43D0774, .caller = 0x43D0256, .path = 1}, // the unnamed first section array
+		{.site = 0x43D0774, .caller = SITE_OCCUPANCY_CALLER, .path = 1},
+		{.site = SITE_TEXT, .caller = SITE_STADIUM_NAME_CALLER, .path = 1},
+		{.site = 0x11758B46, .path = 2}, // fixture_extra: attendance names the block
+		{.site = SITE_FIXTURE_EXTRA_AWAY_FANS, .path = 2},
+	};
+	char *paths[] = {"1ac76fb", "1ac778c", "1ac77c2"};
+	Serialised serialised = {
+		.records = records,
+		.recordCount = sizeof records / sizeof records[0],
+		.paths = paths,
+		.pathCount = 3,
+	};
+	PeopleIndex people = {0};
+	FieldLabel *labels = labels_compute(&serialised, &people);
+	ASSERT_BOOL_EQ(labels != NULL, true);
+	if (!labels) {
+		return;
+	}
+	static const char *const expected[] = {
+		"match",
+		"match.weather.wind",
+		"match.weather.change[0].temperature",
+		"match.weather.change[0].time",
+		"match.weather.change[1].temperature",
+		"venue",
+		"venue.pitch.width",
+		"venue.pitch.centre_spot.y",
+		"venue.attendance",
+		"venue.stand[0].flags",
+		"",
+		"venue.section[1].occupancy",
+		"venue.stadium.name",
+		"fixture_extra",
+		"fixture_extra.away_fans",
+	};
+	for (size_t i = 0; i < sizeof expected / sizeof expected[0]; ++i) {
+		ASSERT_BOOL_EQ(strcmp(labels[i].name, expected[i]) == 0, true);
+	}
+	ASSERT_INT_EQ((int)labels[9].flags, FLAGS_STAND);
+	ASSERT_BOOL_EQ(strcmp(labels_flagName(&labels[9], 3), "tunnel") == 0, true);
+	free(labels);
+}
+
 TEST(only_merges_valid_utf8_text) {
 	static const char *const valid[] = {
 		"text",
@@ -757,6 +813,7 @@ void registerDllTests(void) {
 	test_run(
 		"DLL exports staff attributes as one named u8 each", test_labels_staff_attributes_byte_by_byte
 	);
+	test_run("DLL names weather, venue and attendance fields", test_labels_weather_and_venue_fields);
 	test_run("DLL only exports valid UTF-8 as JSON text", test_only_merges_valid_utf8_text);
 	buffer_free(&engineOutput);
 }

@@ -25,6 +25,7 @@ typedef enum FlagKind {
 	FLAGS_POSITION,            // a formation slot's position mask
 	FLAGS_ROLE,                // a formation slot's role mask: role and duty
 	FLAGS_TRAITS,              // a player's traits (preferred moves)
+	FLAGS_STAND,               // a venue stand's flags: roof, seats, tunnel
 } FlagKind;
 
 typedef struct FieldLabel {

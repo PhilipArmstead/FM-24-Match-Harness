@@ -71,6 +71,34 @@ enum PersonField {
 	SITE_PERSON_WEIGHT = 0x1A80064, // u8: kg, from PLAYER+0x14C
 };
 
+// Write call sites of the weather, venue and attendance fields that have no member of their own
+// (docs/FIXTURE.md#officials-venue-and-weather). The rest are named by member (labels.c).
+enum VenueField {
+	SITE_WEATHER_CHANGE_TIME = 0x43CC67B,  // u32 per weather change, after its three bytes
+	SITE_PITCH_WIDTH = 0x1A8EBA0,          // float metres; the venue's first field is the length
+	SITE_PITCH_HALF_WIDTH = 0x1A8EBC2,     // float metres
+	SITE_PITCH_HALF_LENGTH = 0x1A8EBE4,    // float metres
+	SITE_PITCH_QUARTER_WIDTH = 0x1A8EC06,  // float metres
+	SITE_PITCH_QUARTER_LENGTH = 0x1A8EC28, // float metres
+	SITE_STADIUM_INDEX = 0x4374A8F,        // stadium record (venue and fixture): table index
+	SITE_STADIUM_UID = 0x4374AB6,          //   the stadium's unique ID
+	SITE_TEXT = 0x1939ED4,                 // every string; called from SITE_STADIUM_NAME_CALLER
+	SITE_STADIUM_NAME_CALLER = 0x4374ADD,  //   for the stadium's name
+	SITE_VENUE_UID = 0x456AC04,            // the stadium's unique ID again (VENUE+0x00)
+	SITE_SEAT_COLOUR_0 = 0x456AB32,        // ABGR
+	SITE_SEAT_COLOUR_1 = 0x456AB67,        // ABGR, shaded
+	SITE_STAND_0_CAPACITY = 0x45844CE,     // the first stand record's capacity
+	SITE_OCCUPANCY_CALLER = 0x43D0262,     // the call writing the per-section occupancy
+	SITE_OCCUPANCY_FIRST = 0x43D075E,      //   its section 0 (sections 1-30 have members)
+	SITE_OCCUPANCY_LAST = 0x43D0262,       //   its section 31
+	SITE_SECTION_SEATS_FIRST = 0x43D04D4,  // u16 per section: section 0
+	SITE_SECTION_SEATS_LAST = 0x43D0724,   //   section 31
+	SITE_FIXTURE_ATTENDANCE = 0x19BEF71,
+	SITE_FIXTURE_AWAY_FANS = 0x19BEF92,
+	SITE_FIXTURE_EXTRA_HOME_FANS = 0x11758B64,
+	SITE_FIXTURE_EXTRA_AWAY_FANS = 0x11758B77,
+};
+
 // Return addresses inside the tactic serialiser (sub_141A896D0, a ~7 KB object). Every manager and
 // backroom entry carries one; the managers' are the teams' real tactics (docs/PLAN.md Phase 15).
 // Parts whose meaning is unknown are named by their member offset.

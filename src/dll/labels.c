@@ -296,6 +296,91 @@ static const MemberName memberNames[] = {
 	{"MATCH_STAFF+0xa0", "potential_ability", FLAGS_NONE},
 };
 
+// Weather and venue members (docs/FIXTURE.md#officials-venue-and-weather), matched against the
+// game's weather text and the stadium's FMRTE and in-game profiles in three saves.
+static const MemberName venueMemberNames[] = {
+	{"MATCH_BASE+0x6b0", "weather.wind", FLAGS_NONE},        // 0 none, 1 breezy, 2 gusty
+	{"MATCH_BASE+0x6b2", "weather.temperature", FLAGS_NONE}, // degrees Celsius
+	{"MATCH_BASE+0x6b3", "weather.rain", FLAGS_NONE},        // probably: 0 dry, 2 wet
+	{"fn_43cc5e0+0x40", "weather.change_count", FLAGS_NONE},
+	{"fn_456a9d0+0x14", "city_longitude", FLAGS_NONE}, // float
+	{"fn_456a9d0+0x18", "city_latitude", FLAGS_NONE},  // float
+	{"fn_456a9d0+0x20", "nation", FLAGS_NONE},         // the nation's unique ID
+	{"fn_456a9d0+0x26", "state", FLAGS_NONE},          // probably 1 very good, 2 good
+	{"fn_456a9d0+0x158", "attendance", FLAGS_NONE},
+	{"fn_456a9d0+0x15c", "capacity", FLAGS_NONE},
+	{"fn_456a9d0+0x160", "seating_capacity", FLAGS_NONE},
+	{"fn_456a9d0+0x164", "used_capacity", FLAGS_NONE},
+	{"fn_456a9d0+0x16c", "home_fans", FLAGS_NONE},
+	{"fn_456a9d0+0x170", "away_fans", FLAGS_NONE},
+	{"fn_456a9d0+0x178", "season_ticket_holders", FLAGS_NONE},
+	{"fn_456a9d0+0x186", "surface", FLAGS_NONE},         // 1 grass, 8 grass/synthetic mix
+	{"fn_456a9d0+0x188", "pitch_condition", FLAGS_NONE}, // FMRTE's "pitch condition"
+};
+
+// The venue's pitch landmarks, three floats each (across, along, height), in write order.
+static const uint32_t pitchLandmarkSites[] = {
+	0x1A8EC4A,
+	0x1A8EC6C,
+	0x1A8EC8E,
+	0x1A8ECAC,
+	0x1A8ECCB,
+	0x1A8ECEA,
+	0x1A8ED09,
+	0x1A8ED28,
+	0x1A8ED47,
+	0x1A8ED66,
+	0x1A8ED85,
+	0x1A8EDA4,
+	0x1A8EDC3,
+	0x1A8EDE2,
+	0x1A8EE01,
+	0x1A8EE20,
+	0x1A8EE3F,
+	0x1A8EE5E,
+	0x1A8EE7D,
+	0x1A8EE9C,
+	0x1A8EEBB,
+	0x1A8EEDA,
+	0x1A8EEF9,
+	0x1A8EF18,
+	0x1A8EF37,
+	0x1A8EF56,
+	0x1A8EF75,
+	0x1A8EF97,
+	0x1A8EFB9,
+	0x1A8EFDB,
+	0x1A8EFFD,
+	0x1A8F01F,
+	0x1A8F041,
+	0x1A8F063,
+	0x1A8F085,
+	0x1A8F0A7,
+	0x1A8F0C9,
+	0x1A8F0EB,
+	0x1A8F10D,
+};
+
+static const char *const pitchLandmarkNames[] = {
+	"centre_spot",
+	"end[0].goal",
+	"end[0].post[0]",
+	"end[0].post[1]",
+	"end[0].corner[0]",
+	"end[0].corner[1]",
+	"end[0].penalty_spot",
+	"end[1].goal",
+	"end[1].post[0]",
+	"end[1].post[1]",
+	"end[1].corner[0]",
+	"end[1].corner[1]",
+	"end[1].penalty_spot",
+};
+
+// Bits of a stand record's flags byte, from FMRTE's 3D stadium view (bit 4 is set on every stand
+// with seats or standing room; bit 5's meaning is unknown).
+static const char *const standFlagNames[] = {"roof", "seats", NULL, "tunnel"};
+
 // Extra bits of tactic position and role masks (docs/PLAN.md Phase 15, 17).
 enum {
 	POSITION_LEFT_BIT = 20,
@@ -350,6 +435,9 @@ static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelMemberField(const Walk *walk, FieldLabel *label);
 static void labelPersonField(const Walk *walk, FieldLabel *label, const TraceRecord *record);
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record);
+static bool memberOffset(const char *member, const char *prefix, unsigned *offset);
+static unsigned earlierWrites(const Walk *walk, size_t i);
+static void labelVenueField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelRecord(Walk *walk, size_t i);
 
 const char *labels_ratingName(size_t index) {
@@ -368,6 +456,8 @@ const char *labels_flagName(const FieldLabel *label, unsigned bit) {
 		case FLAGS_ROLE: return roleFlag(bit);
 		case FLAGS_TRAITS:
 			return bit < sizeof traitNames / sizeof traitNames[0] ? traitNames[bit] : NULL;
+		case FLAGS_STAND:
+			return bit < sizeof standFlagNames / sizeof standFlagNames[0] ? standFlagNames[bit] : NULL;
 		case FLAGS_NONE:
 		default: return NULL;
 	}
@@ -726,6 +816,178 @@ static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record
 	}
 }
 
+// The offset in a member "<prefix>0xNN" (e.g. "fn_45844b0+0x" for "fn_45844b0+0x1c").
+static bool memberOffset(const char *member, const char *prefix, unsigned *offset) {
+	size_t length = strlen(prefix);
+	if (!member || strncmp(member, prefix, length) != 0) {
+		return false;
+	}
+	char *end = NULL;
+	unsigned long value = strtoul(member + length, &end, 16);
+	if (end == member + length || *end) {
+		return false;
+	}
+	*offset = (unsigned)value;
+	return true;
+}
+
+// How many earlier records were written by record i's call site: the weather change's index.
+static unsigned earlierWrites(const Walk *walk, size_t i) {
+	uint32_t site = walk->serialised->records[i].site;
+	unsigned count = 0;
+	for (size_t j = 0; j < i; ++j) {
+		count += walk->serialised->records[j].site == site;
+	}
+	return count;
+}
+
+// A field name built in a caller's buffer, and how to name its bits.
+typedef struct BuiltName {
+	char text[LABEL_LENGTH];
+	FlagKind flags;
+} BuiltName;
+
+// A weather change's fields (match header): its time, probable rain level and temperature.
+static const char *weatherFieldName(
+	const Walk *walk,
+	size_t i,
+	const TraceRecord *record,
+	const FieldLabel *label,
+	BuiltName *out
+) {
+	unsigned offset = 0;
+	const char *field = NULL;
+	if (record->site == SITE_WEATHER_CHANGE_TIME) {
+		field = "time";
+	} else if (memberOffset(label->member, "fn_43cc5e0+0x", &offset) &&
+						 (offset == 5 || offset == 6)) {
+		field = offset == 5 ? "rain" : "temperature";
+	} else {
+		return NULL;
+	}
+	(void)snprintf(
+		out->text, sizeof out->text, "weather.change[%u].%s", earlierWrites(walk, i), field
+	);
+	return out->text;
+}
+
+// Fields with a fixed name in the venue, fixture and fixture_extra blocks.
+static const char *fixedVenueFieldName(const char *block, const TraceRecord *record) {
+	bool venue = strcmp(block, "venue") == 0;
+	if (venue || strcmp(block, "fixture") == 0) {
+		switch (record->site) {
+			case SITE_STADIUM_INDEX: return "stadium.index";
+			case SITE_STADIUM_UID: return "stadium.uid";
+			case SITE_TEXT: return record->caller == SITE_STADIUM_NAME_CALLER ? "stadium.name" : NULL;
+			case SITE_FIXTURE_ATTENDANCE: return venue ? NULL : "attendance";
+			case SITE_FIXTURE_AWAY_FANS: return venue ? NULL : "away_fans";
+			default: break;
+		}
+	}
+	if (strcmp(block, "fixture_extra") == 0) {
+		switch (record->site) {
+			case SITE_FIXTURE_EXTRA_HOME_FANS: return "home_fans";
+			case SITE_FIXTURE_EXTRA_AWAY_FANS: return "away_fans";
+			default: return NULL;
+		}
+	}
+	if (!venue) {
+		return NULL;
+	}
+	switch (record->site) {
+		case SITE_PITCH_WIDTH: return "pitch.width";
+		case SITE_PITCH_HALF_WIDTH: return "pitch.half_width";
+		case SITE_PITCH_HALF_LENGTH: return "pitch.half_length";
+		case SITE_PITCH_QUARTER_WIDTH: return "pitch.quarter_width";
+		case SITE_PITCH_QUARTER_LENGTH: return "pitch.quarter_length";
+		case SITE_VENUE_UID: return "uid";
+		case SITE_SEAT_COLOUR_0: return "seat_colour[0]";
+		case SITE_SEAT_COLOUR_1: return "seat_colour[1]";
+		case SITE_STAND_0_CAPACITY: return "stand[0].capacity";
+		case SITE_SECTION_SEATS_FIRST: return "section[0].seats";
+		case SITE_SECTION_SEATS_LAST: return "section[31].seats";
+		case SITE_OCCUPANCY_LAST: return "section[31].occupancy";
+		case SITE_OCCUPANCY_FIRST:
+			return record->caller == SITE_OCCUPANCY_CALLER ? "section[0].occupancy" : NULL;
+		default: return NULL;
+	}
+}
+
+// The venue's pitch landmarks: "pitch.<point>.<axis>".
+static const char *pitchLandmarkName(const TraceRecord *record, BuiltName *out) {
+	for (size_t k = 0; k < sizeof pitchLandmarkSites / sizeof pitchLandmarkSites[0]; ++k) {
+		if (record->site == pitchLandmarkSites[k]) {
+			(void)snprintf(
+				out->text, sizeof out->text, "pitch.%s.%c", pitchLandmarkNames[k / 3], "xyz"[k % 3]
+			);
+			return out->text;
+		}
+	}
+	return NULL;
+}
+
+// The venue's seating sections (4 stands x 8 slots) and its 8 stand records.
+static const char *
+venueArrayName(const TraceRecord *record, const FieldLabel *label, BuiltName *out) {
+	unsigned offset = 0;
+	if (memberOffset(label->member, "fn_43d0740+0x", &offset)) {
+		if (record->caller != SITE_OCCUPANCY_CALLER) {
+			return NULL;
+		}
+		(void)snprintf(out->text, sizeof out->text, "section[%u].occupancy", offset);
+	} else if (memberOffset(label->member, "fn_43d0230+0x", &offset)) {
+		if (offset >= 0x40 && offset < 0x60) {
+			return NULL;
+		}
+		(void)snprintf(
+			out->text,
+			sizeof out->text,
+			offset < 0x40 ? "section[%u].seats" : "section[%u].type",
+			offset < 0x40 ? offset / 2 : offset - 0x60
+		);
+	} else if (memberOffset(label->member, "fn_45844b0+0x", &offset) && offset < 0x40) {
+		// Stand records are 8 bytes: u32 capacity, u16, u8, u8 flags.
+		if (offset % 8 != 0 && offset % 8 != 7) {
+			return NULL;
+		}
+		out->flags = offset % 8 == 7 ? FLAGS_STAND : FLAGS_NONE;
+		(void)snprintf(
+			out->text,
+			sizeof out->text,
+			offset % 8 == 7 ? "stand[%u].flags" : "stand[%u].capacity",
+			offset / 8
+		);
+	} else {
+		return NULL;
+	}
+	return out->text;
+}
+
+// Names the weather fields in the match header, the venue's and the attendance in the fixture.
+static void labelVenueField(Walk *walk, size_t i, const TraceRecord *record) {
+	FieldLabel *label = &walk->labels[i];
+	BuiltName built = {.flags = FLAGS_NONE};
+	const char *name = NULL;
+	if (strcmp(walk->block, "match") == 0) {
+		name = weatherFieldName(walk, i, record, label, &built);
+	} else {
+		name = fixedVenueFieldName(walk->block, record);
+		if (!name && strcmp(walk->block, "venue") == 0) {
+			name = pitchLandmarkName(record, &built);
+			name = name ? name : venueArrayName(record, label, &built);
+		}
+	}
+	for (size_t k = 0; !name && k < sizeof venueMemberNames / sizeof venueMemberNames[0]; ++k) {
+		if (label->member && strcmp(label->member, venueMemberNames[k].member) == 0) {
+			name = venueMemberNames[k].name;
+		}
+	}
+	if (name) {
+		(void)snprintf(label->name, sizeof label->name, "%s.%s", walk->block, name);
+		label->flags = built.flags;
+	}
+}
+
 static void labelRecord(Walk *walk, size_t i) {
 	const TraceRecord *record = &walk->serialised->records[i];
 	if (i == 0 || walk->serialised->records[i - 1].site != record->site) {
@@ -743,6 +1005,7 @@ static void labelRecord(Walk *walk, size_t i) {
 	}
 	FieldLabel *label = &walk->labels[i];
 	label->member = siteMembers_find(record->site);
+	labelVenueField(walk, i, record);
 	labelMemberField(walk, label);
 	labelPersonField(walk, label, record);
 	if (record->site == SITE_STAFF_ATTRIBUTES && record->length == STAFF_ATTRIBUTE_COUNT) {

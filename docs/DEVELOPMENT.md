@@ -327,7 +327,11 @@ field meanings are in `docs/FIXTURE.md`.
   blocks also carry `"player"`. Fields whose meaning is known are named too:
   `.person_uid`, `.ratings`, `.ability` (caps every role rating),
   `.leadership_value`, `.role_rating[winger@AMR]` with its `.role` and
-  `.position` bytes, and the team counts and flags.
+  `.position` bytes, and the team counts and flags. The weather
+  (`match.weather.*`), the venue's fields (`venue.pitch.*`, `.stadium.*`,
+  `.attendance`, `.stand[i].*`, `.section[i].*`, ...) and the attendance's
+  copies in `fixture` and `fixture_extra` are named by write site or member
+  (`labelVenueField` in `src/dll/labels.c`, sites in `src/dll/sites.h`).
 - **Tactics:** each manager's tactic is under `<side>.manager.tactic`
   (`docs/PLAN.md`, Phase 15). It holds `takers`, the active `plan[0]` and a
   second `plan[1]`, `set_pieces`, and `formation[i]`. A plan names
