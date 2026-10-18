@@ -1624,7 +1624,11 @@ static void checkPlayerControls(HWND window, WindowState *state) {
 		wchar_t text[32];
 		LVCOLUMNW column = {.mask = LVCF_TEXT, .pszText = text, .cchTextMax = 32};
 		ASSERT_BOOL_EQ(SendMessageW(list, LVM_GETCOLUMNW, 0, (LPARAM)&column), true);
-		ASSERT_INT_EQ(wcscmp(text, L"Select"), 0);
+		ASSERT_INT_EQ(wcscmp(text, L"Slot"), 0);
+		ASSERT_INT_EQ(Header_GetItemCount(ListView_GetHeader(list)), CELL_COUNT);
+		ASSERT_BOOL_EQ(ListView_GetExtendedListViewStyle(list) & LVS_EX_CHECKBOXES, false);
+		ASSERT_BOOL_EQ(GetWindowLongW(list, GWL_STYLE) & LVS_SINGLESEL, false);
+		ASSERT_BOOL_EQ(GetWindowLongW(list, GWL_STYLE) & LVS_SHOWSELALWAYS, true);
 		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
 			ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[side][button]), false);
 			RECT heading = controlBounds(window, state->headings[side]);
@@ -1637,22 +1641,23 @@ static void checkPlayerControls(HWND window, WindowState *state) {
 	}
 	ASSERT_INT_EQ(ListView_GetItemCount(state->lists[0]), 12);
 	ASSERT_INT_EQ(ListView_GetItemCount(state->lists[1]), 12 + FIXTURE_SLOTS);
-	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[0], 1, LVIS_STATEIMAGEMASK) == 0, true);
-	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[1], 0, LVIS_STATEIMAGEMASK) == 0, true);
-	NMLISTVIEW unknown = {.hdr = {.hwndFrom = state->lists[1], .code = (UINT)LVN_ITEMCHANGING},
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[0], 1, LVIS_SELECTED) == 0, true);
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[1], 0, LVIS_SELECTED) == 0, true);
+	NMLISTVIEW unknown = {.hdr = {.hwndFrom = state->lists[1], .code = (UINT)LVN_ITEMCHANGED},
 		.iItem = 0,
 		.uChanged = LVIF_STATE,
-		.uNewState = INDEXTOSTATEIMAGEMASK(2)};
-	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&unknown) == TRUE, true);
+		.uNewState = LVIS_SELECTED};
+	ListView_SetItemState(state->lists[1], 0, LVIS_SELECTED, LVIS_SELECTED);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&unknown) == 0, true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[1][0]), false);
 	for (unsigned side = 0; side < 2; ++side) {
 		unsigned row = side ? FIXTURE_SLOTS : 0;
-		ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[side], row), false);
-		ListView_SetCheckState(state->lists[side], row, TRUE);
+		ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[side], row, LVIS_SELECTED) == 0, true);
+		ListView_SetItemState(state->lists[side], row, LVIS_SELECTED, LVIS_SELECTED);
 		NMLISTVIEW selected = {.hdr = {.hwndFrom = state->lists[side], .code = (UINT)LVN_ITEMCHANGED},
 			.iItem = (int)row,
 			.uChanged = LVIF_STATE,
-			.uOldState = INDEXTOSTATEIMAGEMASK(1),
-			.uNewState = INDEXTOSTATEIMAGEMASK(2),
+			.uNewState = LVIS_SELECTED,
 			.lParam = 1};
 		ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&selected) == 0, true);
 		ASSERT_BOOL_EQ(state->selectedPlayers[side][0], true);
@@ -1688,13 +1693,13 @@ static void checkPlayerControls(HWND window, WindowState *state) {
 		);
 	}
 	ASSERT_BOOL_EQ(state->data->teams[1].players[0].morale.value == 12, true);
-	ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[0], 0), true);
-	ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[0], 11), true);
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[0], 0, LVIS_SELECTED), true);
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[0], 11, LVIS_SELECTED), true);
 	ASSERT_INT_EQ(ListView_GetTopIndex(state->lists[0]), firstVisible);
 	static const wchar_t *const expected[] = {L"20", L"100.00%", L"100.00%", L"0"};
 	for (unsigned i = 0; i < 4; ++i) {
 		wchar_t text[64];
-		LVITEMW cell = {.iSubItem = (int)i + 6, .pszText = text, .cchTextMax = 64};
+		LVITEMW cell = {.iSubItem = (int)i + 5, .pszText = text, .cchTextMax = 64};
 		ASSERT_BOOL_EQ(SendMessageW(state->lists[0], LVM_GETITEMTEXTW, 11, (LPARAM)&cell) > 0, true);
 		ASSERT_INT_EQ(wcscmp(text, expected[i]), 0);
 	}
@@ -1712,17 +1717,29 @@ static void checkPlayerControls(HWND window, WindowState *state) {
 	firstLine(state->metadata, L"Viewing fixture: temp-fixture.json (unsaved player edits)");
 	changeTab(window, state, 1);
 	changeTab(window, state, 0);
-	ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[0], 0), true);
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[0], 0, LVIS_SELECTED), true);
 	NMLISTVIEW deselected = {.hdr = {.hwndFrom = state->lists[1], .code = (UINT)LVN_ITEMCHANGED},
 		.iItem = FIXTURE_SLOTS,
 		.uChanged = LVIF_STATE,
-		.uOldState = INDEXTOSTATEIMAGEMASK(2),
-		.uNewState = INDEXTOSTATEIMAGEMASK(1),
+		.uOldState = LVIS_SELECTED,
 		.lParam = 1};
-	ListView_SetCheckState(state->lists[1], FIXTURE_SLOTS, FALSE);
+	ListView_SetItemState(state->lists[1], FIXTURE_SLOTS, 0, LVIS_SELECTED);
 	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&deselected) == 0, true);
 	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[1][0]), false);
 	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[0][0]), true);
+	ListView_SetItemState(state->lists[0], -1, 0, LVIS_SELECTED);
+	NMLISTVIEW all = {.hdr = {.hwndFrom = state->lists[0], .code = (UINT)LVN_ITEMCHANGED},
+		.iItem = -1,
+		.uChanged = LVIF_STATE,
+		.uOldState = LVIS_SELECTED};
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&all) == 0, true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[0][0]), false);
+	ListView_SetItemState(state->lists[0], -1, LVIS_SELECTED, LVIS_SELECTED);
+	all.uOldState = 0;
+	all.uNewState = LVIS_SELECTED;
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&all) == 0, true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[0][0]), true);
+	ASSERT_BOOL_EQ(state->selectedPlayers[0][1], false);
 	state->fileThread = GetCurrentThread();
 	enablePlayers(state);
 	ASSERT_BOOL_EQ(IsWindowEnabled(state->lists[0]), false);

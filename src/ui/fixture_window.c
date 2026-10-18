@@ -41,7 +41,7 @@ enum { TEAMS_SHOWN = 200, TEAM_LABEL_LENGTH = 256 }; // the team pickers' lists
 
 enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
-enum { CELL_COUNT = 9 }; // the squad lists' text cells, after the Select column
+enum { CELL_COUNT = 9 }; // the squad lists' text cells
 
 // The swap prompt's controls.
 enum {
@@ -198,7 +198,6 @@ static const wchar_t unsavedPrefix[] = L"This fixture object is not saved. ";
 static const wchar_t exportLink[] = L"Click here";
 static const wchar_t missingFixture[] = L"Fixture cannot be found; restart the app";
 static const wchar_t *const columns[] = {
-	L"Select",
 	L"Slot",
 	L"Player",
 	L"Position",
@@ -209,7 +208,7 @@ static const wchar_t *const columns[] = {
 	L"Sharpness",
 	L"Fatigue",
 };
-static const int columnWidths[] = {55, 38, 210, 65, 185, 75, 65, 85, 90, 70};
+static const int columnWidths[] = {38, 210, 65, 185, 75, 65, 85, 90, 70};
 static const wchar_t *const venueLabels[VENUE_FIELD_COUNT] = {
 	L"Pitch width (m):",
 	L"Pitch length (m):",
@@ -1038,17 +1037,16 @@ static bool insertListRow(
 	unsigned row,
 	char cells[CELL_COUNT][FIXTURE_TEXT],
 	int player,
-	bool checked
+	bool selected
 ) {
 	LVITEMW selection = {
 		.mask = LVIF_TEXT | LVIF_PARAM, .iItem = (int)row, .pszText = L"", .lParam = player + 1};
 	if (SendMessageW(list, LVM_INSERTITEMW, 0, (LPARAM)&selection) == -1) {
 		return false;
 	}
-	unsigned image = player < 0 ? 0 : checked ? 2 : 1;
-	ListView_SetItemState(list, (int)row, INDEXTOSTATEIMAGEMASK(image), LVIS_STATEIMAGEMASK);
+	ListView_SetItemState(list, (int)row, selected ? LVIS_SELECTED : 0, LVIS_SELECTED);
 	for (unsigned cell = 0; cell < CELL_COUNT; ++cell) {
-		if (!setListCell(list, row, cell + 1, cells[cell])) {
+		if (!setListCell(list, row, cell, cells[cell])) {
 			return false;
 		}
 	}
@@ -1148,7 +1146,7 @@ static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned 
 		playerCells(player, cells);
 		unsigned row = i + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
 		for (unsigned cell = 5; cell < CELL_COUNT; ++cell) {
-			ok = setListCell(state->lists[side], row, cell + 1, cells[cell]) && ok;
+			ok = setListCell(state->lists[side], row, cell, cells[cell]) && ok;
 		}
 	}
 	if (!ok || !setMetadata(state)) {
@@ -1160,18 +1158,28 @@ static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned 
 
 static LRESULT
 playerNotification(WindowState *state, const NMLISTVIEW *notification, unsigned side) {
-	if (state->fillingPlayers || notification->iItem < 0 || !(notification->uChanged & LVIF_STATE) ||
-			!((notification->uOldState ^ notification->uNewState) & LVIS_STATEIMAGEMASK)) {
+	if (state->fillingPlayers || !(notification->uChanged & LVIF_STATE) ||
+			!((notification->uOldState ^ notification->uNewState) & LVIS_SELECTED)) {
 		return 0;
 	}
-	LPARAM player = notification->lParam - 1;
-	bool valid = player >= 0 && player < FIXTURE_PLAYERS;
 	if (notification->hdr.code == (UINT)LVN_ITEMCHANGING) {
-		return !valid || state->simulationThread || state->replacementThread || state->fileThread;
+		return state->simulationThread || state->replacementThread || state->fileThread;
 	}
-	if (notification->hdr.code == (UINT)LVN_ITEMCHANGED && valid) {
-		state->selectedPlayers[side][player] =
-			(notification->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK(2);
+	if (notification->hdr.code == (UINT)LVN_ITEMCHANGED) {
+		if (notification->iItem == -1) {
+			const FixtureTeam *team = &state->data->teams[side];
+			for (unsigned i = 0; i < FIXTURE_PLAYERS; ++i) {
+				const FixturePlayer *player = &team->players[i];
+				unsigned row = i + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
+				state->selectedPlayers[side][i] =
+					i < team->playerCount.value && player->present && player->name[0] &&
+					strcmp(player->name, "<Unknown>") != 0 &&
+					ListView_GetItemState(state->lists[side], row, LVIS_SELECTED) != 0;
+			}
+		} else if (notification->lParam > 0 && notification->lParam <= FIXTURE_PLAYERS) {
+			state->selectedPlayers[side][notification->lParam - 1] =
+				(notification->uNewState & LVIS_SELECTED) != 0;
+		}
 		enablePlayers(state);
 	}
 	return 0;
@@ -2711,8 +2719,7 @@ static bool createControls(HWND window, WindowState *state) {
 		}
 		ListView_SetExtendedListViewStyle(
 			state->lists[i],
-			LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_GRIDLINES |
-				LVS_EX_CHECKBOXES
+			LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_GRIDLINES
 		);
 		for (unsigned column = 0; column < sizeof columns / sizeof columns[0]; ++column) {
 			LVCOLUMNW definition = {.mask = LVCF_TEXT | LVCF_WIDTH,
