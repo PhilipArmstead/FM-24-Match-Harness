@@ -2,6 +2,10 @@
 #ifndef FM24_TESTS_H
 #define FM24_TESTS_H
 
+#include "buffer.h"
+
+void fixtureTest_config(ByteBuffer *out);
+
 void registerJobTests(void);
 void registerDllTests(void);
 void registerFixtureDataTests(void);

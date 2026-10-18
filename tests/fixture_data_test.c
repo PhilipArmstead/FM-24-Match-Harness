@@ -24,7 +24,13 @@ static bool append(ByteBuffer *out, const char *format, ...) {
 	return length >= 0 && (size_t)length < sizeof text && buffer_append(out, text, (size_t)length);
 }
 
-static void makeConfig(ByteBuffer *out, bool labelled, bool swapControl, const char *source) {
+static void makeConfig(
+	ByteBuffer *out,
+	bool labelled,
+	bool swapControl,
+	const char *source,
+	const FixturePlayerEdits *edits
+) {
 	ASSERT_BOOL_EQ(
 		append(
 			out,
@@ -100,6 +106,7 @@ static void makeConfig(ByteBuffer *out, bool labelled, bool swapControl, const c
 		}
 		ASSERT_BOOL_EQ(append(out, ",{\"name\":\"%s.player_count\",\"u8\":12}", name), true);
 		for (unsigned i = 0; i < 12; ++i) {
+			unsigned flags = edits ? edits->players[side][i] : 0;
 			ASSERT_BOOL_EQ(
 				append(
 					out,
@@ -149,7 +156,15 @@ static void makeConfig(ByteBuffer *out, bool labelled, bool swapControl, const c
 				"u8",
 			};
 			for (unsigned field = 0; field < 14; ++field) {
-				ASSERT_BOOL_EQ(append(out, ",{\"%s\":%u}", types[field], values[field]), true);
+				unsigned value = values[field];
+				if ((flags & FIXTURE_MAX_CONDITION) &&
+						(field == 2 || (!labelled && (field == 0 || field == 1 || field == 6)))) {
+					value = field == 6 ? 0 : 10000;
+				}
+				if (!labelled && field == 13 && (flags & FIXTURE_MAX_HAPPINESS)) {
+					value = 20;
+				}
+				ASSERT_BOOL_EQ(append(out, ",{\"%s\":%u}", types[field], value), true);
 			}
 			ASSERT_BOOL_EQ(
 				append(
@@ -163,18 +178,22 @@ static void makeConfig(ByteBuffer *out, bool labelled, bool swapControl, const c
 				ASSERT_BOOL_EQ(
 					append(
 						out,
-						",{\"name\":\"%s.player[%u].condition\",\"u16\":9876},"
-						"{\"name\":\"%s.player[%u].sharpness[0]\",\"u16\":8125},"
-						"{\"name\":\"%s.player[%u].morale\",\"u8\":12},"
-						"{\"name\":\"%s.player[%u].fatigue\",\"u16\":65535}",
+						",{\"name\":\"%s.player[%u].condition\",\"u16\":%u},"
+						"{\"name\":\"%s.player[%u].sharpness[0]\",\"u16\":%u},"
+						"{\"name\":\"%s.player[%u].morale\",\"u8\":%u},"
+						"{\"name\":\"%s.player[%u].fatigue\",\"u16\":%u}",
 						name,
 						i,
+						flags & FIXTURE_MAX_CONDITION ? 10000U : 9876U,
 						name,
 						i,
+						flags & FIXTURE_MAX_CONDITION ? 10000U : 8125U,
 						name,
 						i,
+						flags & FIXTURE_MAX_HAPPINESS ? 20U : 12U,
 						name,
-						i
+						i,
+						flags & FIXTURE_MAX_CONDITION ? 0U : 65535U
 					),
 					true
 				);
@@ -191,7 +210,7 @@ static void makeConfig(ByteBuffer *out, bool labelled, bool swapControl, const c
 static void checkConfig(bool labelled, bool swapControl) {
 	ByteBuffer json = {0};
 	makeConfig(
-		&json, labelled, swapControl, "Aston Villa vs Bristol City, 2023 day 186 19:30, seed 42"
+		&json, labelled, swapControl, "Aston Villa vs Bristol City, 2023 day 186 19:30, seed 42", NULL
 	);
 	FixtureData *data = malloc(sizeof *data);
 	ASSERT_BOOL_EQ(data != NULL, true);
@@ -227,6 +246,10 @@ static void checkConfig(bool labelled, bool swapControl) {
 	ASSERT_BOOL_EQ(data->teams[0].players[12].present, false);
 	free(data);
 	buffer_free(&json);
+}
+
+void fixtureTest_config(ByteBuffer *out) {
+	makeConfig(out, true, false, "preserve annotations", NULL);
 }
 
 TEST(reads_export_dates) {
@@ -271,7 +294,7 @@ TEST(reads_export_dates) {
 	}
 	for (unsigned i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
 		ByteBuffer json = {0};
-		makeConfig(&json, false, false, cases[i].source);
+		makeConfig(&json, false, false, cases[i].source, NULL);
 		char error[256] = "";
 		ASSERT_BOOL_EQ(
 			fixtureData_read(buffer_string(&json), json.length, data, error, sizeof error), true
@@ -910,6 +933,90 @@ TEST(validates_venue_constraints_and_patch_failures) {
 	buffer_free(&out);
 }
 
+TEST(edits_only_selected_players_losslessly) {
+	FixturePlayerEdits edits = {0};
+	ASSERT_BOOL_EQ(fixtureData_hasPlayerEdits(NULL), false);
+	ASSERT_BOOL_EQ(fixtureData_hasPlayerEdits(&edits), false);
+	edits.players[0][0] = FIXTURE_MAX_HAPPINESS;
+	edits.players[0][11] = FIXTURE_MAX_CONDITION;
+	edits.players[1][3] = FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION;
+	ASSERT_BOOL_EQ(fixtureData_hasPlayerEdits(&edits), true);
+	for (unsigned labelled = 0; labelled < 2; ++labelled) {
+		ByteBuffer json = {0}, expected = {0}, edited = {0}, again = {0}, binary = {0};
+		makeConfig(&json, labelled != 0, true, "preserve all annotations", NULL);
+		makeConfig(&expected, labelled != 0, true, "preserve all annotations", &edits);
+		--json.length;
+		--expected.length;
+		ASSERT_BOOL_EQ(append(&json, ",\"home_team\":678,\"away_team\":677}\n"), true);
+		ASSERT_BOOL_EQ(append(&expected, ",\"home_team\":678,\"away_team\":677}\n"), true);
+		char error[256] = "";
+		bool ok = fixtureData_writePlayers(
+			buffer_string(&json), json.length, &edits, &edited, error, sizeof error
+		);
+		ASSERT_BOOL_EQ(ok, true);
+		ASSERT_BOOL_EQ(edited.length == expected.length, true);
+		if (ok && edited.length == expected.length) {
+			ASSERT_INT_EQ(memcmp(edited.data, expected.data, edited.length), 0);
+		}
+		ASSERT_BOOL_EQ(
+			fixtureData_writePlayers(
+				buffer_string(&edited), edited.length, &edits, &again, error, sizeof error
+			),
+			true
+		);
+		ASSERT_BOOL_EQ(again.length == edited.length, true);
+		if (again.length == edited.length) {
+			ASSERT_INT_EQ(memcmp(again.data, edited.data, edited.length), 0);
+		}
+		uint32_t teams[2] = {0};
+		ASSERT_BOOL_EQ(
+			matchConfig_encode(
+				buffer_string(&edited), edited.length, &binary, teams, error, sizeof error
+			),
+			true
+		);
+		ASSERT_BOOL_EQ(teams[0] == 678 && teams[1] == 677, true);
+		FixturePlayerEdits invalid = {0};
+		invalid.players[0][12] = FIXTURE_MAX_HAPPINESS;
+		ASSERT_BOOL_EQ(
+			fixtureData_writePlayers(
+				buffer_string(&json), json.length, &invalid, &edited, error, sizeof error
+			),
+			false
+		);
+		ASSERT_BOOL_EQ(edited.length == 0 && error[0] != 0, true);
+		invalid.players[0][12] = 0;
+		invalid.players[0][0] = 128;
+		ASSERT_BOOL_EQ(
+			fixtureData_writePlayers(
+				buffer_string(&json), json.length, &invalid, &edited, error, sizeof error
+			),
+			false
+		);
+		if (!labelled) {
+			char *ratings = strstr(buffer_string(&json), "home.player[0].ratings");
+			char *condition = ratings ? strstr(ratings, "\"u16\":10000") : NULL;
+			ASSERT_BOOL_EQ(condition != NULL, true);
+			if (condition) {
+				condition[2] = '3';
+				condition[3] = '2';
+				ASSERT_BOOL_EQ(
+					fixtureData_writePlayers(
+						buffer_string(&json), json.length, &edits, &edited, error, sizeof error
+					),
+					false
+				);
+				ASSERT_BOOL_EQ(edited.length == 0 && strstr(error, "Missing") != NULL, true);
+			}
+		}
+		buffer_free(&binary);
+		buffer_free(&again);
+		buffer_free(&edited);
+		buffer_free(&expected);
+		buffer_free(&json);
+	}
+}
+
 void registerFixtureDataTests(void) {
 	test_run("fixture data reads unlabelled configs", test_reads_unlabelled_config);
 	test_run("fixture data reads labelled configs", test_reads_labelled_config);
@@ -932,6 +1039,9 @@ void registerFixtureDataTests(void) {
 	test_run(
 		"venue validation rejects invalid values and incomplete edits",
 		test_validates_venue_constraints_and_patch_failures
+	);
+	test_run(
+		"player edits change only selected numeric tokens", test_edits_only_selected_players_losslessly
 	);
 }
 

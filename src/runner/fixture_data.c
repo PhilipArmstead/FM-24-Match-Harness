@@ -21,6 +21,11 @@ typedef enum Section {
 	SECTION_OFFICIAL
 } Section;
 
+typedef struct ValueSpan {
+	size_t offset;
+	size_t length;
+} ValueSpan;
+
 typedef struct Reader {
 	FixtureData *out;
 	Section section;
@@ -31,6 +36,8 @@ typedef struct Reader {
 	unsigned fitnessIndex;
 	bool fitnessValid;
 	FixtureNumber fitness[14];
+	ValueSpan fitnessSpans[14];
+	ValueSpan (*playerSpans)[FIXTURE_PLAYERS][5];
 	char firstName[FIXTURE_TEXT];
 	char error[192];
 } Reader;
@@ -438,8 +445,13 @@ static void playerValue(Reader *reader, const ConfigField *field) {
 		&player->morale,
 	};
 	for (size_t i = 0; i < sizeof values / sizeof values[0]; ++i) {
-		if (strcmp(suffix, values[i].name) == 0 && !scalar(field, values[i].kind, numbers[i])) {
-			(void)snprintf(reader->error, sizeof reader->error, "wrong type for %s", field->name);
+		if (strcmp(suffix, values[i].name) == 0) {
+			if (!scalar(field, values[i].kind, numbers[i])) {
+				(void)snprintf(reader->error, sizeof reader->error, "wrong type for %s", field->name);
+			} else if (reader->playerSpans) {
+				reader->playerSpans[reader->side][reader->player][i] =
+					(ValueSpan){field->valueOffset, field->valueLength};
+			}
 		}
 	}
 	if (field->kind == CONFIG_RATINGS) {
@@ -470,12 +482,19 @@ static void playerValue(Reader *reader, const ConfigField *field) {
 	}
 	unsigned index = reader->fitnessIndex++;
 	reader->fitnessValid = scalar(field, kinds[index], &reader->fitness[index]);
+	reader->fitnessSpans[index] = (ValueSpan){field->valueOffset, field->valueLength};
 	if (reader->fitnessValid && reader->fitnessIndex == 14) {
 		player->condition = reader->fitness[0];
 		player->sharpness[0] = reader->fitness[1];
 		player->sharpness[1] = reader->fitness[2];
 		player->fatigue = reader->fitness[6];
 		player->morale = reader->fitness[13];
+		if (reader->playerSpans) {
+			static const unsigned indices[] = {0, 1, 2, 6, 13};
+			for (unsigned i = 0; i < 5; ++i) {
+				reader->playerSpans[reader->side][reader->player][i] = reader->fitnessSpans[indices[i]];
+			}
+		}
 	}
 }
 
@@ -652,15 +671,16 @@ static void describeWhen(FixtureData *data) {
 	);
 }
 
-bool fixtureData_read(
+static bool readData(
 	const char *json,
 	size_t length,
 	FixtureData *out,
+	ValueSpan spans[2][FIXTURE_PLAYERS][5],
 	char *error,
 	size_t errorSize
 ) {
 	*out = (FixtureData){0};
-	Reader reader = {.out = out};
+	Reader reader = {.out = out, .playerSpans = spans};
 	ConfigVisitor visitor = {.context = &reader, .field = visitField, .source = visitSource};
 	if (!matchConfig_visit(json, length, &visitor, error, errorSize)) {
 		return false;
@@ -691,6 +711,117 @@ bool fixtureData_read(
 	}
 	describeWhen(out);
 	return true;
+}
+
+bool fixtureData_read(
+	const char *json,
+	size_t length,
+	FixtureData *out,
+	char *error,
+	size_t errorSize
+) {
+	return readData(json, length, out, NULL, error, errorSize);
+}
+
+bool fixtureData_hasPlayerEdits(const FixturePlayerEdits *edits) {
+	if (edits) {
+		for (unsigned side = 0; side < 2; ++side) {
+			for (unsigned i = 0; i < FIXTURE_PLAYERS; ++i) {
+				if (edits->players[side][i]) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+typedef struct PlayerPatch {
+	ValueSpan span;
+	unsigned value;
+} PlayerPatch;
+
+static int comparePlayerPatches(const void *a, const void *b) {
+	const PlayerPatch *left = a, *right = b;
+	return (left->span.offset > right->span.offset) - (left->span.offset < right->span.offset);
+}
+
+bool fixtureData_writePlayers(
+	const char *json,
+	size_t length,
+	const FixturePlayerEdits *edits,
+	ByteBuffer *out,
+	char *error,
+	size_t errorSize
+) {
+	buffer_clear(out);
+	struct {
+		FixtureData data;
+		ValueSpan spans[2][FIXTURE_PLAYERS][5];
+		PlayerPatch patches[2 * FIXTURE_PLAYERS * 5];
+	} *work = calloc(1, sizeof *work);
+	if (!work) {
+		(void)snprintf(error, errorSize, "Out of memory editing players.");
+		return false;
+	}
+	bool ok = readData(json, length, &work->data, work->spans, error, errorSize);
+	size_t count = 0;
+	for (unsigned side = 0; ok && edits && side < 2; ++side) {
+		for (unsigned i = 0; ok && i < FIXTURE_PLAYERS; ++i) {
+			unsigned flags = edits->players[side][i];
+			if (!flags) {
+				continue;
+			}
+			const FixtureTeam *team = &work->data.teams[side];
+			const FixturePlayer *player = &team->players[i];
+			if (flags & ~(FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION) ||
+					i >= team->playerCount.value || !player->present || !player->name[0] ||
+					strcmp(player->name, "<Unknown>") == 0) {
+				(void)snprintf(error, errorSize, "Cannot edit %s.player[%u].", side ? "away" : "home", i);
+				ok = false;
+				break;
+			}
+			for (unsigned field = 0; field < 5; ++field) {
+				if (!(flags & (field == 4 ? FIXTURE_MAX_HAPPINESS : FIXTURE_MAX_CONDITION))) {
+					continue;
+				}
+				ValueSpan span = work->spans[side][i][field];
+				if (!span.length) {
+					(void)snprintf(
+						error,
+						errorSize,
+						"Missing wellbeing field for %s.player[%u].",
+						side ? "away" : "home",
+						i
+					);
+					ok = false;
+					break;
+				}
+				work->patches[count++] = (PlayerPatch){span, field == 4 ? 20U : field == 3 ? 0U : 10000U};
+			}
+		}
+	}
+	if (ok) {
+		qsort(work->patches, count, sizeof work->patches[0], comparePlayerPatches);
+		size_t copied = 0;
+		for (size_t i = 0; ok && i < count; ++i) {
+			const PlayerPatch *patch = &work->patches[i];
+			char number[16];
+			int size = snprintf(number, sizeof number, "%u", patch->value);
+			ok = buffer_append(out, json + copied, patch->span.offset - copied) &&
+					 buffer_append(out, number, (size_t)size);
+			copied = patch->span.offset + patch->span.length;
+		}
+		ok = ok && buffer_append(out, json + copied, length - copied);
+		if (!ok) {
+			(void)snprintf(error, errorSize, "Out of memory editing players.");
+		}
+	}
+	free(work);
+	if (!ok) {
+		buffer_clear(out);
+	}
+	return ok;
 }
 
 void fixtureData_position(uint64_t mask, char *out, size_t size) {

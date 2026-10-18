@@ -84,6 +84,7 @@ static const wchar_t *expectedThreads;
 static wchar_t expectedInput[HARNESS_PATH_LENGTH];
 static bool expectedDetailed;
 static bool expectedVenueInput;
+static bool expectedPlayerInput;
 static wchar_t simulationTemporary[HARNESS_PATH_LENGTH];
 static unsigned simulationCalls;
 static int simulationResult;
@@ -323,10 +324,11 @@ unsigned long commands_defaultThreads(void) {
 }
 
 int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow) {
+	bool editedInput = expectedVenueInput || expectedPlayerInput;
 	ASSERT_BOOL_EQ(progressWindow == (uintptr_t)expectedProgressWindow, true);
-	ASSERT_BOOL_EQ(argc == (expectedDetailed ? 7 : 6) + (int)expectedVenueInput, true);
+	ASSERT_BOOL_EQ(argc == (expectedDetailed ? 7 : 6) + (int)editedInput, true);
 	ASSERT_INT_EQ(wcscmp(argv[1], L"run"), 0);
-	if (expectedVenueInput) {
+	if (editedInput) {
 		ASSERT_BOOL_EQ(wcscmp(argv[2], expectedInput) != 0, true);
 		wcscpy(simulationTemporary, argv[2]);
 		wchar_t output[HARNESS_PATH_LENGTH];
@@ -335,17 +337,38 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 		ASSERT_INT_EQ(wcscmp(argv[4], output), 0);
 		ByteBuffer json = {0};
 		ASSERT_BOOL_EQ(files_read(argv[2], &json), true);
-		char width[32], half[32];
-		(void)snprintf(width, sizeof width, "\"u32\":%u", fixtureData_fromFloat(72.5f));
-		(void)snprintf(half, sizeof half, "\"u32\":%u", fixtureData_fromFloat(36.25f));
-		ASSERT_BOOL_EQ(strstr(buffer_string(&json), width) != NULL, true);
-		ASSERT_BOOL_EQ(strstr(buffer_string(&json), half) != NULL, true);
+		if (expectedVenueInput) {
+			char width[32], half[32];
+			(void)snprintf(width, sizeof width, "\"u32\":%u", fixtureData_fromFloat(72.5f));
+			(void)snprintf(half, sizeof half, "\"u32\":%u", fixtureData_fromFloat(36.25f));
+			ASSERT_BOOL_EQ(strstr(buffer_string(&json), width) != NULL, true);
+			ASSERT_BOOL_EQ(strstr(buffer_string(&json), half) != NULL, true);
+		}
+		if (expectedPlayerInput) {
+			FixtureData *data = malloc(sizeof *data);
+			ASSERT_BOOL_EQ(data != NULL, true);
+			if (data) {
+				char error[256];
+				ASSERT_BOOL_EQ(
+					fixtureData_read(buffer_string(&json), json.length, data, error, sizeof error), true
+				);
+				ASSERT_BOOL_EQ(data->teams[0].players[0].morale.value == 20, true);
+				ASSERT_BOOL_EQ(data->teams[0].players[1].morale.value == 12, true);
+				const FixturePlayer *player = &data->teams[1].players[11];
+				ASSERT_BOOL_EQ(
+					player->condition.value == 10000 && player->sharpness[0].value == 10000 &&
+						player->sharpness[1].value == 10000 && player->fatigue.value == 0,
+					true
+				);
+				free(data);
+			}
+		}
 		buffer_free(&json);
 	} else {
 		ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
 	}
 	ASSERT_INT_EQ(wcscmp(argv[3], expectedSeeds), 0);
-	unsigned option = expectedVenueInput ? 5 : 4;
+	unsigned option = editedInput ? 5 : 4;
 	ASSERT_INT_EQ(wcscmp(argv[option], L"--threads"), 0);
 	ASSERT_INT_EQ(wcscmp(argv[option + 1], expectedThreads), 0);
 	if (expectedDetailed) {
@@ -466,6 +489,34 @@ bool fixtureLoad_saveVenue(
 	buffer_free(&json);
 	return ok;
 }
+
+bool fixtureLoad_saveEdits(
+	const wchar_t *input,
+	const wchar_t *output,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	const FixturePlayerEdits *players,
+	char *error,
+	size_t errorSize
+) {
+	if (!fixtureData_hasPlayerEdits(players)) {
+		return fixtureLoad_saveVenue(input, output, values, error, errorSize);
+	}
+	ByteBuffer json = {0}, edited = {0}, venue = {0};
+	bool ok =
+		files_read(input, &json) &&
+		fixtureData_writePlayers(buffer_string(&json), json.length, players, &edited, error, errorSize);
+	if (ok && values) {
+		ok = fixtureData_writeVenue(
+			buffer_string(&edited), edited.length, values, &venue, error, errorSize
+		);
+	}
+	const ByteBuffer *result = values ? &venue : &edited;
+	ok = ok && files_write(output, result->data, result->length);
+	buffer_free(&venue);
+	buffer_free(&edited);
+	buffer_free(&json);
+	return ok;
+}
 static void firstLine(HWND metadata, const wchar_t *expected) {
 	wchar_t text[8192] = {0};
 	ASSERT_BOOL_EQ(GetWindowTextW(metadata, text, 8192) > 0, true);
@@ -537,6 +588,9 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 		ASSERT_BOOL_EQ(controlVisible(state->headings[i]), tab == 0);
 		ASSERT_BOOL_EQ(controlVisible(state->pitches[i]), tab == 0);
 		ASSERT_BOOL_EQ(controlVisible(state->lists[i]), tab == 0);
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			ASSERT_BOOL_EQ(controlVisible(state->playerButtons[i][button]), tab == 0);
+		}
 	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		ASSERT_BOOL_EQ(controlVisible(state->simulation[i]), tab == 2);
@@ -623,6 +677,10 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 	MapWindowPoints(state->tabs, window, (POINT *)&page, 2);
 	HWND contents[] = {state->headings[0],
 		state->headings[1],
+		state->playerButtons[0][PLAYER_HAPPINESS],
+		state->playerButtons[0][PLAYER_CONDITION],
+		state->playerButtons[1][PLAYER_HAPPINESS],
+		state->playerButtons[1][PLAYER_CONDITION],
 		state->lists[0],
 		state->lists[1],
 		state->simulation[SIM_THREADS_LABEL],
@@ -719,7 +777,7 @@ checkTeamHeading(HWND window, WindowState *state, unsigned side, const wchar_t *
 	RECT pitch = controlBounds(window, state->pitches[side]);
 	RECT list = controlBounds(window, state->lists[side]);
 	int width = extent.cx + scaled(state, 4);
-	int maximum = list.right - pitch.left - scaled(state, 27);
+	int maximum = list.right - pitch.left - scaled(state, 27 + PLAYER_BUTTON_COUNT * 126);
 	ASSERT_INT_EQ(heading.right - heading.left, width < maximum ? width : maximum);
 	if (width <= maximum) {
 		wchar_t text[2 * FIXTURE_TEXT + 128] = {0};
@@ -1333,6 +1391,143 @@ static void checkVenueForm(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(setVenue(state), true);
 }
 
+static void checkPlayerControls(HWND window, WindowState *state) {
+	FixtureData *original = malloc(sizeof *original);
+	ASSERT_BOOL_EQ(original != NULL, true);
+	if (!original) {
+		return;
+	}
+	*original = *state->data;
+	ByteBuffer json = {0};
+	fixtureTest_config(&json);
+	char error[256];
+	ASSERT_BOOL_EQ(
+		fixtureData_read(buffer_string(&json), json.length, state->data, error, sizeof error), true
+	);
+	buffer_free(&json);
+	state->data->teams[0].players[1].name[0] = 0;
+	for (unsigned side = 0; side < 2; ++side) {
+		ASSERT_BOOL_EQ(fillList(state, side), true);
+		HWND list = state->lists[side];
+		wchar_t text[32];
+		LVCOLUMNW column = {.mask = LVCF_TEXT, .pszText = text, .cchTextMax = 32};
+		ASSERT_BOOL_EQ(SendMessageW(list, LVM_GETCOLUMNW, 0, (LPARAM)&column), true);
+		ASSERT_INT_EQ(wcscmp(text, L"Select"), 0);
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[side][button]), false);
+			RECT heading = controlBounds(window, state->headings[side]);
+			RECT bounds = controlBounds(window, state->playerButtons[side][button]);
+			ASSERT_INT_EQ(bounds.top, heading.top);
+			ASSERT_BOOL_EQ(bounds.left > heading.right, true);
+		}
+	}
+	ASSERT_INT_EQ(ListView_GetItemCount(state->lists[0]), 12);
+	ASSERT_INT_EQ(ListView_GetItemCount(state->lists[1]), 12 + FIXTURE_SLOTS);
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[0], 1, LVIS_STATEIMAGEMASK) == 0, true);
+	ASSERT_BOOL_EQ(ListView_GetItemState(state->lists[1], 0, LVIS_STATEIMAGEMASK) == 0, true);
+	NMLISTVIEW unknown = {.hdr = {.hwndFrom = state->lists[1], .code = (UINT)LVN_ITEMCHANGING},
+		.iItem = 0,
+		.uChanged = LVIF_STATE,
+		.uNewState = INDEXTOSTATEIMAGEMASK(2)};
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&unknown) == TRUE, true);
+	for (unsigned side = 0; side < 2; ++side) {
+		unsigned row = side ? FIXTURE_SLOTS : 0;
+		ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[side], row), false);
+		ListView_SetCheckState(state->lists[side], row, TRUE);
+		NMLISTVIEW selected = {.hdr = {.hwndFrom = state->lists[side], .code = (UINT)LVN_ITEMCHANGED},
+			.iItem = (int)row,
+			.uChanged = LVIF_STATE,
+			.uOldState = INDEXTOSTATEIMAGEMASK(1),
+			.uNewState = INDEXTOSTATEIMAGEMASK(2),
+			.lParam = 1};
+		ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&selected) == 0, true);
+		ASSERT_BOOL_EQ(state->selectedPlayers[side][0], true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[side][0]), true);
+		if (!side) {
+			ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[1][0]), false);
+		}
+	}
+	state->selectedPlayers[0][11] = true;
+	ASSERT_BOOL_EQ(fillList(state, 0), true);
+	ASSERT_BOOL_EQ(ListView_EnsureVisible(state->lists[0], 11, FALSE), true);
+	int firstVisible = ListView_GetTopIndex(state->lists[0]);
+	for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+		ASSERT_BOOL_EQ(
+			windowProcedure(
+				window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->playerButtons[0][button]
+			) == 0,
+			true
+		);
+	}
+	for (unsigned i = 0; i < 12; ++i) {
+		FixturePlayer *player = &state->data->teams[0].players[i];
+		bool changed = i == 0 || i == 11;
+		ASSERT_BOOL_EQ(player->morale.value == (changed ? 20U : 12U), true);
+		ASSERT_BOOL_EQ(player->condition.value == (changed ? 10000U : 9876U), true);
+		ASSERT_BOOL_EQ(player->sharpness[0].value == (changed ? 10000U : 8125U), true);
+		ASSERT_BOOL_EQ(player->sharpness[1].value == (changed ? 10000U : 5650U), true);
+		ASSERT_BOOL_EQ(player->fatigue.value == (changed ? 0U : 65535U), true);
+		ASSERT_BOOL_EQ(
+			state->playerEdits.players[0][i] ==
+				(changed ? FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION : 0),
+			true
+		);
+	}
+	ASSERT_BOOL_EQ(state->data->teams[1].players[0].morale.value == 12, true);
+	ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[0], 0), true);
+	ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[0], 11), true);
+	ASSERT_INT_EQ(ListView_GetTopIndex(state->lists[0]), firstVisible);
+	static const wchar_t *const expected[] = {L"20", L"100.00%", L"100.00%", L"0"};
+	for (unsigned i = 0; i < 4; ++i) {
+		wchar_t text[64];
+		LVITEMW cell = {.iSubItem = (int)i + 6, .pszText = text, .cchTextMax = 64};
+		ASSERT_BOOL_EQ(SendMessageW(state->lists[0], LVM_GETITEMTEXTW, 11, (LPARAM)&cell) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, expected[i]), 0);
+	}
+	ASSERT_BOOL_EQ(
+		windowProcedure(
+			window,
+			WM_COMMAND,
+			MAKEWPARAM(0, BN_CLICKED),
+			(LPARAM)state->playerButtons[1][PLAYER_HAPPINESS]
+		) == 0,
+		true
+	);
+	ASSERT_BOOL_EQ(state->data->teams[1].players[0].morale.value == 20, true);
+	ASSERT_BOOL_EQ(state->data->teams[1].players[1].morale.value == 12, true);
+	firstLine(state->metadata, L"Viewing fixture: temp-fixture.json (unsaved player edits)");
+	changeTab(window, state, 1);
+	changeTab(window, state, 0);
+	ASSERT_BOOL_EQ(ListView_GetCheckState(state->lists[0], 0), true);
+	NMLISTVIEW deselected = {.hdr = {.hwndFrom = state->lists[1], .code = (UINT)LVN_ITEMCHANGED},
+		.iItem = FIXTURE_SLOTS,
+		.uChanged = LVIF_STATE,
+		.uOldState = INDEXTOSTATEIMAGEMASK(2),
+		.uNewState = INDEXTOSTATEIMAGEMASK(1),
+		.lParam = 1};
+	ListView_SetCheckState(state->lists[1], FIXTURE_SLOTS, FALSE);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&deselected) == 0, true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[1][0]), false);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[0][0]), true);
+	state->fileThread = GetCurrentThread();
+	enablePlayers(state);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->lists[0]), false);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[0][0]), false);
+	state->fileThread = NULL;
+	enablePlayers(state);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->playerButtons[0][0]), true);
+	discardAnswer = IDNO;
+	ASSERT_BOOL_EQ(closeBlocked(window, state), true);
+	discardAnswer = IDYES;
+	ASSERT_BOOL_EQ(closeBlocked(window, state), false);
+	discardAnswer = IDNO;
+	*state->data = *original;
+	free(original);
+	memset(&state->playerEdits, 0, sizeof state->playerEdits);
+	memset(state->selectedPlayers, 0, sizeof state->selectedPlayers);
+	ASSERT_BOOL_EQ(setMetadata(state) && fillList(state, 0) && fillList(state, 1), true);
+}
+
 static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	INITCOMMONCONTROLSEX controls = {.dwSize = sizeof controls,
 		.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_UPDOWN_CLASS | ICC_PROGRESS_CLASS};
@@ -1359,6 +1554,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		ASSERT_INT_EQ(list.top, heading.bottom);
 	}
 	checkFonts(window, &state);
+	checkPlayerControls(window, &state);
 	checkVenueForm(window, &state);
 	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
 	for (unsigned i = 0; i < 2; ++i) {
@@ -1625,6 +1821,18 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(fileMissing(simulationTemporary), true);
 	checkContents(venuePath, venueFixture);
 	expectedVenueInput = false;
+	ByteBuffer squad = {0};
+	fixtureTest_config(&squad);
+	ASSERT_BOOL_EQ(files_write(venuePath, squad.data, squad.length), true);
+	memset(venueJob.venueValues, 0, sizeof venueJob.venueValues);
+	venueJob.playerEdits.players[0][0] = FIXTURE_MAX_HAPPINESS;
+	venueJob.playerEdits.players[1][11] = FIXTURE_MAX_CONDITION;
+	expectedPlayerInput = true;
+	ASSERT_INT_EQ((int)simulateFixture(&venueJob), 0);
+	ASSERT_BOOL_EQ(fileMissing(simulationTemporary), true);
+	checkContents(venuePath, buffer_string(&squad));
+	expectedPlayerInput = false;
+	buffer_free(&squad);
 	ASSERT_BOOL_EQ(DeleteFileW(venuePath), true);
 	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
 	ASSERT_BOOL_EQ(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS, true);

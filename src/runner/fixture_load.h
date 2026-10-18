@@ -22,3 +22,13 @@ bool fixtureLoad_saveVenue(
 	char *error,
 	size_t errorSize
 );
+
+// Applies pending player and venue edits without changing the source unless input == output.
+bool fixtureLoad_saveEdits(
+	const wchar_t *input,
+	const wchar_t *output,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	const FixturePlayerEdits *players,
+	char *error,
+	size_t errorSize
+);

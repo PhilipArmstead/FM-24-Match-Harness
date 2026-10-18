@@ -148,20 +148,22 @@ bool fixtureLoad_save(const wchar_t *input, const wchar_t *output, char *error, 
 	return fixtureLoad_saveVenue(input, output, NULL, error, errorSize);
 }
 
-// The fixture as JSON, the JSON with venue edits and its binary encoding, as a save needs them.
+// The fixture as JSON, after player/venue edits and its binary encoding, as a save needs them.
 typedef struct SaveBuffers {
 	ByteBuffer text;
+	ByteBuffer players;
 	ByteBuffer edited;
 	ByteBuffer encoded;
 } SaveBuffers;
 
-// Reads the input as JSON, applies the venue edits (if any) and encodes it for a binary output.
+// Reads the input as JSON, applies pending edits and encodes it for a binary output.
 // Returns the bytes to save.
 static const ByteBuffer *convertFixture(
 	const wchar_t *input,
 	bool inputBinary,
 	bool outputBinary,
 	const FixtureNumber values[VENUE_FIELD_COUNT],
+	const FixturePlayerEdits *players,
 	SaveBuffers *buffers,
 	char *error,
 	size_t errorSize
@@ -175,14 +177,17 @@ static const ByteBuffer *convertFixture(
 		return NULL;
 	}
 	const ByteBuffer *json = &buffers->text;
+	if (fixtureData_hasPlayerEdits(players)) {
+		if (!fixtureData_writePlayers(
+					buffer_string(json), json->length, players, &buffers->players, error, errorSize
+				)) {
+			return NULL;
+		}
+		json = &buffers->players;
+	}
 	if (values) {
 		if (!fixtureData_writeVenue(
-					buffer_string(&buffers->text),
-					buffers->text.length,
-					values,
-					&buffers->edited,
-					error,
-					errorSize
+					buffer_string(json), json->length, values, &buffers->edited, error, errorSize
 				)) {
 			return NULL;
 		}
@@ -205,6 +210,17 @@ bool fixtureLoad_saveVenue(
 	char *error,
 	size_t errorSize
 ) {
+	return fixtureLoad_saveEdits(input, output, values, NULL, error, errorSize);
+}
+
+bool fixtureLoad_saveEdits(
+	const wchar_t *input,
+	const wchar_t *output,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	const FixturePlayerEdits *players,
+	char *error,
+	size_t errorSize
+) {
 	bool inputBinary = files_hasExtension(input, L".bin");
 	bool outputBinary = files_hasExtension(output, L".bin");
 	if ((!inputBinary && !files_hasExtension(input, L".json")) ||
@@ -215,8 +231,9 @@ bool fixtureLoad_saveVenue(
 	SaveBuffers buffers = {0};
 	bool ok = true;
 	const ByteBuffer *bytes = NULL; // NULL copies the input as it is
-	if (values || inputBinary != outputBinary) {
-		bytes = convertFixture(input, inputBinary, outputBinary, values, &buffers, error, errorSize);
+	if (values || fixtureData_hasPlayerEdits(players) || inputBinary != outputBinary) {
+		bytes =
+			convertFixture(input, inputBinary, outputBinary, values, players, &buffers, error, errorSize);
 		ok = bytes != NULL;
 	}
 	if (ok) {
@@ -224,6 +241,7 @@ bool fixtureLoad_saveVenue(
 	}
 	buffer_free(&buffers.encoded);
 	buffer_free(&buffers.edited);
+	buffer_free(&buffers.players);
 	buffer_free(&buffers.text);
 	return ok;
 }

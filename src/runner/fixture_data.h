@@ -67,6 +67,22 @@ typedef struct FixtureData {
 	FixtureTeam teams[2];
 } FixtureData;
 
+enum { FIXTURE_MAX_HAPPINESS = 1, FIXTURE_MAX_CONDITION = 2 };
+
+typedef struct FixturePlayerEdits {
+	uint8_t players[2][FIXTURE_PLAYERS];
+} FixturePlayerEdits;
+
+bool fixtureData_hasPlayerEdits(const FixturePlayerEdits *edits);
+bool fixtureData_writePlayers(
+	const char *json,
+	size_t length,
+	const FixturePlayerEdits *edits,
+	ByteBuffer *out,
+	char *error,
+	size_t errorSize
+);
+
 // No game or Windows dependencies. Reads numeric values, never the advisory "flags" strings.
 bool fixtureData_read(
 	const char *json,

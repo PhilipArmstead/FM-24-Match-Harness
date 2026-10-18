@@ -135,12 +135,13 @@ finishes. Thread bounds reuse the CLI default (logical CPUs minus one,
 clamped to 1-16). Seed patterns are limited to 255 characters, checked for
 job-safe characters before submission, and fully parsed by the DLL. Outputs
 follow the CLI's fixture-based naming, using the saved copy after export.
-With venue values, the worker writes an edited temporary JSON fixture and
-passes an explicit results path beside the viewed fixture, then removes the
-temporary input. The source is never overwritten by simulation. Save operations
-snapshot the venue controls before starting their worker and replace the
-destination atomically. Unstored edits are marked in the summary, and opening
-another fixture or closing asks before discarding them.
+With venue values or pending player edits, the worker writes an edited temporary
+JSON fixture and passes an explicit results path beside the viewed fixture,
+then removes the temporary input. The source is never overwritten by simulation.
+Save operations snapshot the venue controls and player edits before starting
+their worker and replace the destination atomically. Unstored edits are marked
+in the summary, and opening another fixture or closing asks before discarding
+them.
 
 When configuring CMake directly, use `-DFM24_BUILD_TESTS=ON` to include the
 test executable. Its portable reader and filename checks can also be built

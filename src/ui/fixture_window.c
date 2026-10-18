@@ -43,6 +43,8 @@ enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
 enum { TEAM_ICON, TEAM_INPUT, TEAM_CONFIRM, TEAM_CANCEL, TEAM_ERROR, TEAM_CONTROL_COUNT };
 
+enum { PLAYER_HAPPINESS, PLAYER_CONDITION, PLAYER_BUTTON_COUNT };
+
 enum {
 	SIM_THREADS_LABEL,
 	SIM_THREADS,
@@ -59,6 +61,7 @@ enum {
 typedef struct SimulationJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	FixtureNumber venueValues[VENUE_FIELD_COUNT];
+	FixturePlayerEdits playerEdits;
 	char error[CLIENT_RESULT_LENGTH];
 	wchar_t seeds[256];
 	wchar_t threads[16];
@@ -73,6 +76,7 @@ typedef struct ReplaceTeamJob {
 	char error[CLIENT_RESULT_LENGTH];
 	FixtureData *data;
 	FixtureNumber venueValues[VENUE_FIELD_COUNT];
+	FixturePlayerEdits playerEdits;
 	unsigned side;
 } ReplaceTeamJob;
 
@@ -94,6 +98,7 @@ typedef struct FileJob {
 	char error[CLIENT_RESULT_LENGTH];
 	FixtureData *data;
 	FixtureNumber venueValues[VENUE_FIELD_COUNT];
+	FixturePlayerEdits playerEdits;
 	bool save;
 	bool temporary;
 } FileJob;
@@ -111,6 +116,9 @@ typedef struct WindowState {
 	wchar_t headingText[2][2 * FIXTURE_TEXT + 128];
 	HWND pitches[2];
 	HWND lists[2];
+	HWND playerButtons[2][PLAYER_BUTTON_COUNT];
+	bool selectedPlayers[2][FIXTURE_PLAYERS];
+	FixturePlayerEdits playerEdits;
 	HWND simulation[SIM_CONTROL_COUNT];
 	HWND venueLabels[VENUE_FIELD_COUNT];
 	HWND venueInputs[VENUE_FIELD_COUNT];
@@ -146,6 +154,7 @@ typedef struct WindowState {
 	bool editingTeam[2];
 	bool filteringTeams; // a picker's list is being refilled (ignore its own edit notifications)
 	bool fillingVenue;
+	bool fillingPlayers;
 	bool venueDirty;
 } WindowState;
 
@@ -157,6 +166,7 @@ static const wchar_t unsavedPrefix[] = L"This fixture object is not saved. ";
 static const wchar_t exportLink[] = L"Click here";
 static const wchar_t missingFixture[] = L"Fixture cannot be found; restart the app";
 static const wchar_t *const columns[] = {
+	L"Select",
 	L"Slot",
 	L"Player",
 	L"Position",
@@ -167,7 +177,7 @@ static const wchar_t *const columns[] = {
 	L"Sharpness",
 	L"Fatigue",
 };
-static const int columnWidths[] = {38, 210, 65, 185, 75, 65, 85, 90, 70};
+static const int columnWidths[] = {55, 38, 210, 65, 185, 75, 65, 85, 90, 70};
 static const wchar_t *const venueLabels[VENUE_FIELD_COUNT] = {
 	L"Pitch width (m):",
 	L"Pitch length (m):",
@@ -200,6 +210,20 @@ static void showFileError(HWND window, const char *error);
 static void removeReplacement(const wchar_t *path);
 static bool
 startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary);
+
+static void enablePlayers(const WindowState *state) {
+	bool idle = !state->simulationThread && !state->replacementThread && !state->fileThread;
+	for (unsigned side = 0; side < 2; ++side) {
+		bool selected = false;
+		for (unsigned i = 0; i < FIXTURE_PLAYERS; ++i) {
+			selected = selected || state->selectedPlayers[side][i];
+		}
+		EnableWindow(state->lists[side], idle);
+		for (unsigned i = 0; i < PLAYER_BUTTON_COUNT; ++i) {
+			EnableWindow(state->playerButtons[side][i], idle && selected);
+		}
+	}
+}
 
 static bool hasVenue(const FixtureNumber values[VENUE_FIELD_COUNT]) {
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
@@ -433,12 +457,17 @@ static DWORD WINAPI simulateFixture(LPVOID parameter) {
 	SimulationJob *job = parameter;
 	wchar_t temporary[HARNESS_PATH_LENGTH] = L"";
 	wchar_t output[HARNESS_PATH_LENGTH];
-	if (hasVenue(job->venueValues)) {
+	if (hasVenue(job->venueValues) || fixtureData_hasPlayerEdits(&job->playerEdits)) {
 		if (!temporaryJson(temporary, job->error, sizeof job->error)) {
 			return 1;
 		}
-		if (!fixtureLoad_saveVenue(
-					job->input, temporary, job->venueValues, job->error, sizeof job->error
+		if (!fixtureLoad_saveEdits(
+					job->input,
+					temporary,
+					hasVenue(job->venueValues) ? job->venueValues : NULL,
+					&job->playerEdits,
+					job->error,
+					sizeof job->error
 				)) {
 			removeReplacement(temporary);
 			return 1;
@@ -514,6 +543,7 @@ static void startSimulation(HWND window, WindowState *state) {
 		return;
 	}
 	job->detailed = SendMessageW(state->simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_CHECKED;
+	job->playerEdits = state->playerEdits;
 	job->progressWindow = (uintptr_t)window;
 	if (!SetTimer(window, SIMULATION_TIMER, 200, NULL)) {
 		showError(window, L"Cannot monitor the simulation.");
@@ -542,6 +572,7 @@ static void startSimulation(HWND window, WindowState *state) {
 		EnableWindow(state->fileButtons[i], FALSE);
 	}
 	enableVenue(state, FALSE);
+	enablePlayers(state);
 	SendMessageW(state->progress, PBM_SETRANGE32, 0, 1);
 	SendMessageW(state->progress, PBM_SETPOS, 0, 0);
 	ShowWindow(state->progress, SW_SHOW);
@@ -594,6 +625,7 @@ static void checkSimulation(HWND window, WindowState *state) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
 	enableVenue(state, TRUE);
+	enablePlayers(state);
 	const wchar_t *message =
 		result == 0
 			? L"Simulation complete. Results were saved beside the fixture; see the console for paths."
@@ -615,6 +647,9 @@ static void selectTab(WindowState *state) {
 		ShowWindow(state->headings[i], tab == 0 ? SW_SHOW : SW_HIDE);
 		ShowWindow(state->pitches[i], tab == 0 ? SW_SHOW : SW_HIDE);
 		ShowWindow(state->lists[i], tab == 0 ? SW_SHOW : SW_HIDE);
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			ShowWindow(state->playerButtons[i][button], tab == 0 ? SW_SHOW : SW_HIDE);
+		}
 	}
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
 		ShowWindow(state->venueLabels[i], tab == 1 ? SW_SHOW : SW_HIDE);
@@ -712,7 +747,10 @@ static bool setMetadata(WindowState *state) {
 			L"%ls%ls%ls\r\n",
 			filenamePrefix,
 			state->filename,
-			state->venueDirty ? L" (unsaved venue edits)" : L""
+			fixtureData_hasPlayerEdits(&state->playerEdits)
+				? (state->venueDirty ? L" (unsaved venue and player edits)" : L" (unsaved player edits)")
+			: state->venueDirty ? L" (unsaved venue edits)"
+													: L""
 		);
 	}
 	if (length < 0 || !widen(text, wide + length, 8192 - (size_t)length) ||
@@ -767,7 +805,7 @@ static bool exportFilename(HWND window, const WindowState *state, wchar_t *filen
 	return true;
 }
 
-// The file to export: the fixture itself or, with venue values, a temporary copy (in `edited`,
+// The file to export: the fixture itself or, with edits, a temporary copy (in `edited`,
 // which the caller removes) that has them. NULL after showing an error.
 static const wchar_t *exportInput(
 	HWND window,
@@ -775,7 +813,7 @@ static const wchar_t *exportInput(
 	const FixtureNumber values[VENUE_FIELD_COUNT],
 	wchar_t edited[HARNESS_PATH_LENGTH]
 ) {
-	if (!hasVenue(values)) {
+	if (!hasVenue(values) && !fixtureData_hasPlayerEdits(&state->playerEdits)) {
 		return state->path;
 	}
 	char error[512];
@@ -783,7 +821,14 @@ static const wchar_t *exportInput(
 		showFileError(window, error);
 		return NULL;
 	}
-	if (!fixtureLoad_saveVenue(state->path, edited, values, error, sizeof error)) {
+	if (!fixtureLoad_saveEdits(
+				state->path,
+				edited,
+				hasVenue(values) ? values : NULL,
+				&state->playerEdits,
+				error,
+				sizeof error
+			)) {
 		removeReplacement(edited);
 		showFileError(window, error);
 		return NULL;
@@ -791,7 +836,7 @@ static const wchar_t *exportInput(
 	return edited;
 }
 
-// Copies the fixture, with any venue edits, to a new export file. False after showing an error.
+// Copies the fixture, with any pending edits, to a new export file. False after showing an error.
 static bool writeExport(HWND window, WindowState *state) {
 	wchar_t filename[FIXTURE_EXPORT_FILENAME_LENGTH];
 	FixtureNumber values[VENUE_FIELD_COUNT];
@@ -812,6 +857,7 @@ static bool writeExport(HWND window, WindowState *state) {
 		state->temporary = false;
 		memcpy(state->data->venueValues, values, sizeof values);
 		state->venueDirty = false;
+		memset(&state->playerEdits, 0, sizeof state->playerEdits);
 	} else if (fileMissing(state->path)) {
 		state->missing = true;
 	} else {
@@ -931,16 +977,26 @@ static void roleTitle(const char *name, char *out, size_t size) {
 	out[i] = 0;
 }
 
-static bool insertListRow(HWND list, unsigned row, char cells[9][FIXTURE_TEXT]) {
+static bool setListCell(HWND list, unsigned row, unsigned column, const char *text) {
+	wchar_t wide[FIXTURE_TEXT];
+	if (!widen(text, wide, FIXTURE_TEXT)) {
+		return false;
+	}
+	LVITEMW item = {.iSubItem = (int)column, .pszText = wide};
+	return SendMessageW(list, LVM_SETITEMTEXTW, row, (LPARAM)&item) != FALSE;
+}
+
+static bool
+insertListRow(HWND list, unsigned row, char cells[9][FIXTURE_TEXT], int player, bool checked) {
+	LVITEMW selection = {
+		.mask = LVIF_TEXT | LVIF_PARAM, .iItem = (int)row, .pszText = L"", .lParam = player + 1};
+	if (SendMessageW(list, LVM_INSERTITEMW, 0, (LPARAM)&selection) == -1) {
+		return false;
+	}
+	unsigned image = player < 0 ? 0 : checked ? 2 : 1;
+	ListView_SetItemState(list, (int)row, INDEXTOSTATEIMAGEMASK(image), LVIS_STATEIMAGEMASK);
 	for (unsigned cell = 0; cell < 9; ++cell) {
-		wchar_t wide[FIXTURE_TEXT];
-		if (!widen(cells[cell], wide, FIXTURE_TEXT)) {
-			return false;
-		}
-		LVITEMW item = {.mask = LVIF_TEXT, .iItem = (int)row, .iSubItem = (int)cell, .pszText = wide};
-		bool ok = cell == 0 ? SendMessageW(list, LVM_INSERTITEMW, 0, (LPARAM)&item) != -1
-												: SendMessageW(list, LVM_SETITEMTEXTW, row, (LPARAM)&item) != FALSE;
-		if (!ok) {
+		if (!setListCell(list, row, cell + 1, cells[cell])) {
 			return false;
 		}
 	}
@@ -950,6 +1006,7 @@ static bool insertListRow(HWND list, unsigned row, char cells[9][FIXTURE_TEXT]) 
 static bool fillList(WindowState *state, unsigned side) {
 	HWND list = state->lists[side];
 	const FixtureTeam *team = &state->data->teams[side];
+	state->fillingPlayers = true;
 	SendMessageW(list, WM_SETREDRAW, FALSE, 0);
 	ListView_DeleteAllItems(list);
 	unsigned count = (unsigned)team->playerCount.value + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
@@ -981,11 +1038,91 @@ static bool fillList(WindowState *state, unsigned side) {
 			cells[4][0] = 0;
 		}
 		playerCells(player, cells);
-		ok = insertListRow(list, i, cells);
+		int playerIndex =
+			player && player->present && player->name[0] && strcmp(player->name, "<Unknown>") != 0
+				? (int)(player - team->players)
+				: -1;
+		ok = insertListRow(
+			list, i, cells, playerIndex, playerIndex >= 0 && state->selectedPlayers[side][playerIndex]
+		);
 	}
+	state->fillingPlayers = false;
 	SendMessageW(list, WM_SETREDRAW, TRUE, 0);
 	InvalidateRect(list, NULL, TRUE);
+	enablePlayers(state);
 	return ok;
+}
+
+static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned button) {
+	if (state->simulationThread || state->replacementThread || state->fileThread) {
+		return;
+	}
+	FixtureTeam *team = &state->data->teams[side];
+	bool selected = false;
+	for (unsigned i = 0; i < FIXTURE_PLAYERS; ++i) {
+		if (!state->selectedPlayers[side][i]) {
+			continue;
+		}
+		const FixturePlayer *player = &team->players[i];
+		if (!player->present || !player->name[0] || strcmp(player->name, "<Unknown>") == 0 ||
+				(button == PLAYER_HAPPINESS ? !player->morale.known
+																		: !player->condition.known || !player->sharpness[0].known ||
+																				!player->sharpness[1].known || !player->fatigue.known)) {
+			showError(window, L"The selected player is missing wellbeing data; no players were changed.");
+			return;
+		}
+		selected = true;
+	}
+	if (!selected) {
+		return;
+	}
+	bool ok = true;
+	for (unsigned i = 0; i < FIXTURE_PLAYERS; ++i) {
+		if (!state->selectedPlayers[side][i]) {
+			continue;
+		}
+		FixturePlayer *player = &team->players[i];
+		if (button == PLAYER_HAPPINESS) {
+			player->morale.value = 20;
+			state->playerEdits.players[side][i] |= FIXTURE_MAX_HAPPINESS;
+		} else {
+			player->condition.value = 10000;
+			player->sharpness[0].value = 10000;
+			player->sharpness[1].value = 10000;
+			player->fatigue.value = 0;
+			state->playerEdits.players[side][i] |= FIXTURE_MAX_CONDITION;
+		}
+		char cells[9][FIXTURE_TEXT] = {"", "", "", "", "", "-", "-", "-", "-"};
+		playerCells(player, cells);
+		unsigned row = i + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
+		for (unsigned cell = 5; cell < 9; ++cell) {
+			ok = setListCell(state->lists[side], row, cell + 1, cells[cell]) && ok;
+		}
+	}
+	if (!ok || !setMetadata(state)) {
+		showError(window, L"Cannot display the player edits.");
+		state->failed = true;
+		DestroyWindow(window);
+	}
+}
+
+static LRESULT
+playerNotification(WindowState *state, const NMLISTVIEW *notification, unsigned side) {
+	if (state->fillingPlayers || notification->iItem < 0 || !(notification->uChanged & LVIF_STATE) ||
+			!((notification->uOldState ^ notification->uNewState) & LVIS_STATEIMAGEMASK)) {
+		return 0;
+	}
+	LPARAM player = notification->lParam - 1;
+	bool valid = player >= 0 && player < FIXTURE_PLAYERS;
+	if (notification->hdr.code == (UINT)LVN_ITEMCHANGING) {
+		return !valid || state->simulationThread || state->replacementThread || state->fileThread;
+	}
+	if (notification->hdr.code == (UINT)LVN_ITEMCHANGED && valid) {
+		state->selectedPlayers[side][player] =
+			(notification->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK(2);
+		enablePlayers(state);
+	}
+	return 0;
 }
 
 static void removeReplacement(const wchar_t *path) {
@@ -1264,8 +1401,10 @@ static DWORD WINAPI replaceTeam(LPVOID parameter) {
 		job->team,
 		job->output,
 		NULL};
-	if (files_hasExtension(job->input, L".bin")) {
-		if (!fixtureLoad_save(job->input, job->output, job->error, sizeof job->error)) {
+	if (files_hasExtension(job->input, L".bin") || fixtureData_hasPlayerEdits(&job->playerEdits)) {
+		if (!fixtureLoad_saveEdits(
+					job->input, job->output, NULL, &job->playerEdits, job->error, sizeof job->error
+				)) {
 			return 1;
 		}
 		arguments[2] = job->output;
@@ -1290,6 +1429,8 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 	}
 	ReplaceTeamJob *job = &state->replacementJob;
 	job->side = side;
+	job->playerEdits = state->playerEdits;
+	memset(job->playerEdits.players[side], 0, sizeof job->playerEdits.players[side]);
 	int length = GetWindowTextW(state->teamControls[side][TEAM_INPUT], job->team, 256);
 	char team[256];
 	if (!length || GetWindowTextLengthW(state->teamControls[side][TEAM_INPUT]) >= 256 ||
@@ -1344,6 +1485,7 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 		EnableWindow(state->fileButtons[i], FALSE);
 	}
 	enableVenue(state, FALSE);
+	enablePlayers(state);
 	SetFocus(state->tabs);
 }
 
@@ -1376,6 +1518,7 @@ static void checkReplacement(HWND window, WindowState *state) {
 		EnableWindow(state->fileButtons[i], TRUE);
 	}
 	enableVenue(state, TRUE);
+	enablePlayers(state);
 	ReplaceTeamJob *job = &state->replacementJob;
 	unsigned side = job->side;
 	if (result == 0) {
@@ -1387,6 +1530,8 @@ static void checkReplacement(HWND window, WindowState *state) {
 		state->temporary = true;
 		state->missing = false;
 		*state->data = *job->data;
+		memset(&state->playerEdits, 0, sizeof state->playerEdits);
+		memset(state->selectedPlayers, 0, sizeof state->selectedPlayers);
 		state->editingTeam[0] = false;
 		state->editingTeam[1] = false;
 		if (!setVenue(state) || !setMetadata(state) || !setHeadings(state) || !fillList(state, 0) ||
@@ -1453,10 +1598,11 @@ static void showFileError(HWND window, const char *error) {
 static DWORD WINAPI fixtureFile(LPVOID parameter) {
 	FileJob *job = parameter;
 	return !(
-		job->save ? fixtureLoad_saveVenue(
+		job->save ? fixtureLoad_saveEdits(
 									job->input,
 									job->output,
 									hasVenue(job->venueValues) ? job->venueValues : NULL,
+									&job->playerEdits,
 									job->error,
 									sizeof job->error
 								)
@@ -1476,6 +1622,7 @@ static void enableFileControls(const WindowState *state, BOOL enable) {
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], enable);
 	enableVenue(state, enable);
+	enablePlayers(state);
 }
 
 static bool
@@ -1486,6 +1633,7 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 	}
 	FileJob *job = &state->fileJob;
 	*job = (FileJob){.save = save, .temporary = temporary};
+	job->playerEdits = state->playerEdits;
 	if (save && !readVenue(window, state, job->venueValues)) {
 		return false;
 	}
@@ -1525,11 +1673,13 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 // Shows the fixture a successful file operation opened or saved.
 static void showFileResult(HWND window, WindowState *state, const FileJob *job) {
 	setActivePath(state, job->save ? job->output : job->input, job->temporary);
+	memset(&state->playerEdits, 0, sizeof state->playerEdits);
 	if (job->save) {
 		memcpy(state->data->venueValues, job->venueValues, sizeof job->venueValues);
 	}
 	if (!job->save) {
 		*state->data = *job->data;
+		memset(state->selectedPlayers, 0, sizeof state->selectedPlayers);
 		for (unsigned side = 0; side < 2; ++side) {
 			state->editingTeam[side] = false;
 			SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
@@ -1644,7 +1794,8 @@ static void useSelectedFile(HWND window, WindowState *state, const wchar_t *path
 		showError(window, L"Select a .json or .bin fixture with a path shorter than 1024 characters.");
 	} else if (save) {
 		(void)startFileJob(window, state, path, true, false);
-	} else if ((!state->temporary && !state->venueDirty) ||
+	} else if ((!state->temporary && !state->venueDirty &&
+							 !fixtureData_hasPlayerEdits(&state->playerEdits)) ||
 						 MessageBoxW(
 							 window,
 							 L"The current fixture has unsaved changes. Discard them and open the selected "
@@ -1782,13 +1933,16 @@ static bool setFonts(WindowState *state) {
 		SendMessageW(state->venueInputs[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
 	for (unsigned i = 0; i < 2; ++i) {
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			SendMessageW(state->playerButtons[i][button], WM_SETFONT, (WPARAM)font, TRUE);
+		}
 		for (unsigned control = 0; control < TEAM_CONTROL_COUNT; ++control) {
 			SendMessageW(state->teamControls[i][control], WM_SETFONT, (WPARAM)font, TRUE);
 		}
 		SendMessageW(state->headings[i], WM_SETFONT, (WPARAM)heading, TRUE);
 		SendMessageW(state->lists[i], WM_SETFONT, (WPARAM)font, TRUE);
 		SendMessageW(state->pitches[i], WM_SETFONT, (WPARAM)font, TRUE);
-		for (unsigned column = 0; column < 9; ++column) {
+		for (unsigned column = 0; column < sizeof columns / sizeof columns[0]; ++column) {
 			ListView_SetColumnWidth(state->lists[i], (int)column, scaled(state, columnWidths[column]));
 		}
 	}
@@ -1894,14 +2048,27 @@ static void layout(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < 2; ++i) {
 		int y = top + (int)i * (panelHeight + margin);
 		int header = scaled(state, 27);
+		int actionWidth = scaled(state, 120);
+		int buttonGap = scaled(state, 6);
+		int actionsWidth = PLAYER_BUTTON_COUNT * (actionWidth + buttonGap);
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			MoveWindow(
+				state->playerButtons[i][button],
+				left + width - actionsWidth + (int)button * (actionWidth + buttonGap) + buttonGap,
+				y,
+				actionWidth,
+				header,
+				TRUE
+			);
+		}
 		HDC dc = GetDC(window);
 		HGDIOBJ oldFont = SelectObject(dc, state->headingFont);
 		SIZE extent = {0};
 		GetTextExtentPoint32W(dc, state->headingText[i], (int)wcslen(state->headingText[i]), &extent);
 		SelectObject(dc, oldFont);
 		int headingWidth = extent.cx + scaled(state, 4);
-		if (headingWidth > width - header) {
-			headingWidth = width - header;
+		if (headingWidth > width - header - actionsWidth) {
+			headingWidth = width - header - actionsWidth;
 		}
 		MoveWindow(
 			state->teamControls[i][TEAM_ICON],
@@ -1922,7 +2089,10 @@ static void layout(HWND window, WindowState *state) {
 			x += buttonWidth + gap;
 			MoveWindow(state->teamControls[i][TEAM_CANCEL], x, y, buttonWidth, header, TRUE);
 			x += buttonWidth + gap;
-			int errorWidth = left + width - x;
+			int errorWidth = left + width - actionsWidth - x;
+			if (errorWidth < 0) {
+				errorWidth = 0;
+			}
 			int errorHeight = header - scaled(state, 4);
 			SelectObject(dc, state->font);
 			wchar_t text[2 * FIXTURE_TEXT + 128];
@@ -2171,6 +2341,26 @@ static bool createControls(HWND window, WindowState *state) {
 		return false;
 	}
 	for (unsigned i = 0; i < 2; ++i) {
+		static const wchar_t *const playerLabels[] = {L"Max happiness", L"Max condition"};
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			state->playerButtons[i][button] = CreateWindowExW(
+				0,
+				L"BUTTON",
+				playerLabels[button],
+				WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON | WS_DISABLED,
+				0,
+				0,
+				0,
+				0,
+				window,
+				NULL,
+				instance,
+				NULL
+			);
+			if (!state->playerButtons[i][button]) {
+				return false;
+			}
+		}
 		state->headings[i] = CreateWindowExW(
 			0,
 			L"STATIC",
@@ -2218,9 +2408,10 @@ static bool createControls(HWND window, WindowState *state) {
 		}
 		ListView_SetExtendedListViewStyle(
 			state->lists[i],
-			LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_GRIDLINES
+			LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_GRIDLINES |
+				LVS_EX_CHECKBOXES
 		);
-		for (unsigned column = 0; column < 9; ++column) {
+		for (unsigned column = 0; column < sizeof columns / sizeof columns[0]; ++column) {
 			LVCOLUMNW definition = {.mask = LVCF_TEXT | LVCF_WIDTH,
 				.pszText = (wchar_t *)columns[column],
 				.cx = scaled(state, columnWidths[column])};
@@ -2629,6 +2820,12 @@ static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
 		return true;
 	}
 	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+			if (control == state->playerButtons[side][button]) {
+				maxPlayers(window, state, side, button);
+				return true;
+			}
+		}
 		if (control == state->teamControls[side][TEAM_ICON]) {
 			editTeam(window, state, side, true);
 			return true;
@@ -2674,12 +2871,13 @@ static bool closeBlocked(HWND window, const WindowState *state) {
 		showError(window, L"A simulation is running. Please wait for it to finish before closing.");
 		return true;
 	}
-	if (state->venueDirty && MessageBoxW(
-														 window,
-														 L"Venue changes are not saved. Discard them and close?",
-														 L"Close fixture",
-														 MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
-													 ) != IDYES) {
+	if ((state->venueDirty || fixtureData_hasPlayerEdits(&state->playerEdits)) &&
+			MessageBoxW(
+				window,
+				L"Fixture changes are not saved. Discard them and close?",
+				L"Close fixture",
+				MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+			) != IDYES) {
 		return true;
 	}
 	return false;
@@ -2741,6 +2939,13 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 			break;
 		case WM_NOTIFY: {
 			const NMHDR *notification = (const NMHDR *)lParam;
+			for (unsigned side = 0; side < 2; ++side) {
+				if (notification->hwndFrom == state->lists[side] &&
+						(notification->code == (UINT)LVN_ITEMCHANGING ||
+							notification->code == (UINT)LVN_ITEMCHANGED)) {
+					return playerNotification(state, (const NMLISTVIEW *)notification, side);
+				}
+			}
 			if (notification->hwndFrom == state->tabs && notification->code == (UINT)TCN_SELCHANGE) {
 				selectTab(state);
 				return 0;

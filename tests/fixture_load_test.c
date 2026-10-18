@@ -17,12 +17,14 @@ static bool inspectSucceeded(const char *result);
 #define fixtureLoad_open fixtureLoadTest_open
 #define fixtureLoad_save fixtureLoadTest_save
 #define fixtureLoad_saveVenue fixtureLoadTest_saveVenue
+#define fixtureLoad_saveEdits fixtureLoadTest_saveEdits
 #define client_submit inspectSubmit
 #define client_succeeded inspectSucceeded
 #include "../src/runner/fixture_load.c" // NOLINT(bugprone-suspicious-include): isolate the game connection.
 #undef fixtureLoad_open
 #undef fixtureLoad_save
 #undef fixtureLoad_saveVenue
+#undef fixtureLoad_saveEdits
 #undef client_submit
 #undef client_succeeded
 
@@ -202,6 +204,62 @@ TEST(saves_complete_fixtures_without_partial_overwrites) {
 	checkFile(jsonCopy, edited.data, edited.length);
 	buffer_free(&edited);
 	buffer_free(&editedBinary);
+
+	ByteBuffer squad = {0}, players = {0}, combined = {0}, encodedPlayers = {0};
+	fixtureTest_config(&squad);
+	FixturePlayerEdits edits = {0};
+	edits.players[0][0] = FIXTURE_MAX_HAPPINESS;
+	edits.players[1][11] = FIXTURE_MAX_CONDITION;
+	FixtureNumber pitch[VENUE_FIELD_COUNT] = {0};
+	pitch[VENUE_LENGTH] = (FixtureNumber){.value = fixtureData_fromFloat(105), .known = true};
+	ASSERT_BOOL_EQ(files_write(json, squad.data, squad.length), true);
+	ASSERT_BOOL_EQ(
+		fixtureData_writePlayers(
+			buffer_string(&squad), squad.length, &edits, &players, error, sizeof error
+		),
+		true
+	);
+	ASSERT_BOOL_EQ(
+		fixtureData_writeVenue(
+			buffer_string(&players), players.length, pitch, &combined, error, sizeof error
+		),
+		true
+	);
+	ASSERT_BOOL_EQ(
+		matchConfig_encode(
+			buffer_string(&combined), combined.length, &encodedPlayers, NULL, error, sizeof error
+		),
+		true
+	);
+	ASSERT_BOOL_EQ(
+		fixtureLoadTest_saveEdits(json, jsonCopy, pitch, &edits, error, sizeof error), true
+	);
+	checkFile(jsonCopy, combined.data, combined.length);
+	checkFile(json, squad.data, squad.length);
+	ASSERT_BOOL_EQ(
+		fixtureLoadTest_saveEdits(json, binaryCopy, pitch, &edits, error, sizeof error), true
+	);
+	checkFile(binaryCopy, encodedPlayers.data, encodedPlayers.length);
+	decodedConfig = buffer_string(&squad);
+	ASSERT_BOOL_EQ(
+		fixtureLoadTest_saveEdits(binary, binaryCopy, pitch, &edits, error, sizeof error), true
+	);
+	checkFile(binaryCopy, encodedPlayers.data, encodedPlayers.length);
+	ASSERT_BOOL_EQ(
+		fixtureLoadTest_saveEdits(binary, jsonCopy, pitch, &edits, error, sizeof error), true
+	);
+	checkFile(jsonCopy, combined.data, combined.length);
+	decodedConfig = config;
+	edits.players[0][20] = FIXTURE_MAX_HAPPINESS;
+	ASSERT_BOOL_EQ(
+		fixtureLoadTest_saveEdits(json, jsonCopy, pitch, &edits, error, sizeof error), false
+	);
+	checkFile(jsonCopy, combined.data, combined.length);
+	checkFile(json, squad.data, squad.length);
+	buffer_free(&encodedPlayers);
+	buffer_free(&combined);
+	buffer_free(&players);
+	buffer_free(&squad);
 
 	wchar_t pattern[HARNESS_PATH_LENGTH];
 	ASSERT_BOOL_EQ(paths_join(pattern, HARNESS_PATH_LENGTH, directory, L"fms*.tmp"), true);
