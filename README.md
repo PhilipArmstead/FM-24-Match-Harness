@@ -85,6 +85,23 @@ squad and tactic; the other side and its edits are kept. Both replacements
 are retained when you replace the other side or run another seed. See
 [docs/FIXTURE.md](docs/FIXTURE.md#changing-teams) for the details.
 
+## Put another player in a slot
+
+Copy any player's database values (attributes, condition, personality,
+traits, ...) over one player of a fixture, so that player's slot is played
+by the other player:
+
+```
+.\fm24ctl inject-player next-fixture.json "home.player[10]" 2000040347 torre.json
+.\fm24ctl run torre.json 1-100
+```
+
+The player is named by their unique ID in the game's database.
+`fm24ctl get-player <ID> <player.json>` saves a player's values to a file,
+which `inject-player` also accepts in place of the ID. See
+[docs/FIXTURE.md](docs/FIXTURE.md#putting-another-player-in-a-slot) for what
+is copied and what isn't.
+
 ## View a fixture
 
 Launch `fm24ctl.exe` without arguments to export the next fixture from the

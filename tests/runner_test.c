@@ -25,6 +25,9 @@ static bool submitJob(const char *job, unsigned timeout, char *result, size_t re
 #define commands_listTeams runnerTest_listTeams
 #define commands_listTeamsWithResult runnerTest_listTeamsWithResult
 #define commands_encode runnerTest_encode
+#define commands_getPlayer runnerTest_getPlayer
+#define commands_injectPlayer runnerTest_injectPlayer
+#define commands_injectPlayerWithResult runnerTest_injectPlayerWithResult
 #define commands_probe runnerTest_probe
 #define files_read readConfig
 #define files_write writeConfig
@@ -105,6 +108,30 @@ TEST(replaces_either_team_and_preserves_both_overrides) {
 		ASSERT_BOOL_EQ(strstr(submittedJob, "\nfull=1\n") != NULL, true);
 		buffer_free(&writtenConfig);
 	}
+}
+
+TEST(parses_player_ids_and_blocks) {
+	char text[64];
+	static const wchar_t *const invalidIds[] = {L"", L"0", L"-1", L" 1", L"1x", L"4294967296"};
+	for (size_t i = 0; i < sizeof invalidIds / sizeof invalidIds[0]; ++i) {
+		ASSERT_BOOL_EQ(parsePersonId(invalidIds[i], text, sizeof text), false);
+	}
+	ASSERT_BOOL_EQ(parsePersonId(L"2000040347", text, sizeof text), true);
+	ASSERT_INT_EQ(strcmp(text, "2000040347"), 0);
+	static const wchar_t *const invalidBlocks[] = {
+		L"home.player[]",
+		L"home.player[1",
+		L"home.player[x]",
+		L"home.player[1].ratings",
+		L"both.player[1]",
+		L"home.staff[1]",
+	};
+	for (size_t i = 0; i < sizeof invalidBlocks / sizeof invalidBlocks[0]; ++i) {
+		ASSERT_BOOL_EQ(parsePlayerBlock(invalidBlocks[i], text, sizeof text), false);
+	}
+	ASSERT_BOOL_EQ(parsePlayerBlock(L"away.player[17]", text, sizeof text), true);
+	ASSERT_INT_EQ(strcmp(text, "away.player[17]"), 0);
+	ASSERT_BOOL_EQ(parsePlayerBlock(L"home.player[3]", text, 14), false);
 }
 
 TEST(rejects_malformed_cli_numbers) {
@@ -347,6 +374,7 @@ void registerRunnerTests(void) {
 		"runner encodes input and metadata in one read", test_encodes_input_and_metadata_in_one_read
 	);
 	test_run("runner rejects malformed CLI numbers", test_rejects_malformed_cli_numbers);
+	test_run("runner parses player IDs and blocks", test_parses_player_ids_and_blocks);
 	test_run(
 		"runner rejects missing or incomplete results", test_rejects_missing_or_incomplete_results
 	);

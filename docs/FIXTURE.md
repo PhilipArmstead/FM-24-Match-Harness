@@ -165,7 +165,55 @@ another order.
 You can't swap players in or out, or move a player to another slot: players
 write different numbers of fields, so that changes the structure. Pick the
 line-up in the game and export again. You *can* make a player play like
-another by copying ratings (below).
+another by copying ratings (below), or have the harness copy all of another
+player's database values into the block (see [Putting another player in a
+slot](#putting-another-player-in-a-slot)).
+
+## Putting another player in a slot
+
+```
+fm24ctl inject-player next-fixture.json "home.player[10]" 2000040347 torre.json
+```
+
+This replaces the values of `home.player[10]` that come from the game's
+database with those of the player whose unique ID is 2000040347 (any player
+in the loaded database, at any club), and writes the result to `torre.json`.
+The block keeps its place, so the new player plays the slot's position, role
+and instructions, and `run` rebuilds the file for every seed as usual: the
+copied values count as your edits.
+
+The values copied are the player's `.ratings`, the [values copied from the
+database](#values-copied-from-the-games-database) (condition, sharpness,
+fatigue, reputations, current ability, morale, last transfer fee, preferred
+position, traits, nationality, personality, height and weight), `.age` on the
+next match day, and the unique ID. The block's `player` note becomes the new
+player's name.
+
+A player block holds its unique ID three times: `.person_uid`, then two
+unnamed `u32` copies in its person record (`fn_19ba6e0+0x38` and
+`fn_1a7fdc0+0x40` in a `--full` export). The match identifies the player by
+the last one. Changing only `.person_uid` leaves the slot's `--detailed`
+statistics under the old player. `inject-player` changes all three. The ID
+also changes how matches play out, not only the statistics' names. Not copied:
+
+- the [derived values](#values-derived-from-ratings) (`.ability`,
+  `.leadership_value` and the `role_rating` list): they stay the old
+  player's. The engine doesn't use them to play the match;
+- `.caps` (no database field is known) and `.squad_number` (it belongs to
+  the club's contract).
+
+To copy a player's values from a file instead of the running game, save them
+with `fm24ctl get-player 2000040347 torre-values.json` and pass that file in
+place of the ID. It is an `fm24-player/1` file: a `fields` list like a
+fixture's, named by the player block's field names without the block
+(`ratings`, `condition`, ...). You can edit its values like a fixture's.
+
+If the player is already in the fixture (in another block), `inject-player`
+refuses, since the match would have the same person twice. Add `--keep-uid`
+to inject anyway and keep the block's own `.person_uid`. The `--detailed`
+player statistics are listed by unique ID, so with `--keep-uid` the slot's
+row keeps the old player's name.
+
 
 ## Ratings
 

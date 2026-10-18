@@ -32,6 +32,10 @@ uint8_t *database_findPerson(const PeopleIndex *index, uint32_t uniqueId);
 // The first human manager's (db::HUMAN_NON_PLAYER) current team, or NULL.
 uint8_t *database_findHumanTeam(void);
 
+// The player record (db::ACTUAL_PLAYER or db::ACTUAL_PLAYER_AND_NON_PLAYER) that `person` is part
+// of, found through the object's RTTI, or NULL if the person is not a player.
+uint8_t *database_playerRecord(const uint8_t *person);
+
 // "Forename Surname"; returns false (and writes "") if the names cannot be read.
 bool database_personName(const uint8_t *person, char *out, size_t size);
 

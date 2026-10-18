@@ -14,6 +14,11 @@
 //   fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]
 //   fm24ctl replace-home <input.json> <team ID or club name> <output.json> [--full]
 //       the input rebuilt against another away team, keeping its other edits
+//   fm24ctl get-player <person unique ID> <output.json>
+//       a player's database values, as a config's player block has them
+//   fm24ctl inject-player <input.json> <home|away>.player[N] <person unique ID|player.json>
+//       <output.json> [--keep-uid]
+//       the input with that player block's database values replaced by another player's
 //   fm24ctl probe [path to fm.exe]
 //       where another build of fm.exe has the code the harness uses (writes probe.txt)
 //
@@ -40,6 +45,9 @@ static const char usage[] =
 	"  fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
 	"  fm24ctl replace-home <input.json> <team ID or club name> <output.json> [--full]\n"
 	"  fm24ctl list-teams <output.txt>\n"
+	"  fm24ctl get-player <person unique ID> <output.json>\n"
+	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
+	"      <person unique ID|player.json> <output.json> [--keep-uid]\n"
 	"  fm24ctl probe [path to fm.exe]\n";
 
 int wmain(int argc, wchar_t **argv);
@@ -78,6 +86,8 @@ int wmain(int argc, wchar_t **argv) {
 		{L"replace-away", commands_replaceTeam},
 		{L"replace-home", commands_replaceTeam},
 		{L"list-teams", commands_listTeams},
+		{L"get-player", commands_getPlayer},
+		{L"inject-player", commands_injectPlayer},
 		{L"probe", commands_probe},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {

@@ -41,6 +41,17 @@ enum { TEAMS_SHOWN = 200, TEAM_LABEL_LENGTH = 256 }; // the team pickers' lists
 
 enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
+enum { CELL_COUNT = 9 }; // the squad lists' text cells, after the Select column
+
+// The swap prompt's controls.
+enum {
+	SWAP_PROMPT_OLD_LABEL = 100,
+	SWAP_PROMPT_OLD_PLAYER,
+	SWAP_PROMPT_NEW_LABEL,
+	SWAP_PROMPT_NEW_PLAYER,
+	SWAP_ID_LENGTH = 16,
+};
+
 enum { TEAM_ICON, TEAM_INPUT, TEAM_CONFIRM, TEAM_CANCEL, TEAM_ERROR, TEAM_CONTROL_COUNT };
 
 enum { PLAYER_HAPPINESS, PLAYER_CONDITION, PLAYER_BUTTON_COUNT };
@@ -52,6 +63,7 @@ enum {
 	SIM_SEEDS_LABEL,
 	SIM_SEEDS,
 	SIM_DETAILED,
+	SIM_KEEP_BUILD,
 	SIM_SUBMIT,
 	SIM_STATUS,
 	SIM_SUMMARY,
@@ -67,18 +79,37 @@ typedef struct SimulationJob {
 	wchar_t threads[16];
 	uintptr_t progressWindow;
 	bool detailed;
+	bool keepBuild; // play the fixture as it is, without rebuilding it per seed (--keep-build)
 } SimulationJob;
 
+// Rebuilds a side with another team, or (`swap`) puts another player in one of its player blocks.
 typedef struct ReplaceTeamJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t output[HARNESS_PATH_LENGTH];
 	wchar_t team[256];
+	wchar_t block[32];              // swap: "home.player[N]"
+	wchar_t person[SWAP_ID_LENGTH]; // swap: the injected player's unique ID
 	char error[CLIENT_RESULT_LENGTH];
 	FixtureData *data;
 	FixtureNumber venueValues[VENUE_FIELD_COUNT];
 	FixturePlayerEdits playerEdits;
 	unsigned side;
+	bool swap;
 } ReplaceTeamJob;
+
+// The swap prompt's team, and the player block and unique ID it returns.
+typedef struct SwapPrompt {
+	const FixtureTeam *team;
+	int block; // the old player's block
+	wchar_t id[SWAP_ID_LENGTH];
+} SwapPrompt;
+
+// An in-memory dialog template (DLGTEMPLATE and its items), for a modal prompt without resources.
+typedef struct DialogTemplate {
+	_Alignas(DWORD) BYTE bytes[512];
+	size_t length;
+	bool overflow;
+} DialogTemplate;
 
 // A team the team pickers offer (fm24ctl list-teams).
 typedef struct Team {
@@ -123,6 +154,7 @@ typedef struct WindowState {
 	HWND venueLabels[VENUE_FIELD_COUNT];
 	HWND venueInputs[VENUE_FIELD_COUNT];
 	HWND teamControls[2][TEAM_CONTROL_COUNT];
+	HWND swapButtons[2]; // "Swap player", at the right of each team's heading
 	HANDLE simulationThread;
 	HANDLE replacementThread;
 	HANDLE fileThread;
@@ -208,6 +240,8 @@ static void layout(HWND window, WindowState *state);
 static void selectTab(WindowState *state);
 static void showFileError(HWND window, const char *error);
 static void removeReplacement(const wchar_t *path);
+static const char *launchReplacement(HWND window, WindowState *state);
+static void enableReplacementActions(const WindowState *state, BOOL enabled);
 static bool
 startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary);
 
@@ -484,6 +518,7 @@ static DWORD WINAPI simulateFixture(LPVOID parameter) {
 		NULL,
 		NULL,
 		NULL,
+		NULL,
 		NULL};
 	int count = 4;
 	if (temporary[0]) {
@@ -493,6 +528,9 @@ static DWORD WINAPI simulateFixture(LPVOID parameter) {
 	arguments[count++] = job->threads;
 	if (job->detailed) {
 		arguments[count++] = L"--detailed";
+	}
+	if (job->keepBuild) {
+		arguments[count++] = L"--keep-build";
 	}
 	DWORD result = (DWORD)commands_runWithProgress(count, arguments, job->progressWindow);
 	removeReplacement(temporary);
@@ -544,6 +582,8 @@ static void startSimulation(HWND window, WindowState *state) {
 	}
 	job->detailed = SendMessageW(state->simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_CHECKED;
 	job->playerEdits = state->playerEdits;
+	job->keepBuild =
+		SendMessageW(state->simulation[SIM_KEEP_BUILD], BM_GETCHECK, 0, 0) == BST_CHECKED;
 	job->progressWindow = (uintptr_t)window;
 	if (!SetTimer(window, SIMULATION_TIMER, 200, NULL)) {
 		showError(window, L"Cannot monitor the simulation.");
@@ -640,16 +680,23 @@ static void checkSimulation(HWND window, WindowState *state) {
 	}
 }
 
+// A side's heading, pitch, squad list and the heading's buttons (not its team editor).
+static void showSquad(const WindowState *state, unsigned side, bool show) {
+	int command = show ? SW_SHOW : SW_HIDE;
+	ShowWindow(state->headings[side], command);
+	ShowWindow(state->pitches[side], command);
+	ShowWindow(state->lists[side], command);
+	for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+		ShowWindow(state->playerButtons[side][button], command);
+	}
+	ShowWindow(state->swapButtons[side], command);
+}
+
 static void selectTab(WindowState *state) {
 	int tab = TabCtrl_GetCurSel(state->tabs);
 	bool simulation = tab == 2;
 	for (unsigned i = 0; i < 2; ++i) {
-		ShowWindow(state->headings[i], tab == 0 ? SW_SHOW : SW_HIDE);
-		ShowWindow(state->pitches[i], tab == 0 ? SW_SHOW : SW_HIDE);
-		ShowWindow(state->lists[i], tab == 0 ? SW_SHOW : SW_HIDE);
-		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
-			ShowWindow(state->playerButtons[i][button], tab == 0 ? SW_SHOW : SW_HIDE);
-		}
+		showSquad(state, i, tab == 0);
 	}
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
 		ShowWindow(state->venueLabels[i], tab == 1 ? SW_SHOW : SW_HIDE);
@@ -937,7 +984,7 @@ static void percentage(FixtureNumber number, char *out, size_t size) {
 	}
 }
 
-static void playerCells(const FixturePlayer *player, char cells[9][FIXTURE_TEXT]) {
+static void playerCells(const FixturePlayer *player, char cells[CELL_COUNT][FIXTURE_TEXT]) {
 	if (!player) {
 		return;
 	}
@@ -986,8 +1033,13 @@ static bool setListCell(HWND list, unsigned row, unsigned column, const char *te
 	return SendMessageW(list, LVM_SETITEMTEXTW, row, (LPARAM)&item) != FALSE;
 }
 
-static bool
-insertListRow(HWND list, unsigned row, char cells[9][FIXTURE_TEXT], int player, bool checked) {
+static bool insertListRow(
+	HWND list,
+	unsigned row,
+	char cells[CELL_COUNT][FIXTURE_TEXT],
+	int player,
+	bool checked
+) {
 	LVITEMW selection = {
 		.mask = LVIF_TEXT | LVIF_PARAM, .iItem = (int)row, .pszText = L"", .lParam = player + 1};
 	if (SendMessageW(list, LVM_INSERTITEMW, 0, (LPARAM)&selection) == -1) {
@@ -995,7 +1047,7 @@ insertListRow(HWND list, unsigned row, char cells[9][FIXTURE_TEXT], int player, 
 	}
 	unsigned image = player < 0 ? 0 : checked ? 2 : 1;
 	ListView_SetItemState(list, (int)row, INDEXTOSTATEIMAGEMASK(image), LVIS_STATEIMAGEMASK);
-	for (unsigned cell = 0; cell < 9; ++cell) {
+	for (unsigned cell = 0; cell < CELL_COUNT; ++cell) {
 		if (!setListCell(list, row, cell + 1, cells[cell])) {
 			return false;
 		}
@@ -1012,7 +1064,7 @@ static bool fillList(WindowState *state, unsigned side) {
 	unsigned count = (unsigned)team->playerCount.value + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
 	bool ok = true;
 	for (unsigned i = 0; i < count && ok; ++i) {
-		char cells[9][FIXTURE_TEXT] = {"", "", "-", "-", "-", "-", "-", "-", "-"};
+		char cells[CELL_COUNT][FIXTURE_TEXT] = {"", "", "-", "-", "-", "-", "-", "-", "-"};
 		const FixturePlayer *player = NULL;
 		if (team->lineupKnown) {
 			player = &team->players[i];
@@ -1092,10 +1144,10 @@ static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned 
 			player->fatigue.value = 0;
 			state->playerEdits.players[side][i] |= FIXTURE_MAX_CONDITION;
 		}
-		char cells[9][FIXTURE_TEXT] = {"", "", "", "", "", "-", "-", "-", "-"};
+		char cells[CELL_COUNT][FIXTURE_TEXT] = {"", "", "", "", "", "-", "-", "-", "-"};
 		playerCells(player, cells);
 		unsigned row = i + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
-		for (unsigned cell = 5; cell < 9; ++cell) {
+		for (unsigned cell = 5; cell < CELL_COUNT; ++cell) {
 			ok = setListCell(state->lists[side], row, cell + 1, cells[cell]) && ok;
 		}
 	}
@@ -1409,7 +1461,14 @@ static DWORD WINAPI replaceTeam(LPVOID parameter) {
 		}
 		arguments[2] = job->output;
 	}
-	int result = commands_replaceTeamWithResult(5, arguments, job->error, sizeof job->error);
+	int result = 0;
+	if (job->swap) {
+		wchar_t *swapArguments[] = {
+			L"fm24ctl.exe", L"inject-player", arguments[2], job->block, job->person, job->output, NULL};
+		result = commands_injectPlayerWithResult(6, swapArguments, job->error, sizeof job->error);
+	} else {
+		result = commands_replaceTeamWithResult(5, arguments, job->error, sizeof job->error);
+	}
 	if (result == 0 && hasVenue(job->venueValues) &&
 			!fixtureLoad_saveVenue(
 				job->output, job->output, job->venueValues, job->error, sizeof job->error
@@ -1431,6 +1490,7 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 	job->side = side;
 	job->playerEdits = state->playerEdits;
 	memset(job->playerEdits.players[side], 0, sizeof job->playerEdits.players[side]);
+	job->swap = false;
 	int length = GetWindowTextW(state->teamControls[side][TEAM_INPUT], job->team, 256);
 	char team[256];
 	if (!length || GetWindowTextLengthW(state->teamControls[side][TEAM_INPUT]) >= 256 ||
@@ -1444,49 +1504,276 @@ static void startReplacement(HWND window, WindowState *state, unsigned side) {
 	if (pickedTeamId(state, job->team, id, sizeof id / sizeof id[0])) {
 		wcscpy(job->team, id);
 	}
-	if (!readVenue(window, state, job->venueValues)) {
+	const char *error = launchReplacement(window, state);
+	if (error) {
+		if (error[0]) {
+			teamError(window, state, side, error);
+		}
 		return;
+	}
+	SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
+	ShowWindow(state->teamControls[side][TEAM_ERROR], SW_HIDE);
+	SetFocus(state->tabs);
+}
+
+// Starts the worker for state->replacementJob, whose side and team (or swap) are set. Returns NULL,
+// or why it cannot start ("" if readVenue has already said why).
+static const char *launchReplacement(HWND window, WindowState *state) {
+	ReplaceTeamJob *job = &state->replacementJob;
+	if (!readVenue(window, state, job->venueValues)) {
+		return "";
 	}
 	const wchar_t *input = state->savedFilename[0] ? state->savedFilename : state->path;
 	if (!paths_absolute(input, job->input, HARNESS_PATH_LENGTH)) {
-		teamError(window, state, side, "Cannot resolve the fixture path.");
-		return;
+		return "Cannot resolve the fixture path.";
 	}
 	job->data = malloc(sizeof *job->data);
 	if (!job->data) {
-		teamError(window, state, side, "Out of memory loading the replacement fixture.");
-		return;
+		return "Out of memory loading the replacement fixture.";
 	}
 	job->output[0] = 0;
 	job->error[0] = 0;
 	if (!SetTimer(window, REPLACE_TIMER, 200, NULL)) {
 		free(job->data);
 		job->data = NULL;
-		teamError(window, state, side, "Cannot monitor the team replacement.");
-		return;
+		return job->swap ? "Cannot monitor the player swap." : "Cannot monitor the team replacement.";
 	}
 	state->replacementThread = CreateThread(NULL, 0, replaceTeam, job, 0, NULL);
 	if (!state->replacementThread) {
 		KillTimer(window, REPLACE_TIMER);
 		free(job->data);
 		job->data = NULL;
-		teamError(window, state, side, "Cannot start the team replacement.");
+		return job->swap ? "Cannot start the player swap." : "Cannot start the team replacement.";
+	}
+	enableReplacementActions(state, FALSE);
+	return NULL;
+}
+
+static void appendTemplate(DialogTemplate *dialog, const void *data, size_t size) {
+	if (dialog->length + size > sizeof dialog->bytes) {
+		dialog->overflow = true;
 		return;
 	}
-	SetWindowTextW(state->teamControls[side][TEAM_ERROR], L"");
-	ShowWindow(state->teamControls[side][TEAM_ERROR], SW_HIDE);
-	for (unsigned teamSide = 0; teamSide < 2; ++teamSide) {
-		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
-			EnableWindow(state->teamControls[teamSide][i], FALSE);
+	memcpy(dialog->bytes + dialog->length, data, size);
+	dialog->length += size;
+}
+
+static void appendTemplateString(DialogTemplate *dialog, const wchar_t *text) {
+	appendTemplate(dialog, text, (wcslen(text) + 1) * sizeof *text);
+}
+
+// One control: DWORD-aligned, with a predefined class (0x80 button, 0x81 edit, 0x82 static,
+// 0x85 combo box).
+static void appendTemplateItem(
+	DialogTemplate *dialog,
+	DWORD style,
+	const short bounds[4],
+	WORD id,
+	WORD classAtom,
+	const wchar_t *text
+) {
+	static const BYTE padding[3] = {0};
+	appendTemplate(dialog, padding, (4 - dialog->length % 4) % 4);
+	DLGITEMTEMPLATE item = {.style = WS_CHILD | WS_VISIBLE | style,
+		.x = bounds[0],
+		.y = bounds[1],
+		.cx = bounds[2],
+		.cy = bounds[3],
+		.id = id};
+	const WORD itemClass[2] = {0xFFFF, classAtom};
+	const WORD creationData = 0;
+	appendTemplate(dialog, &item, sizeof item);
+	appendTemplate(dialog, itemClass, sizeof itemClass);
+	appendTemplateString(dialog, text);
+	appendTemplate(dialog, &creationData, sizeof creationData);
+}
+
+// The swap prompt (dialog units): the old player's drop-down, the new player's unique ID, Confirm
+// and Cancel.
+static bool swapPromptTemplate(DialogTemplate *dialog) {
+	static const short oldLabelBounds[4] = {7, 9, 48, 10};
+	static const short oldPlayerBounds[4] = {58, 7, 175, 150};
+	static const short newLabelBounds[4] = {7, 28, 48, 10};
+	static const short newPlayerBounds[4] = {58, 26, 175, 13};
+	static const short confirmBounds[4] = {129, 48, 50, 14};
+	static const short cancelBounds[4] = {183, 48, 50, 14};
+	*dialog = (DialogTemplate){0};
+	DLGTEMPLATE header = {
+		.style = DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU,
+		.cdit = 6,
+		.cx = 240,
+		.cy = 69};
+	const WORD noMenuOrClass[2] = {0, 0};
+	const WORD fontPoints = 9;
+	appendTemplate(dialog, &header, sizeof header);
+	appendTemplate(dialog, noMenuOrClass, sizeof noMenuOrClass);
+	appendTemplateString(dialog, L"Swap player");
+	appendTemplate(dialog, &fontPoints, sizeof fontPoints);
+	appendTemplateString(dialog, L"Segoe UI");
+	appendTemplateItem(dialog, SS_LEFT, oldLabelBounds, SWAP_PROMPT_OLD_LABEL, 0x82, L"Old player:");
+	appendTemplateItem(
+		dialog,
+		WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
+		oldPlayerBounds,
+		SWAP_PROMPT_OLD_PLAYER,
+		0x85,
+		L""
+	);
+	appendTemplateItem(dialog, SS_LEFT, newLabelBounds, SWAP_PROMPT_NEW_LABEL, 0x82, L"New player:");
+	appendTemplateItem(
+		dialog,
+		WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
+		newPlayerBounds,
+		SWAP_PROMPT_NEW_PLAYER,
+		0x81,
+		L""
+	);
+	appendTemplateItem(dialog, BS_DEFPUSHBUTTON | WS_TABSTOP, confirmBounds, IDOK, 0x80, L"Confirm");
+	appendTemplateItem(dialog, BS_PUSHBUTTON | WS_TABSTOP, cancelBounds, IDCANCEL, 0x80, L"Cancel");
+	return !dialog->overflow;
+}
+
+// A nonzero decimal u32: a person's unique ID.
+static bool validSwapId(const wchar_t *text) {
+	wchar_t *end = NULL;
+	errno = 0;
+	unsigned long long id = wcstoull(text, &end, 10);
+	return text[0] >= L'0' && text[0] <= L'9' && *end == 0 && errno == 0 && id > 0 &&
+				 id <= UINT32_MAX;
+}
+
+// Lists the team's players (one per player block, in block order) in the old player drop-down.
+static bool fillSwapPlayers(HWND dialog, const FixtureTeam *team) {
+	HWND players = GetDlgItem(dialog, SWAP_PROMPT_OLD_PLAYER);
+	for (unsigned block = 0; block < FIXTURE_PLAYERS; ++block) {
+		if (!team->players[block].present) {
+			continue;
+		}
+		wchar_t name[FIXTURE_TEXT];
+		const char *text = team->players[block].name;
+		if (!widen(text[0] ? text : "<Unknown>", name, FIXTURE_TEXT)) {
+			return false;
+		}
+		LRESULT index = SendMessageW(players, CB_ADDSTRING, 0, (LPARAM)name);
+		if (index < 0 || SendMessageW(players, CB_SETITEMDATA, (WPARAM)index, block) == CB_ERR) {
+			return false;
 		}
 	}
-	EnableWindow(state->simulation[SIM_SUBMIT], FALSE);
-	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
-		EnableWindow(state->fileButtons[i], FALSE);
+	SendMessageW(players, CB_SETCURSEL, 0, 0);
+	return true;
+}
+
+static void swapPromptError(HWND dialog, const wchar_t *message, int control) {
+	MessageBoxW(dialog, message, L"Swap player", MB_OK | MB_ICONERROR);
+	SetFocus(GetDlgItem(dialog, control));
+}
+
+static INT_PTR CALLBACK
+swapPromptProcedure(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam) {
+	// NOLINTBEGIN(performance-no-int-to-ptr): lParam and DWLP_USER carry the prompt's pointer.
+	SwapPrompt *prompt = (SwapPrompt *)GetWindowLongPtrW(dialog, DWLP_USER);
+	if (message == WM_INITDIALOG) {
+		prompt = (SwapPrompt *)lParam;
+		// NOLINTEND(performance-no-int-to-ptr)
+		SetWindowLongPtrW(dialog, DWLP_USER, lParam);
+		SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, EM_LIMITTEXT, SWAP_ID_LENGTH - 1, 0);
+		SendDlgItemMessageW(
+			dialog, SWAP_PROMPT_NEW_PLAYER, EM_SETCUEBANNER, TRUE, (LPARAM)L"Unique ID"
+		);
+		if (!fillSwapPlayers(dialog, prompt->team)) {
+			EndDialog(dialog, -1);
+		}
+		return TRUE;
 	}
-	enableVenue(state, FALSE);
+	if (message != WM_COMMAND || !prompt) {
+		return FALSE;
+	}
+	if (LOWORD(wParam) == IDCANCEL) {
+		EndDialog(dialog, IDCANCEL);
+		return TRUE;
+	}
+	if (LOWORD(wParam) != IDOK) {
+		return FALSE;
+	}
+	LRESULT selected = SendDlgItemMessageW(dialog, SWAP_PROMPT_OLD_PLAYER, CB_GETCURSEL, 0, 0);
+	if (selected == CB_ERR) {
+		swapPromptError(dialog, L"Choose the player to replace.", SWAP_PROMPT_OLD_PLAYER);
+		return TRUE;
+	}
+	GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, prompt->id, SWAP_ID_LENGTH);
+	if (!validSwapId(prompt->id)) {
+		swapPromptError(
+			dialog,
+			L"Enter the new player's unique ID: a number from 1 to 4294967295.",
+			SWAP_PROMPT_NEW_PLAYER
+		);
+		return TRUE;
+	}
+	prompt->block =
+		(int)SendDlgItemMessageW(dialog, SWAP_PROMPT_OLD_PLAYER, CB_GETITEMDATA, (WPARAM)selected, 0);
+	EndDialog(dialog, IDOK);
+	return TRUE;
+}
+
+// Asks which of a side's players to replace and the unique ID of the player to put in their
+// place, then injects that player into a temporary copy of the fixture, shown as unsaved.
+static void startSwap(HWND window, WindowState *state, unsigned side) {
+	if (state->simulationThread || state->replacementThread || state->fileThread) {
+		return;
+	}
+	SwapPrompt prompt = {.team = &state->data->teams[side], .block = -1};
+	DialogTemplate dialog;
+	INT_PTR answer = swapPromptTemplate(&dialog) ? DialogBoxIndirectParamW(
+																									 GetModuleHandleW(NULL),
+																									 (LPCDLGTEMPLATEW)dialog.bytes,
+																									 window,
+																									 swapPromptProcedure,
+																									 (LPARAM)&prompt
+																								 )
+																							 : -1;
+	if (answer == -1) {
+		showError(window, L"Cannot show the swap prompt.");
+	}
+	// The prompt's message loop may have let another job start.
+	if (answer != IDOK || prompt.block < 0 || state->simulationThread || state->replacementThread ||
+			state->fileThread) {
+		return;
+	}
+	ReplaceTeamJob *job = &state->replacementJob;
+	job->side = side;
+	job->swap = true;
+	// The pending edits carry over, except the swapped-out player's.
+	job->playerEdits = state->playerEdits;
+	job->playerEdits.players[side][prompt.block] = 0;
+	(void)swprintf(
+		job->block,
+		sizeof job->block / sizeof job->block[0],
+		L"%ls.player[%d]",
+		side ? L"away" : L"home",
+		prompt.block
+	);
+	wcscpy(job->person, prompt.id);
+	const char *error = launchReplacement(window, state);
+	if (error && error[0]) {
+		showFileError(window, error);
+	}
+}
+
+// The team editors, simulation, file buttons, venue, swap and player buttons, which wait while
+// a side is being rebuilt.
+static void enableReplacementActions(const WindowState *state, BOOL enabled) {
+	for (unsigned side = 0; side < 2; ++side) {
+		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
+			EnableWindow(state->teamControls[side][i], enabled);
+		}
+		EnableWindow(state->swapButtons[side], enabled);
+	}
+	EnableWindow(state->simulation[SIM_SUBMIT], enabled);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->fileButtons[i], enabled);
+	}
+	enableVenue(state, enabled);
 	enablePlayers(state);
-	SetFocus(state->tabs);
 }
 
 static void checkReplacement(HWND window, WindowState *state) {
@@ -1508,17 +1795,7 @@ static void checkReplacement(HWND window, WindowState *state) {
 	KillTimer(window, REPLACE_TIMER);
 	CloseHandle(state->replacementThread);
 	state->replacementThread = NULL;
-	for (unsigned side = 0; side < 2; ++side) {
-		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
-			EnableWindow(state->teamControls[side][i], TRUE);
-		}
-	}
-	EnableWindow(state->simulation[SIM_SUBMIT], TRUE);
-	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
-		EnableWindow(state->fileButtons[i], TRUE);
-	}
-	enableVenue(state, TRUE);
-	enablePlayers(state);
+	enableReplacementActions(state, TRUE);
 	ReplaceTeamJob *job = &state->replacementJob;
 	unsigned side = job->side;
 	if (result == 0) {
@@ -1545,10 +1822,11 @@ static void checkReplacement(HWND window, WindowState *state) {
 			}
 			selectTab(state);
 			layout(window, state);
-			SetFocus(
-				TabCtrl_GetCurSel(state->tabs) == 0 ? state->teamControls[side][TEAM_ICON] : state->tabs
-			);
+			HWND focus = job->swap ? state->lists[side] : state->teamControls[side][TEAM_ICON];
+			SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? focus : state->tabs);
 		}
+	} else if (job->swap) {
+		showFileError(window, job->error);
 	} else {
 		teamError(window, state, side, job->error);
 		if (TabCtrl_GetCurSel(state->tabs) == 0) {
@@ -1940,6 +2218,7 @@ static bool setFonts(WindowState *state) {
 			SendMessageW(state->teamControls[i][control], WM_SETFONT, (WPARAM)font, TRUE);
 		}
 		SendMessageW(state->headings[i], WM_SETFONT, (WPARAM)heading, TRUE);
+		SendMessageW(state->swapButtons[i], WM_SETFONT, (WPARAM)font, TRUE);
 		SendMessageW(state->lists[i], WM_SETFONT, (WPARAM)font, TRUE);
 		SendMessageW(state->pitches[i], WM_SETFONT, (WPARAM)font, TRUE);
 		for (unsigned column = 0; column < sizeof columns / sizeof columns[0]; ++column) {
@@ -2030,9 +2309,10 @@ static void layout(HWND window, WindowState *state) {
 		{0, 46, 180, 24},
 		{192, 42, 220, 30},
 		{0, 92, 220, 28},
-		{0, 136, 180, 34},
-		{0, 238, 620, 80},
-		{0, 186, 620, 44},
+		{0, 128, 220, 28},
+		{0, 172, 180, 34},
+		{0, 274, 620, 80},
+		{0, 222, 620, 44},
 	};
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		MoveWindow(
@@ -2050,7 +2330,10 @@ static void layout(HWND window, WindowState *state) {
 		int header = scaled(state, 27);
 		int actionWidth = scaled(state, 120);
 		int buttonGap = scaled(state, 6);
-		int actionsWidth = PLAYER_BUTTON_COUNT * (actionWidth + buttonGap);
+		int swapWidth = scaled(state, 100);
+		// The player buttons, then "Swap player" at the right edge.
+		int actionsWidth = PLAYER_BUTTON_COUNT * (actionWidth + buttonGap) + buttonGap + swapWidth;
+		MoveWindow(state->swapButtons[i], left + width - swapWidth, y, swapWidth, header, TRUE);
 		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
 			MoveWindow(
 				state->playerButtons[i][button],
@@ -2161,6 +2444,23 @@ static bool createTeamControls(HWND window, WindowState *state, unsigned side) {
 			return false;
 		}
 	}
+	state->swapButtons[side] = CreateWindowExW(
+		0,
+		L"BUTTON",
+		L"Swap player",
+		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		GetModuleHandleW(NULL),
+		NULL
+	);
+	if (!state->swapButtons[side]) {
+		return false;
+	}
 	HWND picker = state->teamControls[side][TEAM_INPUT];
 	SendMessageW(picker, CB_LIMITTEXT, 255, 0);
 	SendMessageW(picker, CB_SETMINVISIBLE, 15, 0);
@@ -2181,6 +2481,7 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 		{L"STATIC", L"Seed pattern (optional):", 0, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{L"BUTTON", L"Generate detailed reports?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
+		{L"BUTTON", L"Skip rebuild", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
 		{L"BUTTON", L"Simulate fixture", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"STATIC", L"Results are saved beside the fixture, using its filename with .csv.", 0, 0},
 		{L"STATIC", L"", 0, 0},
@@ -2212,6 +2513,8 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 	}
 	SendMessageW(state->simulation[SIM_THREADS], EM_SETLIMITTEXT, 15, 0);
 	SendMessageW(state->simulation[SIM_SEEDS], EM_SETLIMITTEXT, 255, 0);
+	// Skipping the per-seed rebuild plays any fixture, including one the game has moved on from.
+	SendMessageW(state->simulation[SIM_KEEP_BUILD], BM_SETCHECK, BST_CHECKED, 0);
 	SendMessageW(state->simulation[SIM_SEEDS], EM_SETCUEBANNER, TRUE, (LPARAM)L"e.g. 1,4,7-70");
 	SendMessageW(
 		state->simulation[SIM_SPINNER], UDM_SETBUDDY, (WPARAM)state->simulation[SIM_THREADS], 0
@@ -2836,6 +3139,10 @@ static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
 		}
 		if (control == state->teamControls[side][TEAM_CANCEL]) {
 			editTeam(window, state, side, false);
+			return true;
+		}
+		if (control == state->swapButtons[side]) {
+			startSwap(window, state, side);
 			return true;
 		}
 	}

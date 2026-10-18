@@ -17,6 +17,7 @@ typedef struct Encoder {
 	ByteBuffer name;
 	ByteBuffer player;
 	const ConfigVisitor *visitor;
+	const char *format; // the "format" the file must have
 	uint32_t teams[2];
 	size_t field; // index of the field being read, for messages
 } Encoder;
@@ -26,6 +27,8 @@ typedef struct FieldState {
 	ConfigValueKind kind;
 	size_t valueOffset;
 	size_t valueLength;
+	size_t playerOffset;
+	size_t playerLength;
 } FieldState;
 
 static bool
@@ -38,10 +41,13 @@ static bool readUnsignedValue(Encoder *encoder, size_t width);
 static bool readU8Map(Encoder *encoder);
 static bool readStringValue(Encoder *encoder, bool isHex);
 static size_t widthOf(const char *key);
+static size_t skipSpace(Encoder *encoder);
 static bool readMember(Encoder *encoder, const char *key, FieldState *field);
 static bool readField(Encoder *encoder);
 static bool readFields(Encoder *encoder);
 static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields);
+
+static const char configFormat[] = "fm24-match-config/1";
 
 bool matchConfig_encode(
 	const char *json,
@@ -51,7 +57,7 @@ bool matchConfig_encode(
 	char *error,
 	size_t errorSize
 ) {
-	Encoder encoder = {.out = out};
+	Encoder encoder = {.out = out, .format = configFormat};
 	bool ok = parseConfig(&encoder, json, length, error, errorSize);
 	if (teams) {
 		teams[0] = ok ? encoder.teams[0] : 0;
@@ -67,8 +73,19 @@ bool matchConfig_visit(
 	char *error,
 	size_t errorSize
 ) {
+	return matchConfig_visitFormat(json, length, configFormat, visitor, error, errorSize);
+}
+
+bool matchConfig_visitFormat(
+	const char *json,
+	size_t length,
+	const char *format,
+	const ConfigVisitor *visitor,
+	char *error,
+	size_t errorSize
+) {
 	ByteBuffer bytes = {0};
-	Encoder encoder = {.out = &bytes, .visitor = visitor};
+	Encoder encoder = {.out = &bytes, .visitor = visitor, .format = format};
 	bool ok = parseConfig(&encoder, json, length, error, errorSize);
 	buffer_free(&bytes);
 	return ok;
@@ -91,7 +108,7 @@ parseConfig(Encoder *encoder, const char *json, size_t length, char *error, size
 		);
 	} else if (!formatOk) {
 		(void)snprintf(
-			error, errorSize, "missing or unsupported \"format\" (want fm24-match-config/1)"
+			error, errorSize, "missing or unsupported \"format\" (want %s)", encoder->format
 		);
 	} else if (!haveFields) {
 		(void)snprintf(error, errorSize, "missing \"fields\"");
@@ -191,36 +208,52 @@ static size_t widthOf(const char *key) {
 	return 0;
 }
 
-// Reads the value of one member of a field object.
+// Skips whitespace before a token; returns the token's offset in the JSON.
+static size_t skipSpace(Encoder *encoder) {
+	JsonReader *reader = &encoder->reader;
+	while (
+		reader->position < reader->end && (*reader->position == ' ' || *reader->position == '\t' ||
+																				*reader->position == '\r' || *reader->position == '\n')) {
+		++reader->position;
+	}
+	return (size_t)(reader->position - reader->begin);
+}
+
+// Reads the value of one member of a field object, recording the spans of the value and of a
+// "player" annotation.
 static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	size_t width = widthOf(key);
 	bool isValue =
 		width || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 || strcmp(key, "hex") == 0;
 	if (!isValue) {
-		if (encoder->visitor && (strcmp(key, "name") == 0 || strcmp(key, "player") == 0)) {
-			return readText(encoder, strcmp(key, "name") == 0 ? &encoder->name : &encoder->player);
+		if (encoder->visitor && strcmp(key, "name") == 0) {
+			return readText(encoder, &encoder->name);
+		}
+		if (encoder->visitor && strcmp(key, "player") == 0) {
+			field->playerOffset = skipSpace(encoder);
+			bool ok = readText(encoder, &encoder->player);
+			field->playerLength =
+				(size_t)(encoder->reader.position - encoder->reader.begin) - field->playerOffset;
+			return ok;
 		}
 		return jsonReader_skipValue(&encoder->reader);
 	}
 	++field->values;
+	field->valueOffset = skipSpace(encoder);
+	bool ok = false;
 	if (width) {
 		field->kind = (ConfigValueKind)width;
-		const char *start = encoder->reader.position;
-		bool ok = readUnsignedValue(encoder, width);
-		while (ok && (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')) {
-			++start;
-		}
-		field->valueOffset = (size_t)(start - encoder->reader.begin);
-		field->valueLength =
-			(size_t)(encoder->reader.position - encoder->reader.begin) - field->valueOffset;
-		return ok;
-	}
-	if (strcmp(key, "u8map") == 0) {
+		ok = readUnsignedValue(encoder, width);
+	} else if (strcmp(key, "u8map") == 0) {
 		field->kind = CONFIG_RATINGS;
-		return readU8Map(encoder);
+		ok = readU8Map(encoder);
+	} else {
+		field->kind = strcmp(key, "str") == 0 ? CONFIG_STRING : CONFIG_HEX;
+		ok = readStringValue(encoder, strcmp(key, "hex") == 0);
 	}
-	field->kind = strcmp(key, "str") == 0 ? CONFIG_STRING : CONFIG_HEX;
-	return readStringValue(encoder, strcmp(key, "hex") == 0);
+	field->valueLength =
+		(size_t)(encoder->reader.position - encoder->reader.begin) - field->valueOffset;
+	return ok;
 }
 
 static bool readField(Encoder *encoder) {
@@ -253,6 +286,8 @@ static bool readField(Encoder *encoder) {
 			.length = encoder->out->length - start,
 			.valueOffset = field.valueOffset,
 			.valueLength = field.valueLength,
+			.playerOffset = field.playerOffset,
+			.playerLength = field.playerLength,
 		};
 		encoder->visitor->field(encoder->visitor->context, &value);
 	}
@@ -280,7 +315,7 @@ static bool readTopMember(Encoder *encoder, const char *key, bool *formatOk, boo
 	JsonReader *reader = &encoder->reader;
 	if (strcmp(key, "format") == 0) {
 		bool ok = readText(encoder, &encoder->scratch);
-		*formatOk = ok && strcmp(buffer_string(&encoder->scratch), "fm24-match-config/1") == 0;
+		*formatOk = ok && strcmp(buffer_string(&encoder->scratch), encoder->format) == 0;
 		return ok;
 	}
 	if (strcmp(key, "fields") == 0) {

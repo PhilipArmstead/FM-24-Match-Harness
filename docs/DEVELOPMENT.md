@@ -14,6 +14,7 @@ src/dll/     game.h (addresses, layouts, signatures), memory, stream,
              (generated), main
 src/runner/  main, commands, inject, client, paths, json_reader,
              match_config (encoder and streaming field visitor),
+             player_inject (copies a player's values into a block),
              fixture_data (platform-independent read model),
              fixture_load (JSON reads/binary decoding jobs),
              probe + probe_patterns (generated)
@@ -65,8 +66,8 @@ binaries in `bin/`. Close a running runner before rebuilding; for a loaded
 DLL, see the protocol-version instructions below.
 
 Run `bin/fm24_tests.exe` for the application regression checks, or pass a
-suite name (`job`, `dll`, `fixture_data`, `runner`, `runner_main`, `fixture_export` or
-`fixture_window`) to run only that suite. Each named test prints `[PASS]`
+suite name (`job`, `dll`, `fixture_data`, `runner`, `runner_main`, `fixture_export`,
+`fixture_window`, `fixture_load` or `player_inject`) to run only that suite. Each named test prints `[PASS]`
 or `[FAIL]`, followed by a test/failure count; failures return a nonzero
 exit code. Assertions report the source location, expression and expected
 and actual values without stopping the remaining checks.
@@ -305,6 +306,20 @@ but does not cancel DLL work; later jobs still wait for it.
    All required pointers are collected before mutation; exceeding the fixed
    swap capacity fails without changing the game. The viewer shares one
    replacement worker between the home and away editors.
+   `fm24ctl get-player <person uid> <out.json>` writes a player's database
+   values as an `fm24-player/1` file (`src/dll/job_player.c`): the fields a
+   player block copies from the database, named by their block suffix, with
+   the age on the human manager's next match day. The player record is found
+   from the person through MSVC RTTI (`database_playerRecord`): the person is
+   a subobject at `+0x278` of a `db::ACTUAL_PLAYER`, or `+0x368` of a
+   `db::ACTUAL_PLAYER_AND_NON_PLAYER`. For all 47 players of one fixture,
+   every value matched the fixture's.
+   `fm24ctl inject-player <in.json> <home|away>.player[N] <uid|player.json>
+   <out.json> [--keep-uid]` patches those values into one block offline
+   (`src/runner/player_inject.c`), fetching them first when given a unique
+   ID. Like a venue save, it replaces only value tokens (and the block's
+   `player` note) through the visitor's source spans, so the structure and
+   every other byte stay as they were.
 6. `fm24ctl probe [path\to\fm.exe]` reports where another build of `fm.exe`
    (e.g. the Epic Games one) has the code and data the harness uses. It reads
    the file only: nothing is injected, and the game isn't needed (without a

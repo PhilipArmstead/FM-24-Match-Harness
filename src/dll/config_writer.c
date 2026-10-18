@@ -20,7 +20,6 @@ enum {
 };
 
 static void writeEscaped(FILE *file, const uint8_t *text, size_t length);
-static void writeEscapedString(FILE *file, const char *text);
 static size_t sequenceLength(uint8_t lead);
 static bool isText(const uint8_t *text, size_t length);
 static bool isStringPair(const Serialised *serialised, size_t i);
@@ -95,7 +94,7 @@ static void writeEscaped(FILE *file, const uint8_t *text, size_t length) {
 	fputc('"', file);
 }
 
-static void writeEscapedString(FILE *file, const char *text) {
+void configWriter_writeString(FILE *file, const char *text) {
 	writeEscaped(file, (const uint8_t *)text, strlen(text));
 }
 
@@ -174,7 +173,7 @@ static void writeStaffAttributes(
 		char name[LABEL_LENGTH + 48];
 		(void)snprintf(name, sizeof name, "%s.%s", label->name, labels_staffAttributeName(k));
 		fprintf(file, "\"name\": ");
-		writeEscapedString(file, name);
+		configWriter_writeString(file, name);
 		if (full) {
 			fprintf(file, ", \"member\": \"MATCH_STAFF+0x%zx\"", STAFF_ATTRIBUTES_MEMBER + k);
 		}
@@ -213,7 +212,7 @@ static void writeFlags(FILE *file, const FieldLabel *label, const uint8_t *value
 		const char *name = labels_flagName(label, bit);
 		fprintf(file, "%s", separator);
 		if (name) {
-			writeEscapedString(file, name);
+			configWriter_writeString(file, name);
 		} else {
 			fprintf(file, "\"bit %u\"", bit);
 		}
@@ -246,7 +245,7 @@ static size_t writeField(
 	}
 	if (label->name[0]) {
 		fprintf(file, "\"name\": ");
-		writeEscapedString(file, label->name);
+		configWriter_writeString(file, label->name);
 		fprintf(file, ", ");
 	}
 	if (full && label->member) {
@@ -254,7 +253,7 @@ static size_t writeField(
 	}
 	if (label->player[0]) {
 		fprintf(file, "\"player\": ");
-		writeEscapedString(file, label->player);
+		configWriter_writeString(file, label->player);
 		fprintf(file, ", ");
 	}
 	writeFlags(file, label, value, record->length);
@@ -291,7 +290,7 @@ static void writeHeader(
 	);
 	fprintf(file, "  \"engine_version\": \"%u.%u.%u.%u\",\n", bytes[2], bytes[3], bytes[4], bytes[5]);
 	fprintf(file, "  \"source\": ");
-	writeEscapedString(file, source);
+	configWriter_writeString(file, source);
 	for (unsigned side = 0; teams && side < 2; ++side) {
 		if (teams[side]) {
 			fprintf(file, ",\n  \"%s_team\": %u", side ? "away" : "home", (unsigned)teams[side]);

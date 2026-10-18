@@ -20,6 +20,7 @@ typedef enum JobCommand {
 	JOB_REPLACE_AWAY, // rebuild an input against another away team, keeping its other edits
 	JOB_REPLACE_HOME, // rebuild an input with another home team, keeping its other edits
 	JOB_LIST_TEAMS,   // write every club's first team (unique ID and short name) to a text file
+	JOB_GET_PLAYER,   // write a player's database values for a match config player block
 } JobCommand;
 
 enum { JOB_TEAM_LENGTH = 256 };
@@ -42,6 +43,7 @@ typedef struct Job {
 	uint32_t seed;
 	char team[JOB_TEAM_LENGTH];     // replace: the new team (database_findTeam's spec)
 	char teams[2][JOB_TEAM_LENGTH]; // run, replace: input's home/away overrides ("": the fixture's)
+	uint32_t personId;              // get_player: the player's unique ID (0: missing)
 } Job;
 
 // Parses a job's key=value lines (modifying `text`); logs and returns false if it is malformed.
@@ -59,3 +61,4 @@ void jobs_buildNext(const Job *job);
 void jobs_inspect(const Job *job);
 void jobs_replaceTeam(const Job *job);
 void jobs_listTeams(const Job *job);
+void jobs_getPlayer(const Job *job);

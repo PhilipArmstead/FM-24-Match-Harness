@@ -103,6 +103,31 @@ uint8_t *database_findHumanTeam(void) {
 	return NULL;
 }
 
+uint8_t *database_playerRecord(const uint8_t *person) {
+	// MSVC RTTI: vtable[-1] is the complete object locator: u32 signature (1 on x64), u32 offset of
+	// this subobject in the complete object, u32 constructor displacement offset, u32 RVA of the
+	// class's type descriptor, whose decorated name starts at +0x10.
+	static const char *const playerClasses[] = {
+		".?AVACTUAL_PLAYER@db@@",
+		".?AVACTUAL_PLAYER_AND_NON_PLAYER@db@@",
+	};
+	uint8_t *vtable = NULL;
+	uint8_t *locator = NULL;
+	uint32_t header[4] = {0};
+	char name[48] = "";
+	if (!memory_readPointer(person, 0, &vtable) || !memory_readPointer(vtable, -8, &locator) ||
+			!memory_read(locator, header, sizeof header) || header[0] != 1 ||
+			!memory_read((uint8_t *)game_address(header[3]) + 0x10, name, sizeof name - 1)) {
+		return NULL;
+	}
+	for (size_t i = 0; i < sizeof playerClasses / sizeof playerClasses[0]; ++i) {
+		if (strcmp(name, playerClasses[i]) == 0) {
+			return (uint8_t *)person - header[1];
+		}
+	}
+	return NULL;
+}
+
 bool database_personName(const uint8_t *person, char *out, size_t size) {
 	char forename[MAX_NAME_LENGTH + 1] = "";
 	char surname[MAX_NAME_LENGTH + 1] = "";

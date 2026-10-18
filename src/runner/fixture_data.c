@@ -742,8 +742,64 @@ typedef struct PlayerPatch {
 } PlayerPatch;
 
 static int comparePlayerPatches(const void *a, const void *b) {
-	const PlayerPatch *left = a, *right = b;
+	const PlayerPatch *left = a;
+	const PlayerPatch *right = b;
 	return (left->span.offset > right->span.offset) - (left->span.offset < right->span.offset);
+}
+
+// Checks one player's edit flags and appends a patch for each wellbeing field they set.
+static bool addPlayerPatches(
+	const FixtureTeam *team,
+	const ValueSpan spans[5],
+	unsigned side,
+	unsigned i,
+	unsigned flags,
+	PlayerPatch *patches,
+	size_t *count,
+	char *error,
+	size_t errorSize
+) {
+	const FixturePlayer *player = &team->players[i];
+	if (flags & ~(FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION) || i >= team->playerCount.value ||
+			!player->present || !player->name[0] || strcmp(player->name, "<Unknown>") == 0) {
+		(void)snprintf(error, errorSize, "Cannot edit %s.player[%u].", side ? "away" : "home", i);
+		return false;
+	}
+	for (unsigned field = 0; field < 5; ++field) {
+		if (!(flags & (field == 4 ? FIXTURE_MAX_HAPPINESS : FIXTURE_MAX_CONDITION))) {
+			continue;
+		}
+		if (!spans[field].length) {
+			(void)snprintf(
+				error, errorSize, "Missing wellbeing field for %s.player[%u].", side ? "away" : "home", i
+			);
+			return false;
+		}
+		patches[(*count)++] = (PlayerPatch){spans[field], field == 4 ? 20U : field == 3 ? 0U : 10000U};
+	}
+	return true;
+}
+
+// Copies the JSON to `out` with each patch's span replaced by its value. False when out of memory.
+static bool applyPlayerPatches(
+	const char *json,
+	size_t length,
+	PlayerPatch *patches,
+	size_t count,
+	ByteBuffer *out
+) {
+	qsort(patches, count, sizeof patches[0], comparePlayerPatches);
+	size_t copied = 0;
+	for (size_t i = 0; i < count; ++i) {
+		char number[16];
+		int size = snprintf(number, sizeof number, "%u", patches[i].value);
+		if (!buffer_append(out, json + copied, patches[i].span.offset - copied) ||
+				!buffer_append(out, number, (size_t)size)) {
+			return false;
+		}
+		copied = patches[i].span.offset + patches[i].span.length;
+	}
+	return buffer_append(out, json + copied, length - copied);
 }
 
 bool fixtureData_writePlayers(
@@ -769,53 +825,22 @@ bool fixtureData_writePlayers(
 	for (unsigned side = 0; ok && edits && side < 2; ++side) {
 		for (unsigned i = 0; ok && i < FIXTURE_PLAYERS; ++i) {
 			unsigned flags = edits->players[side][i];
-			if (!flags) {
-				continue;
-			}
-			const FixtureTeam *team = &work->data.teams[side];
-			const FixturePlayer *player = &team->players[i];
-			if (flags & ~(FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION) ||
-					i >= team->playerCount.value || !player->present || !player->name[0] ||
-					strcmp(player->name, "<Unknown>") == 0) {
-				(void)snprintf(error, errorSize, "Cannot edit %s.player[%u].", side ? "away" : "home", i);
-				ok = false;
-				break;
-			}
-			for (unsigned field = 0; field < 5; ++field) {
-				if (!(flags & (field == 4 ? FIXTURE_MAX_HAPPINESS : FIXTURE_MAX_CONDITION))) {
-					continue;
-				}
-				ValueSpan span = work->spans[side][i][field];
-				if (!span.length) {
-					(void)snprintf(
-						error,
-						errorSize,
-						"Missing wellbeing field for %s.player[%u].",
-						side ? "away" : "home",
-						i
-					);
-					ok = false;
-					break;
-				}
-				work->patches[count++] = (PlayerPatch){span, field == 4 ? 20U : field == 3 ? 0U : 10000U};
-			}
+			ok = !flags || addPlayerPatches(
+											 &work->data.teams[side],
+											 work->spans[side][i],
+											 side,
+											 i,
+											 flags,
+											 work->patches,
+											 &count,
+											 error,
+											 errorSize
+										 );
 		}
 	}
-	if (ok) {
-		qsort(work->patches, count, sizeof work->patches[0], comparePlayerPatches);
-		size_t copied = 0;
-		for (size_t i = 0; ok && i < count; ++i) {
-			const PlayerPatch *patch = &work->patches[i];
-			char number[16];
-			int size = snprintf(number, sizeof number, "%u", patch->value);
-			ok = buffer_append(out, json + copied, patch->span.offset - copied) &&
-					 buffer_append(out, number, (size_t)size);
-			copied = patch->span.offset + patch->span.length;
-		}
-		ok = ok && buffer_append(out, json + copied, length - copied);
-		if (!ok) {
-			(void)snprintf(error, errorSize, "Out of memory editing players.");
-		}
+	if (ok && !applyPlayerPatches(json, length, work->patches, count, out)) {
+		(void)snprintf(error, errorSize, "Out of memory editing players.");
+		ok = false;
 	}
 	free(work);
 	if (!ok) {

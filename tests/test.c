@@ -92,6 +92,7 @@ int main(const int argc, const char *argv[]) {
 #endif
 		{"fixture_data", registerFixtureDataTests},
 		{"fixture_export", registerFixtureExportTests},
+		{"player_inject", registerPlayerInjectTests},
 	};
 	for (size_t i = 0; i < sizeof tests / sizeof tests[0]; ++i) {
 		if (argc > 1 && strcmp(argv[1], tests[i].name) != 0) {

@@ -7,6 +7,7 @@
 #include "files.h"
 #include "match_config.h"
 #include "paths.h"
+#include "player_inject.h"
 #include "protocol.h"
 
 #include <errno.h>
@@ -53,7 +54,7 @@ typedef struct RunOptions {
 } RunOptions;
 
 static bool absolutePath(const wchar_t *argument, Path *out);
-static bool jobInputPath(Path *out);
+static bool jobInputPath(Path *out, const wchar_t *extension);
 static void removeJobInput(const Path *path);
 static int submitAndReport(const char *job);
 static bool encodeConfig(const Path *json, ByteBuffer *bytes, uint32_t teams[2]);
@@ -70,6 +71,9 @@ static bool defaultOutput(const Path *input, Path *output);
 static void printDetailedPaths(const Path *output);
 static bool parseSeedValue(const wchar_t *value, char *seed, size_t size);
 static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t size, bool *full);
+static bool parsePersonId(const wchar_t *text, char *out, size_t size);
+static bool parsePlayerBlock(const wchar_t *text, char *out, size_t size);
+static int fetchPlayer(const char *person, const Path *output, char *result, size_t resultSize);
 
 int commands_run(int argc, wchar_t **argv) {
 	return commands_runWithProgress(argc, argv, 0);
@@ -186,7 +190,8 @@ int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_
 		return EXIT_FAILED;
 	}
 	(void)snprintf(result, resultSize, "Cannot prepare replacement; see the console for details.");
-	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) || !jobInputPath(&bin)) {
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[4], &output) ||
+			!jobInputPath(&bin, L".bin")) {
 		return EXIT_FAILED;
 	}
 	if (!encodeToFile(&input, &bin, &size, teams)) {
@@ -248,6 +253,108 @@ int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t 
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
+int commands_getPlayer(int argc, wchar_t **argv) {
+	char person[16];
+	Path output;
+	if (argc != 4 || !parsePersonId(argv[2], person, sizeof person)) {
+		fprintf(stderr, "usage: fm24ctl get-player <person unique ID> <output.json>\n");
+		return EXIT_USAGE;
+	}
+	char result[CLIENT_RESULT_LENGTH];
+	return absolutePath(argv[3], &output) ? fetchPlayer(person, &output, result, sizeof result)
+																				: EXIT_FAILED;
+}
+
+int commands_injectPlayer(int argc, wchar_t **argv) {
+	char result[CLIENT_RESULT_LENGTH];
+	return commands_injectPlayerWithResult(argc, argv, result, sizeof result);
+}
+
+int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	bool keepUid = argc == 7 && wcscmp(argv[6], L"--keep-uid") == 0;
+	char block[64];
+	char person[16] = "";
+	bool fromFile = argc >= 5 && files_hasExtension(argv[4], L".json");
+	if ((argc != 6 && !keepUid) || !files_hasExtension(argv[2], L".json") ||
+			!files_hasExtension(argv[5], L".json") || !parsePlayerBlock(argv[3], block, sizeof block) ||
+			(!fromFile && !parsePersonId(argv[4], person, sizeof person))) {
+		(void)snprintf(result, resultSize, "Player injection requires a .json fixture and output.");
+		fprintf(
+			stderr,
+			"usage: fm24ctl inject-player <input.json> <home|away>.player[N]"
+			" <person unique ID|player.json> <output.json> [--keep-uid]\n"
+		);
+		return EXIT_USAGE;
+	}
+	Path input;
+	Path output;
+	Path player;
+	(void)snprintf(result, resultSize, "Cannot prepare the injection; see the console for details.");
+	if (!absolutePath(argv[2], &input) || !absolutePath(argv[5], &output) ||
+			!(fromFile ? absolutePath(argv[4], &player) : jobInputPath(&player, L".json"))) {
+		return EXIT_FAILED;
+	}
+	if (!fromFile) {
+		int fetched = fetchPlayer(person, &player, result, resultSize);
+		if (fetched != EXIT_OK) {
+			removeJobInput(&player);
+			return fetched;
+		}
+	}
+	ByteBuffer config = {0};
+	ByteBuffer values = {0};
+	ByteBuffer injected = {0};
+	PlayerInjection injection;
+	char error[512] = "";
+	int status = EXIT_FAILED;
+	if (!files_read(input.wide, &config)) {
+		(void)snprintf(result, resultSize, "cannot read %s", input.utf8);
+	} else if (!files_read(player.wide, &values)) {
+		(void)snprintf(result, resultSize, "cannot read %s", player.utf8);
+	} else if (!playerInject_apply(
+							 buffer_string(&config),
+							 config.length,
+							 buffer_string(&values),
+							 values.length,
+							 block,
+							 keepUid,
+							 &injected,
+							 &injection,
+							 error,
+							 sizeof error
+						 )) {
+		(void)snprintf(result, resultSize, "error: %s", error);
+	} else if (!files_write(output.wide, injected.data, injected.length)) {
+		(void)snprintf(result, resultSize, "cannot write %s", output.utf8);
+	} else {
+		(void)snprintf(
+			result,
+			resultSize,
+			"ok: %zu values (and %zu unique ID copies) of %s replaced; wrote %s",
+			injection.replaced,
+			injection.uidCopies,
+			block,
+			output.utf8
+		);
+		status = EXIT_OK;
+	}
+	if (status != EXIT_OK) {
+		fprintf(stderr, "%s\n", result);
+	} else {
+		printf("%s\n", result);
+		if (injection.missing) {
+			printf("not in the block, left out: %s\n", injection.missingNames);
+		}
+	}
+	if (!fromFile) {
+		removeJobInput(&player);
+	}
+	buffer_free(&config);
+	buffer_free(&values);
+	buffer_free(&injected);
+	return status;
+}
+
 int commands_encode(int argc, wchar_t **argv) {
 	if (argc != 4) {
 		fprintf(stderr, "usage: fm24ctl encode <input.json> <output.bin>\n");
@@ -274,18 +381,20 @@ static bool absolutePath(const wchar_t *argument, Path *out) {
 	return ok;
 }
 
-// A new file next to fm24ctl.exe for one job's encoded input: jobs wait in line for the DLL, so
-// each needs its own (several runners, or a viewer's simulation and replacement, may be queued).
-static bool jobInputPath(Path *out) {
+// A new file next to fm24ctl.exe for one job's encoded input (or output): jobs wait in line for the
+// DLL, so each needs its own (several runners, or a viewer's simulation and replacement, may be
+// queued).
+static bool jobInputPath(Path *out, const wchar_t *extension) {
 	static volatile LONG count;
 	wchar_t name[64];
 	wchar_t directory[HARNESS_PATH_LENGTH];
 	(void)swprintf(
 		name,
 		sizeof name / sizeof name[0],
-		L"_job_input-%lu-%ld.bin",
+		L"_job_input-%lu-%ld%ls",
 		GetCurrentProcessId(),
-		InterlockedIncrement(&count)
+		InterlockedIncrement(&count),
+		extension
 	);
 	bool ok = paths_executableDirectory(directory, HARNESS_PATH_LENGTH) &&
 						paths_join(out->wide, HARNESS_PATH_LENGTH, directory, name) &&
@@ -421,7 +530,7 @@ static bool prepareInput(Path *input, uint32_t teams[2], bool *encoded) {
 	}
 	Path bin;
 	size_t size = 0;
-	if (!jobInputPath(&bin)) {
+	if (!jobInputPath(&bin, L".bin")) {
 		return false;
 	}
 	if (!encodeToFile(input, &bin, &size, teams)) {
@@ -563,4 +672,47 @@ static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t siz
 		}
 	}
 	return true;
+}
+
+// A person's unique ID: a nonzero decimal u32, copied to `out` as text.
+static bool parsePersonId(const wchar_t *text, char *out, size_t size) {
+	wchar_t *end = NULL;
+	errno = 0;
+	unsigned long long id = wcstoull(text, &end, 10);
+	if (errno != 0 || text[0] < L'0' || text[0] > L'9' || *end != 0 || id == 0 || id > UINT32_MAX) {
+		return false;
+	}
+	(void)snprintf(out, size, "%llu", id);
+	return true;
+}
+
+// "home.player[N]" or "away.player[N]", copied to `out`.
+static bool parsePlayerBlock(const wchar_t *text, char *out, size_t size) {
+	size_t length = wcslen(text);
+	bool side = wcsncmp(text, L"home.player[", 12) == 0 || wcsncmp(text, L"away.player[", 12) == 0;
+	if (!side || length < 14 || length >= size || text[length - 1] != L']' ||
+			wcsspn(text + 12, L"0123456789") != length - 13) {
+		return false;
+	}
+	for (size_t i = 0; i <= length; ++i) {
+		out[i] = (char)text[i];
+	}
+	return true;
+}
+
+// Has the DLL write a player's database values ("fm24-player/1") to `output`; `result` receives
+// its result line.
+static int fetchPlayer(const char *person, const Path *output, char *result, size_t resultSize) {
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job, sizeof job, "command=get_player\nperson=%s\noutput=%s\n", person, output->utf8
+	);
+	(void)snprintf(
+		result, resultSize, "Cannot fetch the player; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }

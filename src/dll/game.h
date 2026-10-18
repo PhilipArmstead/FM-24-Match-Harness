@@ -87,6 +87,24 @@ enum DatabaseLayout {
 	PERSON_FORENAME = 0x58, // doubly indirect string
 	PERSON_SURNAME = 0x60,  // doubly indirect string
 	PERSON_CONTRACT = 0xC8,
+	PERSON_DATE_OF_BIRTH = 0x44, // u16 day of year, u16 year
+	PERSON_NATION = 0x70,        // NATION *
+	PERSON_PERSONALITY = 0x78,   // 7 u8 (1-20): adaptability, ambition, loyalty, pressure,
+															 // professionalism, sportsmanship, temperament
+	PERSON_TRAITS = 0xF0,        // u64, one bit per player trait
+	NATION_UNIQUE_ID = 0x0C,
+	// Player record (database_playerRecord) members copied into a match (docs/FIXTURE.md).
+	PLAYER_WEIGHT = 0x14C,             // u8, kilograms
+	PLAYER_HEIGHT = 0x14E,             // u16, centimetres
+	PLAYER_LAST_TRANSFER_FEE = 0x1E0,  // u32
+	PLAYER_SHARPNESS = 0x1F4,          // u16, 0-10000
+	PLAYER_FATIGUE = 0x1F6,            // u16 holding a signed value, 0 is fresh
+	PLAYER_CONDITION = 0x1F8,          // u16, 0-10000
+	PLAYER_HOME_REPUTATION = 0x1FA,    // u16, then current and world reputation
+	PLAYER_CURRENT_ABILITY = 0x200,    // u16
+	PLAYER_RATINGS = 0x208,            // PLAYER_RATING_COUNT u8: positions, then attributes
+	PLAYER_MORALE = 0x25F,             // u8
+	PLAYER_PREFERRED_POSITION = 0x266, // u8
 	CONTRACT_TEAM = 0x10,
 	TEAM_UNIQUE_ID = 0x0C,
 	TEAM_CLUB = 0x30,

@@ -15,5 +15,6 @@ void registerRunnerTests(void);
 void registerFixtureExportTests(void);
 void registerFixtureWindowTests(void);
 void registerFixtureLoadTests(void);
+void registerPlayerInjectTests(void);
 
 #endif

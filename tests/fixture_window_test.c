@@ -30,12 +30,20 @@ static HRESULT WINAPI testCoCreateInstance(
 	void **out
 );
 static HRESULT WINAPI testShellItem(PCWSTR path, IBindCtx *context, REFIID interfaceId, void **out);
+static INT_PTR WINAPI testDialogBox(
+	HINSTANCE instance,
+	LPCDLGTEMPLATEW dialogTemplate,
+	HWND owner,
+	DLGPROC procedure,
+	LPARAM parameter
+);
 
 #define time testTime
 #define MessageBoxW testMessageBox
 #define CoCreateInstance testCoCreateInstance
 #define EnumFontFamiliesExW testEnumFontFamiliesExW
 #define SHCreateItemFromParsingName testShellItem
+#define DialogBoxIndirectParamW testDialogBox
 #include "../src/ui/fixture_window.c" // NOLINT(bugprone-suspicious-include): test internal UI callbacks.
 
 
@@ -44,6 +52,7 @@ static HRESULT WINAPI testShellItem(PCWSTR path, IBindCtx *context, REFIID inter
 #undef CoCreateInstance
 #undef EnumFontFamiliesExW
 #undef SHCreateItemFromParsingName
+#undef DialogBoxIndirectParamW
 
 static int WINAPI
 testEnumFontFamiliesExW(HDC dc, LOGFONTW *font, FONTENUMPROCW callback, LPARAM data, DWORD flags) {
@@ -83,6 +92,7 @@ static const wchar_t *expectedSeeds;
 static const wchar_t *expectedThreads;
 static wchar_t expectedInput[HARNESS_PATH_LENGTH];
 static bool expectedDetailed;
+static bool expectedKeepBuild = true; // the "Skip rebuild" box starts checked
 static bool expectedVenueInput;
 static bool expectedPlayerInput;
 static wchar_t simulationTemporary[HARNESS_PATH_LENGTH];
@@ -326,7 +336,9 @@ unsigned long commands_defaultThreads(void) {
 int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow) {
 	bool editedInput = expectedVenueInput || expectedPlayerInput;
 	ASSERT_BOOL_EQ(progressWindow == (uintptr_t)expectedProgressWindow, true);
-	ASSERT_BOOL_EQ(argc == (expectedDetailed ? 7 : 6) + (int)editedInput, true);
+	ASSERT_BOOL_EQ(
+		argc == 6 + (int)expectedDetailed + (int)expectedKeepBuild + (int)editedInput, true
+	);
 	ASSERT_INT_EQ(wcscmp(argv[1], L"run"), 0);
 	if (editedInput) {
 		ASSERT_BOOL_EQ(wcscmp(argv[2], expectedInput) != 0, true);
@@ -374,6 +386,9 @@ int commands_runWithProgress(int argc, wchar_t **argv, uintptr_t progressWindow)
 	if (expectedDetailed) {
 		ASSERT_INT_EQ(wcscmp(argv[option + 2], L"--detailed"), 0);
 	}
+	if (expectedKeepBuild) {
+		ASSERT_INT_EQ(wcscmp(argv[option + 2 + (int)expectedDetailed], L"--keep-build"), 0);
+	}
 	ASSERT_BOOL_EQ(argv[argc] == NULL, true);
 	++simulationCalls;
 	ASSERT_BOOL_EQ(WaitForSingleObject(simulationRelease, 5000) == WAIT_OBJECT_0, true);
@@ -416,6 +431,98 @@ int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t 
 	ASSERT_BOOL_EQ(files_write(argv[2], list, sizeof list - 1), true);
 	(void)snprintf(result, resultSize, "ok: 5 teams");
 	return 0;
+}
+
+static unsigned swapPrompts;
+static const wchar_t *swapEntry = L"";
+static WPARAM swapButton = IDCANCEL;
+static int swapChoice;           // the old player picked in the drop-down (-1: none)
+static wchar_t swapPlayers[256]; // the drop-down's entries, separated by "|"
+static unsigned swapCalls;
+static int swapResult;
+static HANDLE swapRelease;
+static const wchar_t *expectedBlock;
+
+// Builds the real prompt from its template (modeless, so the test can drive it), picks
+// `swapChoice`, enters `swapEntry` and presses `swapButton`. An invalid entry keeps the prompt
+// open; the user then cancels it.
+static INT_PTR WINAPI testDialogBox(
+	HINSTANCE instance,
+	LPCDLGTEMPLATEW dialogTemplate,
+	HWND owner,
+	DLGPROC procedure,
+	LPARAM parameter
+) {
+	++swapPrompts;
+	HWND dialog = CreateDialogIndirectParamW(instance, dialogTemplate, owner, procedure, parameter);
+	ASSERT_BOOL_EQ(dialog != NULL, true);
+	if (!dialog) {
+		return -1;
+	}
+	wchar_t text[32];
+	ASSERT_BOOL_EQ(GetWindowTextW(dialog, text, 32) > 0 && wcscmp(text, L"Swap player") == 0, true);
+	ASSERT_BOOL_EQ(
+		GetDlgItemTextW(dialog, IDOK, text, 32) > 0 && wcscmp(text, L"Confirm") == 0, true
+	);
+	ASSERT_BOOL_EQ(
+		GetDlgItemTextW(dialog, IDCANCEL, text, 32) > 0 && wcscmp(text, L"Cancel") == 0, true
+	);
+	ASSERT_BOOL_EQ(
+		GetDlgItemTextW(dialog, SWAP_PROMPT_OLD_LABEL, text, 32) > 0 &&
+			wcscmp(text, L"Old player:") == 0,
+		true
+	);
+	ASSERT_BOOL_EQ(
+		GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_LABEL, text, 32) > 0 &&
+			wcscmp(text, L"New player:") == 0,
+		true
+	);
+	ASSERT_BOOL_EQ(
+		SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, EM_GETLIMITTEXT, 0, 0) ==
+			SWAP_ID_LENGTH - 1,
+		true
+	);
+	ASSERT_BOOL_EQ(
+		GetWindowLongW(GetDlgItem(dialog, SWAP_PROMPT_NEW_PLAYER), GWL_STYLE) & ES_NUMBER, true
+	);
+	HWND players = GetDlgItem(dialog, SWAP_PROMPT_OLD_PLAYER);
+	ASSERT_BOOL_EQ(SendMessageW(players, CB_GETCURSEL, 0, 0) == 0, true);
+	swapPlayers[0] = 0;
+	LRESULT count = SendMessageW(players, CB_GETCOUNT, 0, 0);
+	for (LRESULT i = 0; i < count; ++i) {
+		wchar_t name[FIXTURE_TEXT];
+		ASSERT_BOOL_EQ(SendMessageW(players, CB_GETLBTEXT, (WPARAM)i, (LPARAM)name) > 0, true);
+		if (i) {
+			wcscat(swapPlayers, L"|");
+		}
+		wcscat(swapPlayers, name);
+	}
+	SendMessageW(players, CB_SETCURSEL, (WPARAM)swapChoice, 0);
+	ASSERT_BOOL_EQ(SetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, swapEntry), true);
+	SendMessageW(dialog, WM_COMMAND, swapButton, 0);
+	INT_PTR answer =
+		swapButton == IDOK && swapChoice >= 0 && validSwapId(swapEntry) ? IDOK : IDCANCEL;
+	ASSERT_BOOL_EQ(DestroyWindow(dialog), true);
+	return answer;
+}
+
+int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	ASSERT_BOOL_EQ(argc == 6 && argv[argc] == NULL, true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"inject-player"), 0);
+	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
+	ASSERT_INT_EQ(wcscmp(argv[3], expectedBlock), 0);
+	ASSERT_INT_EQ(wcscmp(argv[4], swapEntry), 0);
+	ASSERT_BOOL_EQ(files_hasExtension(argv[5], L".json"), true);
+	wcscpy(replacementOutput, argv[5]);
+	++swapCalls;
+	ASSERT_BOOL_EQ(WaitForSingleObject(swapRelease, 5000) == WAIT_OBJECT_0, true);
+	(void)snprintf(
+		result, resultSize, "%s", swapResult ? "error: no person with unique ID 404" : "ok"
+	);
+	if (!swapResult) {
+		ASSERT_BOOL_EQ(files_write(argv[5], "{\"swapped\":true}", 16), true);
+	}
+	return swapResult;
 }
 
 bool fixtureLoad_open(const wchar_t *path, FixtureData *out, char *error, size_t errorSize) {
@@ -591,6 +698,7 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
 			ASSERT_BOOL_EQ(controlVisible(state->playerButtons[i][button]), tab == 0);
 		}
+		ASSERT_BOOL_EQ(controlVisible(state->swapButtons[i]), tab == 0);
 	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		ASSERT_BOOL_EQ(controlVisible(state->simulation[i]), tab == 2);
@@ -681,6 +789,8 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 		state->playerButtons[0][PLAYER_CONDITION],
 		state->playerButtons[1][PLAYER_HAPPINESS],
 		state->playerButtons[1][PLAYER_CONDITION],
+		state->swapButtons[0],
+		state->swapButtons[1],
 		state->lists[0],
 		state->lists[1],
 		state->simulation[SIM_THREADS_LABEL],
@@ -760,7 +870,9 @@ static void checkTeamLayout(HWND window, WindowState *state, unsigned side) {
 	RECT tabs = controlBounds(window, state->tabs);
 	ASSERT_BOOL_EQ(input.left == heading.right && input.top == heading.top, true);
 	ASSERT_BOOL_EQ(confirm.left > input.right && cancel.left > confirm.right, true);
+	RECT actions = controlBounds(window, state->playerButtons[side][0]);
 	ASSERT_BOOL_EQ(error.left > cancel.right && error.right < tabs.right, true);
+	ASSERT_BOOL_EQ(error.right < actions.left, true);
 	ASSERT_BOOL_EQ(error.top < cancel.bottom, true);
 }
 
@@ -775,9 +887,10 @@ checkTeamHeading(HWND window, WindowState *state, unsigned side, const wchar_t *
 	ASSERT_BOOL_EQ(ReleaseDC(window, dc), true);
 	RECT heading = controlBounds(window, state->headings[side]);
 	RECT pitch = controlBounds(window, state->pitches[side]);
-	RECT list = controlBounds(window, state->lists[side]);
 	int width = extent.cx + scaled(state, 4);
-	int maximum = list.right - pitch.left - scaled(state, 27 + PLAYER_BUTTON_COUNT * 126);
+	// The edit icon follows the heading, then a gap before the first player button.
+	RECT actions = controlBounds(window, state->playerButtons[side][0]);
+	int maximum = actions.left - pitch.left - scaled(state, 27) - scaled(state, 6);
 	ASSERT_INT_EQ(heading.right - heading.left, width < maximum ? width : maximum);
 	if (width <= maximum) {
 		wchar_t text[2 * FIXTURE_TEXT + 128] = {0};
@@ -1250,6 +1363,105 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	state->teamCount = 0;
 }
 
+// Clicks a side's "Swap player" button.
+static void clickSwap(HWND window, const WindowState *state, unsigned side) {
+	ASSERT_BOOL_EQ(
+		windowProcedure(
+			window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->swapButtons[side]
+		) == 0,
+		true
+	);
+}
+
+static void checkPlayerSwap(HWND window, WindowState *state) {
+	FixtureTeam *team = &state->data->teams[1];
+	team->lineupKnown = false;
+	team->playerCount = (FixtureNumber){.value = 3, .known = true};
+	strcpy(team->players[0].name, "Keeper");
+	strcpy(team->players[2].name, "Striker");
+	team->players[0].present = true;
+	team->players[1].present = false;
+	team->players[2].present = true;
+	ASSERT_BOOL_EQ(fillList(state, 1), true);
+
+	// The button sits at the right of the team's heading line, on the Squads tab only.
+	changeTab(window, state, 1);
+	ASSERT_BOOL_EQ(!controlVisible(state->swapButtons[1]), true);
+	changeTab(window, state, 0);
+	for (unsigned side = 0; side < 2; ++side) {
+		wchar_t label[32];
+		ASSERT_BOOL_EQ(controlVisible(state->swapButtons[side]), true);
+		ASSERT_BOOL_EQ(GetWindowTextW(state->swapButtons[side], label, 32) > 0, true);
+		ASSERT_INT_EQ(wcscmp(label, L"Swap player"), 0);
+		RECT swap = controlBounds(window, state->swapButtons[side]);
+		RECT heading = controlBounds(window, state->headings[side]);
+		RECT list = controlBounds(window, state->lists[side]);
+		ASSERT_INT_EQ(swap.right, list.right);
+		ASSERT_INT_EQ(swap.top, heading.top);
+		ASSERT_BOOL_EQ(heading.right <= swap.left, true);
+	}
+
+	// Cancel, an invalid ID or no old player leave the fixture as it is.
+	unsigned prompts = swapPrompts;
+	int errors = errorMessages;
+	swapButton = IDCANCEL;
+	swapChoice = 1;
+	swapEntry = L"123";
+	clickSwap(window, state, 1);
+	ASSERT_BOOL_EQ(swapPrompts == prompts + 1 && !state->replacementThread, true);
+	ASSERT_INT_EQ(wcscmp(swapPlayers, L"Keeper|Striker"), 0);
+	swapButton = IDOK;
+	static const wchar_t *const invalid[] = {L"", L"0", L"4294967296"};
+	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		swapEntry = invalid[i];
+		clickSwap(window, state, 1);
+		ASSERT_BOOL_EQ(!state->replacementThread && errorMessages == ++errors, true);
+	}
+	swapEntry = L"2000040347";
+	swapChoice = -1;
+	clickSwap(window, state, 1);
+	ASSERT_BOOL_EQ(!state->replacementThread && errorMessages == ++errors, true);
+	ASSERT_BOOL_EQ(swapCalls == 0, true);
+
+	// Confirm injects into a temporary copy, shown as unsaved; the source is unchanged.
+	const wchar_t *source = state->savedFilename[0] ? state->savedFilename : state->path;
+	ASSERT_BOOL_EQ(paths_absolute(source, expectedInput, HARNESS_PATH_LENGTH), true);
+	swapRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
+	ASSERT_BOOL_EQ(swapRelease != NULL, true);
+	swapChoice = 1;
+	expectedBlock = L"away.player[2]"; // the second entry is block 2: block 1 is not a player
+	expectedSide = 1;
+	for (int failed = 1; failed >= 0; --failed) {
+		swapResult = failed;
+		replacementInput = state->data;
+		ASSERT_BOOL_EQ(ResetEvent(swapRelease), true);
+		clickSwap(window, state, 1);
+		ASSERT_BOOL_EQ(state->replacementThread != NULL, true);
+		ASSERT_BOOL_EQ(!IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
+		ASSERT_BOOL_EQ(
+			!IsWindowEnabled(state->swapButtons[0]) && !IsWindowEnabled(state->swapButtons[1]), true
+		);
+		clickSwap(window, state, 0); // busy: no second prompt
+		ASSERT_BOOL_EQ(swapPrompts == prompts + 6 + (unsigned)(1 - failed), true);
+		ASSERT_BOOL_EQ(SetEvent(swapRelease), true);
+		ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
+		checkReplacement(window, state);
+		ASSERT_BOOL_EQ(!state->replacementThread && IsWindowEnabled(state->swapButtons[1]), true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
+		if (failed) {
+			ASSERT_BOOL_EQ(errorMessages == ++errors && fileMissing(replacementOutput), true);
+		} else {
+			ASSERT_BOOL_EQ(errorMessages == errors && state->temporary, true);
+			ASSERT_INT_EQ(wcscmp(state->path, replacementOutput), 0);
+			checkContents(state->path, "{\"swapped\":true}");
+			firstLine(state->metadata, L"This fixture object is not saved. Click here to export it");
+		}
+	}
+	ASSERT_BOOL_EQ(swapCalls == 2, true);
+	ASSERT_BOOL_EQ(CloseHandle(swapRelease), true);
+	replacementInput = NULL;
+}
+
 static void checkFonts(HWND window, WindowState *state) {
 	static const UINT resolutions[] = {96, 120, 144, 192};
 	for (unsigned available = 0; available < 2; ++available) {
@@ -1419,6 +1631,8 @@ static void checkPlayerControls(HWND window, WindowState *state) {
 			RECT bounds = controlBounds(window, state->playerButtons[side][button]);
 			ASSERT_INT_EQ(bounds.top, heading.top);
 			ASSERT_BOOL_EQ(bounds.left > heading.right, true);
+			// The player buttons sit left of "Swap player".
+			ASSERT_BOOL_EQ(bounds.right < controlBounds(window, state->swapButtons[side]).left, true);
 		}
 	}
 	ASSERT_INT_EQ(ListView_GetItemCount(state->lists[0]), 12);
@@ -1588,6 +1802,12 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(
 		SendMessageW(state.simulation[SIM_DETAILED], BM_GETCHECK, 0, 0) == BST_UNCHECKED, true
 	);
+	ASSERT_BOOL_EQ(
+		SendMessageW(state.simulation[SIM_KEEP_BUILD], BM_GETCHECK, 0, 0) == BST_CHECKED, true
+	);
+	ASSERT_BOOL_EQ(GetWindowTextW(state.simulation[SIM_KEEP_BUILD], text, 256) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L"Skip rebuild"), 0);
+	ASSERT_BOOL_EQ(GetWindowLongW(state.simulation[SIM_KEEP_BUILD], GWL_STYLE) & WS_TABSTOP, true);
 	ASSERT_BOOL_EQ(SendMessageW(state.simulation[SIM_SEEDS], EM_GETLIMITTEXT, 0, 0) == 255, true);
 	ASSERT_BOOL_EQ(GetWindowTextLengthW(state.simulation[SIM_SUMMARY]) == 0, true);
 	ASSERT_BOOL_EQ(!controlVisible(state.progress), true);
@@ -1643,11 +1863,18 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		expectedSeeds = patterns[i][0] ? patterns[i] : L"keep";
 		expectedThreads = i % 2 ? L"7" : L"1";
 		expectedDetailed = i % 2 != 0;
+		expectedKeepBuild = i % 3 != 1;
 		simulationResult = i == 5 ? 1 : 0;
 		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_SEEDS], patterns[i]), true);
 		ASSERT_BOOL_EQ(SetWindowTextW(state.simulation[SIM_THREADS], expectedThreads), true);
 		SendMessageW(
 			state.simulation[SIM_DETAILED], BM_SETCHECK, expectedDetailed ? BST_CHECKED : BST_UNCHECKED, 0
+		);
+		SendMessageW(
+			state.simulation[SIM_KEEP_BUILD],
+			BM_SETCHECK,
+			expectedKeepBuild ? BST_CHECKED : BST_UNCHECKED,
+			0
 		);
 		ASSERT_BOOL_EQ(ResetEvent(simulationRelease), true);
 		clickSimulate(window, &state);
@@ -1798,6 +2025,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	taskbarStateResult = S_OK;
 	checkTeamEditor(window, &state, 1);
 	checkTeamEditor(window, &state, 0);
+	checkPlayerSwap(window, &state);
 	static const char venueFixture[] = "{\"format\":\"fm24-match-config/1\",\"fields\":["
 																		 "{\"name\":\"venue.pitch.width\",\"u32\":1116156723},"
 																		 "{\"name\":\"venue.pitch.half_width\",\"u32\":0}]}";
@@ -1814,6 +2042,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	expectedSeeds = L"keep";
 	expectedThreads = L"1";
 	expectedDetailed = false;
+	expectedKeepBuild = false; // this job is built directly, without the form
 	expectedVenueInput = true;
 	simulationResult = 0;
 	ASSERT_BOOL_EQ(SetEvent(simulationRelease), true);
@@ -1833,6 +2062,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	checkContents(venuePath, buffer_string(&squad));
 	expectedPlayerInput = false;
 	buffer_free(&squad);
+	expectedKeepBuild = true;
 	ASSERT_BOOL_EQ(DeleteFileW(venuePath), true);
 	ASSERT_BOOL_EQ(windowProcedure(window, state.taskbarCreated, 0, 0) == 0, true);
 	ASSERT_BOOL_EQ(state.taskbar != NULL && taskbarState == TBPF_NOPROGRESS, true);

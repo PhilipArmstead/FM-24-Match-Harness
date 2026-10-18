@@ -38,6 +38,8 @@ typedef struct ConfigField {
 	size_t length;
 	size_t valueOffset; // value token's span in the source JSON, for lossless edits
 	size_t valueLength;
+	size_t playerOffset; // the "player" annotation's string token (length 0 if none)
+	size_t playerLength;
 } ConfigField;
 
 typedef struct ConfigVisitor {
@@ -62,6 +64,17 @@ bool matchConfig_encode(
 bool matchConfig_visit(
 	const char *json,
 	size_t length,
+	const ConfigVisitor *visitor,
+	char *error,
+	size_t errorSize
+);
+
+// As matchConfig_visit, for a file of the same field syntax with another "format"
+// (e.g. "fm24-player/1", a player's database values from `fm24ctl get-player`).
+bool matchConfig_visitFormat(
+	const char *json,
+	size_t length,
+	const char *format,
 	const ConfigVisitor *visitor,
 	char *error,
 	size_t errorSize

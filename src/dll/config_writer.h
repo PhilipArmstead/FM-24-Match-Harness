@@ -26,6 +26,7 @@
 #include "trace.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <wchar.h>
 
 
@@ -37,3 +38,6 @@ bool configWriter_write(
 	const uint32_t teams[2],
 	bool full
 );
+
+// Writes `text` (UTF-8) as a quoted JSON string.
+void configWriter_writeString(FILE *file, const char *text);

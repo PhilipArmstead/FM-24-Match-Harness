@@ -15,7 +15,7 @@
 // same version (from another folder) cannot create the pipe and stays idle.
 #pragma once
 
-#define HARNESS_PROTOCOL L"1.0.28"
+#define HARNESS_PROTOCOL L"1.0.29"
 #define HARNESS_DLL_NAME (L"fm24-harness-" HARNESS_PROTOCOL L".dll")
 #define HARNESS_PIPE_NAME (L"\\\\.\\pipe\\FM24Harness_" HARNESS_PROTOCOL)
 

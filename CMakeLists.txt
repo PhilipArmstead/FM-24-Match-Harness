@@ -48,6 +48,7 @@ add_library(harness SHARED
 	src/dll/job_inspect.c
 	src/dll/job_replace.c
 	src/dll/job_teams.c
+	src/dll/job_player.c
 	src/dll/job_run.c
 	src/dll/labels.c
 	src/dll/log.c
@@ -83,6 +84,7 @@ add_executable(fm24ctl
 	src/runner/main.c
 	src/runner/match_config.c
 	src/runner/paths.c
+	src/runner/player_inject.c
 	src/runner/probe.c
 	src/runner/probe_patterns.c
 	src/ui/fixture_export.c
@@ -124,12 +126,14 @@ if(FM24_BUILD_TESTS)
 		tests/fixture_export_test.c
 		tests/fixture_window_test.c
 		tests/fixture_load_test.c
+		tests/player_inject_test.c
 		src/ui/fixture_export.c
 		src/runner/embedded.c
 		src/runner/fixture_data.c
 		src/runner/json_reader.c
 		src/runner/match_config.c
 		src/runner/paths.c
+		src/runner/player_inject.c
 		src/runner/probe_patterns.c
 		src/dll/memory.c
 		src/dll/site_lookup.c
@@ -142,7 +146,7 @@ if(FM24_BUILD_TESTS)
 	target_compile_options(fm24_tests PRIVATE ${warnings})
 	target_link_options(fm24_tests PRIVATE -static -static-libgcc)
 	install(TARGETS fm24_tests RUNTIME DESTINATION . COMPONENT Tests)
-	foreach(test job dll fixture_data runner runner_main fixture_export fixture_window fixture_load)
+	foreach(test job dll fixture_data runner runner_main fixture_export fixture_window fixture_load player_inject)
 		add_test(NAME ${test} COMMAND fm24_tests ${test})
 	endforeach()
 	if(CMAKE_BUILD_TYPE STREQUAL "Release" OR "Release" IN_LIST CMAKE_CONFIGURATION_TYPES)

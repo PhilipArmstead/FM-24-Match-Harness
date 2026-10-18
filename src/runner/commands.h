@@ -20,4 +20,8 @@ int commands_replaceTeamWithResult(int argc, wchar_t **argv, char *result, size_
 int commands_listTeams(int argc, wchar_t **argv);
 // As above, also returning the outcome line for the viewer.
 int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t resultSize);
+int commands_getPlayer(int argc, wchar_t **argv);
+int commands_injectPlayer(int argc, wchar_t **argv);
+// As above, also returning the outcome line for the viewer.
+int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize);
 int commands_probe(int argc, wchar_t **argv); // probe.c

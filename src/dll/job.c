@@ -165,6 +165,7 @@ static bool parseCommand(Job *job, const char *value) {
 		{"replace_away", JOB_REPLACE_AWAY},
 		{"replace_home", JOB_REPLACE_HOME},
 		{"list_teams", JOB_LIST_TEAMS},
+		{"get_player", JOB_GET_PLAYER},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -253,6 +254,15 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->detailed = strcmp(value, "1") == 0;
 		return true;
 	}
+	if (strcmp(key, "person") == 0) {
+		char *end = NULL;
+		unsigned long long person = 0;
+		if (!parseNumber(value, &end, &person) || *end != 0 || person == 0 || person > UINT32_MAX) {
+			return false;
+		}
+		job->personId = (uint32_t)person;
+		return true;
+	}
 	if (strcmp(key, "threads") == 0) {
 		return parseThreads(job, value);
 	}
@@ -279,6 +289,7 @@ static bool isComplete(const Job *job) {
 		case JOB_REPLACE_AWAY:
 		case JOB_REPLACE_HOME: return hasInput && hasOutput && job->team[0] != 0;
 		case JOB_LIST_TEAMS: return hasOutput;
+		case JOB_GET_PLAYER: return hasOutput && job->personId != 0;
 	}
 	return false;
 }

@@ -84,6 +84,18 @@ int commands_listTeams(int argc, wchar_t **argv) {
 	return 13;
 }
 
+int commands_getPlayer(int argc, wchar_t **argv) {
+	(void)argc;
+	(void)argv;
+	return 14;
+}
+
+int commands_injectPlayer(int argc, wchar_t **argv) {
+	(void)argc;
+	(void)argv;
+	return 15;
+}
+
 int commands_probe(int argc, wchar_t **argv) {
 	(void)argc;
 	(void)argv;
@@ -128,6 +140,10 @@ TEST(exports_next_fixture_and_dispatches_commands) {
 	ASSERT_INT_EQ(runnerMain(2, arguments), 0);
 	arguments[1] = L"list-teams";
 	ASSERT_INT_EQ(runnerMain(2, arguments), 13);
+	arguments[1] = L"get-player";
+	ASSERT_INT_EQ(runnerMain(2, arguments), 14);
+	arguments[1] = L"inject-player";
+	ASSERT_INT_EQ(runnerMain(2, arguments), 15);
 	arguments[1] = exportedPath;
 	expectTemporary = false;
 	ASSERT_INT_EQ(runnerMain(2, arguments), 9);
