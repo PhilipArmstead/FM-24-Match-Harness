@@ -176,33 +176,44 @@ static void namedField(Reader *reader, const ConfigField *field) {
 	}
 }
 
+// Checks one venue value on its own: its range and, for the floats, that it is a usable number.
+static bool validVenueValue(
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	unsigned i,
+	char *error,
+	size_t errorSize
+) {
+	uint64_t maximum = i == VENUE_SURFACE ? UINT8_MAX : i == VENUE_CONDITION ? 255 : UINT32_MAX;
+	if (values[i].value > maximum) {
+		(void)snprintf(error, errorSize, "%s is out of range.", venueFields[i].name);
+		return false;
+	}
+	if (i > VENUE_LATITUDE) {
+		return true;
+	}
+	float value = fixtureData_toFloat((uint32_t)values[i].value);
+	float limit = i == VENUE_LONGITUDE ? 180.0f : 90.0f;
+	if (isfinite(value) && (i <= VENUE_LENGTH ? value > 0 : fabsf(value) <= limit)) {
+		return true;
+	}
+	(void)snprintf(
+		error,
+		errorSize,
+		"Invalid %s: enter a finite %s.",
+		venueFields[i].name,
+		i <= VENUE_LENGTH ? "positive pitch dimension" : "coordinate within range"
+	);
+	return false;
+}
+
 bool fixtureData_validateVenue(
 	const FixtureNumber values[VENUE_FIELD_COUNT],
 	char *error,
 	size_t errorSize
 ) {
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
-		if (!values[i].known) {
-			continue;
-		}
-		uint64_t maximum = i == VENUE_SURFACE ? UINT8_MAX : i == VENUE_CONDITION ? 255 : UINT32_MAX;
-		if (values[i].value > maximum) {
-			(void)snprintf(error, errorSize, "%s is out of range.", venueFields[i].name);
+		if (values[i].known && !validVenueValue(values, i, error, errorSize)) {
 			return false;
-		}
-		if (i <= VENUE_LATITUDE) {
-			float value = fixtureData_toFloat((uint32_t)values[i].value);
-			float limit = i == VENUE_LONGITUDE ? 180.0f : 90.0f;
-			if (!isfinite(value) || (i <= VENUE_LENGTH ? value <= 0 : fabsf(value) > limit)) {
-				(void)snprintf(
-					error,
-					errorSize,
-					"Invalid %s: enter a finite %s.",
-					venueFields[i].name,
-					i <= VENUE_LENGTH ? "positive pitch dimension" : "coordinate within range"
-				);
-				return false;
-			}
 		}
 	}
 	if (values[VENUE_SURFACE].known && values[VENUE_SURFACE].value != 1 &&
@@ -233,8 +244,8 @@ typedef struct VenueWriter {
 	char error[192];
 } VenueWriter;
 
-static bool derivedVenueValue(const VenueWriter *writer, const char *name, uint32_t *out) {
-	const FixtureNumber *values = writer->values;
+// The attendance and fan counts the fixture copies from the venue's home and away fans.
+static bool attendanceValue(const FixtureNumber *values, const char *name, uint32_t *out) {
 	if (values[VENUE_HOME_FANS].known && values[VENUE_AWAY_FANS].known &&
 			(strcmp(name, "venue.used_capacity") == 0 || strcmp(name, "venue.attendance") == 0 ||
 				strcmp(name, "fixture.attendance") == 0 || strcmp(name, "fixture_extra") == 0)) {
@@ -250,10 +261,11 @@ static bool derivedVenueValue(const VenueWriter *writer, const char *name, uint3
 		*out = (uint32_t)values[VENUE_AWAY_FANS].value;
 		return true;
 	}
-	if (strncmp(name, "venue.pitch.", 12) != 0) {
-		return false;
-	}
-	const char *point = name + 12;
+	return false;
+}
+
+// The pitch's half and quarter width and length.
+static bool pitchFractionValue(const FixtureNumber *values, const char *point, uint32_t *out) {
 	for (unsigned i = 0; i < 2; ++i) {
 		unsigned dimension = i ? VENUE_LENGTH : VENUE_WIDTH;
 		if (!values[dimension].known) {
@@ -269,11 +281,29 @@ static bool derivedVenueValue(const VenueWriter *writer, const char *name, uint3
 			return true;
 		}
 	}
+	return false;
+}
+
+// One coordinate of landmark p (an index into the landmarks in pitchLandmarkValue) at an end.
+static float landmarkCoordinate(const FixtureNumber *values, unsigned p, char axis, bool end) {
+	float halfWidth = fixtureData_toFloat((uint32_t)values[VENUE_WIDTH].value) * 0.5f;
+	float halfLength = fixtureData_toFloat((uint32_t)values[VENUE_LENGTH].value) * 0.5f;
+	if (axis == 'y') {
+		return (end ? 1.0f : -1.0f) * (halfLength - (p == 5 ? 10.97f : 0));
+	}
+	if (axis != 'x') {
+		return 0;
+	}
+	float result = p == 1 ? 3.66f : p == 2 ? -3.66f : p == 3 ? -halfWidth : p == 4 ? halfWidth : 0;
+	// The engine numbers posts and corners in opposite directions at the two ends.
+	return end && result != 0 ? -result : result;
+}
+
+// A landmark's coordinate: "centre_spot.<axis>" or "end[n].<landmark>.<axis>".
+static bool pitchLandmarkValue(const FixtureNumber *values, const char *point, uint32_t *out) {
 	if (!values[VENUE_WIDTH].known || !values[VENUE_LENGTH].known) {
 		return false;
 	}
-	float halfWidth = fixtureData_toFloat((uint32_t)values[VENUE_WIDTH].value) * 0.5f;
-	float halfLength = fixtureData_toFloat((uint32_t)values[VENUE_LENGTH].value) * 0.5f;
 	static const char *const points[] = {
 		"goal", "post[0]", "post[1]", "corner[0]", "corner[1]", "penalty_spot"};
 	const char *axis = strrchr(point, '.');
@@ -291,23 +321,23 @@ static bool derivedVenueValue(const VenueWriter *writer, const char *name, uint3
 	point += 7;
 	for (unsigned p = 0; p < 6; ++p) {
 		size_t length = strlen(points[p]);
-		if (axis - point != (ptrdiff_t)length || strncmp(point, points[p], length) != 0) {
-			continue;
+		if (axis - point == (ptrdiff_t)length && strncmp(point, points[p], length) == 0) {
+			*out = fixtureData_fromFloat(landmarkCoordinate(values, p, axis[1], end));
+			return true;
 		}
-		float result = 0;
-		if (axis[1] == 'x') {
-			result = p == 1 ? 3.66f : p == 2 ? -3.66f : p == 3 ? -halfWidth : p == 4 ? halfWidth : 0;
-			// The engine numbers posts and corners in opposite directions at the two ends.
-			if (end && result != 0) {
-				result = -result;
-			}
-		} else if (axis[1] == 'y') {
-			result = (end ? 1.0f : -1.0f) * (halfLength - (p == 5 ? 10.97f : 0));
-		}
-		*out = fixtureData_fromFloat(result);
-		return true;
 	}
 	return false;
+}
+
+static bool derivedVenueValue(const VenueWriter *writer, const char *name, uint32_t *out) {
+	if (attendanceValue(writer->values, name, out)) {
+		return true;
+	}
+	if (strncmp(name, "venue.pitch.", 12) != 0) {
+		return false;
+	}
+	return pitchFractionValue(writer->values, name + 12, out) ||
+				 pitchLandmarkValue(writer->values, name + 12, out);
 }
 
 static void writeVenueField(void *context, const ConfigField *field) {

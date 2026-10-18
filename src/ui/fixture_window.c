@@ -248,33 +248,31 @@ static bool setVenue(WindowState *state) {
 	return ok;
 }
 
+// Reads venue field i from its control into value; false if the control's entry isn't valid.
+static bool readVenueInput(HWND control, unsigned i, uint64_t *value) {
+	if (i == VENUE_SURFACE) {
+		LRESULT selected = SendMessageW(control, CB_GETCURSEL, 0, 0);
+		*value = selected == 0 ? 1 : 8;
+		return selected == 0 || selected == 1;
+	}
+	wchar_t text[64];
+	int length = GetWindowTextW(control, text, 64);
+	wchar_t *end = NULL;
+	errno = 0;
+	if (i <= VENUE_LATITUDE) {
+		*value = fixtureData_fromFloat(wcstof(text, &end));
+	} else {
+		*value = wcstoull(text, &end, 10);
+	}
+	return length > 0 && GetWindowTextLengthW(control) < 64 && !errno && !*end &&
+				 wcsspn(text, i <= VENUE_LATITUDE ? L"+-0123456789.eE" : L"0123456789") == (size_t)length;
+}
+
 static bool readVenue(HWND window, WindowState *state, FixtureNumber values[VENUE_FIELD_COUNT]) {
 	memcpy(values, state->data->venueValues, sizeof state->data->venueValues);
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
-		if (!values[i].known) {
-			continue;
-		}
 		HWND control = state->venueInputs[i];
-		bool valid;
-		if (i == VENUE_SURFACE) {
-			LRESULT selected = SendMessageW(control, CB_GETCURSEL, 0, 0);
-			valid = selected == 0 || selected == 1;
-			values[i].value = selected == 0 ? 1 : 8;
-		} else {
-			wchar_t text[64];
-			int length = GetWindowTextW(control, text, 64);
-			wchar_t *end = NULL;
-			errno = 0;
-			if (i <= VENUE_LATITUDE) {
-				values[i].value = fixtureData_fromFloat(wcstof(text, &end));
-			} else {
-				values[i].value = wcstoull(text, &end, 10);
-			}
-			valid =
-				length > 0 && GetWindowTextLengthW(control) < 64 && !errno && !*end &&
-				wcsspn(text, i <= VENUE_LATITUDE ? L"+-0123456789.eE" : L"0123456789") == (size_t)length;
-		}
-		if (!valid) {
+		if (values[i].known && !readVenueInput(control, i, &values[i].value)) {
 			wchar_t message[192];
 			(void)swprintf(
 				message,
@@ -650,6 +648,31 @@ static bool formatMetadata(HWND metadata, LONG start, LONG end, DWORD effects, C
 	return SendMessageW(metadata, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&format) != 0;
 }
 
+// Formats the summary's first line: the unsaved or missing warning and its export link, or the
+// filename (which starts at filenameStart) in bold.
+static bool formatMetadataHeading(const WindowState *state, LONG filenameStart, COLORREF normal) {
+	if (!state->temporary) {
+		return formatMetadata(
+			state->metadata,
+			filenameStart,
+			filenameStart + (LONG)wcslen(state->filename),
+			CFE_BOLD,
+			normal
+		);
+	}
+	LONG warningLength = (LONG)wcslen(state->missing ? missingFixture : unsavedPrefix);
+	if (!formatMetadata(state->metadata, 0, warningLength, CFE_BOLD, RGB(255, 0, 0))) {
+		return false;
+	}
+	return state->missing || formatMetadata(
+														 state->metadata,
+														 warningLength,
+														 warningLength + (LONG)wcslen(exportLink),
+														 CFE_LINK | CFE_UNDERLINE,
+														 RGB_BLUE
+													 );
+}
+
 static bool setMetadata(WindowState *state) {
 	static const wchar_t filenamePrefix[] = L"Viewing fixture: ";
 	static const char note[] =
@@ -700,25 +723,9 @@ static bool setMetadata(WindowState *state) {
 	if (!formatMetadata(state->metadata, 0, -1, 0, normal)) {
 		return false;
 	}
-	bool ok;
-	if (state->temporary) {
-		LONG warningLength = (LONG)wcslen(state->missing ? missingFixture : unsavedPrefix);
-		ok = formatMetadata(state->metadata, 0, warningLength, CFE_BOLD, RGB(255, 0, 0));
-		if (ok && !state->missing) {
-			ok = formatMetadata(
-				state->metadata,
-				warningLength,
-				warningLength + (LONG)wcslen(exportLink),
-				CFE_LINK | CFE_UNDERLINE,
-				RGB_BLUE
-			);
-		}
-	} else {
-		LONG start = (LONG)(sizeof filenamePrefix / sizeof filenamePrefix[0] - 1);
-		ok = formatMetadata(
-			state->metadata, start, start + (LONG)wcslen(state->filename), CFE_BOLD, normal
-		);
-	}
+	bool ok = formatMetadataHeading(
+		state, (LONG)(sizeof filenamePrefix / sizeof filenamePrefix[0] - 1), normal
+	);
 	GETTEXTLENGTHEX textLength = {.flags = GTL_NUMCHARS | GTL_PRECISE, .codepage = 1200};
 	LONG controlNoteStart =
 		(LONG)SendMessageW(state->metadata, EM_GETTEXTLENGTHEX, (WPARAM)&textLength, 0) -
@@ -742,6 +749,86 @@ static bool fileMissing(const wchar_t *path) {
 	return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
 }
 
+// The export's new filename, from the fixture's teams and the current time.
+static bool exportFilename(HWND window, const WindowState *state, wchar_t *filename) {
+	time_t timestamp = time(NULL);
+	if (timestamp == (time_t)-1) {
+		fputs("fixture viewer: cannot read current time\n", stderr);
+		showError(window, L"Cannot read current time.");
+		return false;
+	}
+	if (!fixtureExport_filename(
+				state->data, (uint64_t)timestamp, filename, FIXTURE_EXPORT_FILENAME_LENGTH
+			)) {
+		fputs("fixture viewer: export filename is too long\n", stderr);
+		showError(window, L"Fixture export filename is too long.");
+		return false;
+	}
+	return true;
+}
+
+// The file to export: the fixture itself or, with venue values, a temporary copy (in `edited`,
+// which the caller removes) that has them. NULL after showing an error.
+static const wchar_t *exportInput(
+	HWND window,
+	const WindowState *state,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	wchar_t edited[HARNESS_PATH_LENGTH]
+) {
+	if (!hasVenue(values)) {
+		return state->path;
+	}
+	char error[512];
+	if (!temporaryJson(edited, error, sizeof error)) {
+		showFileError(window, error);
+		return NULL;
+	}
+	if (!fixtureLoad_saveVenue(state->path, edited, values, error, sizeof error)) {
+		removeReplacement(edited);
+		showFileError(window, error);
+		return NULL;
+	}
+	return edited;
+}
+
+// Copies the fixture, with any venue edits, to a new export file. False after showing an error.
+static bool writeExport(HWND window, WindowState *state) {
+	wchar_t filename[FIXTURE_EXPORT_FILENAME_LENGTH];
+	FixtureNumber values[VENUE_FIELD_COUNT];
+	if (!exportFilename(window, state, filename) || !readVenue(window, state, values)) {
+		return false;
+	}
+	wchar_t edited[HARNESS_PATH_LENGTH] = L"";
+	const wchar_t *input = exportInput(window, state, values, edited);
+	if (!input) {
+		return false;
+	}
+	BOOL copied = CopyFileW(input, filename, TRUE);
+	DWORD copyError = GetLastError();
+	removeReplacement(edited);
+	if (copied) {
+		wcscpy(state->savedFilename, filename);
+		state->filename = state->savedFilename;
+		state->temporary = false;
+		memcpy(state->data->venueValues, values, sizeof values);
+		state->venueDirty = false;
+	} else if (fileMissing(state->path)) {
+		state->missing = true;
+	} else {
+		wchar_t message[256];
+		(void)swprintf(
+			message,
+			256,
+			L"Cannot export fixture (Windows error %lu). No file was overwritten.",
+			copyError
+		);
+		fprintf(stderr, "fixture viewer: cannot export fixture (Windows error %lu)\n", copyError);
+		showError(window, message);
+		return false;
+	}
+	return true;
+}
+
 static void exportFixture(HWND window, WindowState *state) {
 	if (state->fileThread) {
 		showError(window, L"Please wait for the fixture file operation to finish before exporting.");
@@ -756,65 +843,8 @@ static void exportFixture(HWND window, WindowState *state) {
 	}
 	if (fileMissing(state->path)) {
 		state->missing = true;
-	} else {
-		wchar_t filename[FIXTURE_EXPORT_FILENAME_LENGTH];
-		time_t timestamp = time(NULL);
-		if (timestamp == (time_t)-1) {
-			fputs("fixture viewer: cannot read current time\n", stderr);
-			showError(window, L"Cannot read current time.");
-			return;
-		}
-		if (!fixtureExport_filename(
-					state->data, (uint64_t)timestamp, filename, FIXTURE_EXPORT_FILENAME_LENGTH
-				)) {
-			fputs("fixture viewer: export filename is too long\n", stderr);
-			showError(window, L"Fixture export filename is too long.");
-			return;
-		}
-		FixtureNumber values[VENUE_FIELD_COUNT];
-		if (!readVenue(window, state, values)) {
-			return;
-		}
-		wchar_t edited[HARNESS_PATH_LENGTH] = L"";
-		const wchar_t *input = state->path;
-		char error[512];
-		if (hasVenue(values)) {
-			if (!temporaryJson(edited, error, sizeof error)) {
-				showFileError(window, error);
-				return;
-			}
-			if (!fixtureLoad_saveVenue(state->path, edited, values, error, sizeof error)) {
-				removeReplacement(edited);
-				showFileError(window, error);
-				return;
-			}
-			input = edited;
-		}
-		BOOL copied = CopyFileW(input, filename, TRUE);
-		DWORD copyError = GetLastError();
-		removeReplacement(edited);
-		if (copied) {
-			wcscpy(state->savedFilename, filename);
-			state->filename = state->savedFilename;
-			state->temporary = false;
-			memcpy(state->data->venueValues, values, sizeof values);
-			state->venueDirty = false;
-		} else {
-			if (fileMissing(state->path)) {
-				state->missing = true;
-			} else {
-				wchar_t message[256];
-				(void)swprintf(
-					message,
-					256,
-					L"Cannot export fixture (Windows error %lu). No file was overwritten.",
-					copyError
-				);
-				fprintf(stderr, "fixture viewer: cannot export fixture (Windows error %lu)\n", copyError);
-				showError(window, message);
-				return;
-			}
-		}
+	} else if (!writeExport(window, state)) {
+		return;
 	}
 	if (state->missing) {
 		fputs("fixture viewer: Fixture cannot be found; restart the app\n", stderr);
@@ -2655,35 +2685,53 @@ static bool closeBlocked(HWND window, const WindowState *state) {
 	return false;
 }
 
+// Marks the venue edited when `control` is one of its inputs; returns false when it is not.
+static bool venueEdited(HWND window, WindowState *state, HWND control) {
+	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
+		if (control != state->venueInputs[i]) {
+			continue;
+		}
+		state->venueDirty = true;
+		if (!setMetadata(state)) {
+			showError(window, L"Cannot update fixture summary.");
+			state->failed = true;
+			DestroyWindow(window);
+		}
+		return true;
+	}
+	return false;
+}
+
+// Handles a WM_COMMAND from one of the window's controls; returns false when it is not ours.
+static bool commandMessage(HWND window, WindowState *state, WPARAM wParam, LPARAM lParam) {
+	HWND control = (HWND)lParam;
+	WORD code = HIWORD(wParam);
+	if (!state->fillingVenue && (code == EN_CHANGE || code == CBN_SELCHANGE) &&
+			venueEdited(window, state, control)) {
+		return true;
+	}
+	if (code == BN_CLICKED && clickFixtureButton(window, state, control)) {
+		return true;
+	}
+	if (code != CBN_EDITCHANGE) {
+		return false;
+	}
+	unsigned side = pickerSide(state, control);
+	if (side >= 2) {
+		return false;
+	}
+	if (!state->filteringTeams) {
+		filterTeams(state, side, true);
+	}
+	return true;
+}
+
 static LRESULT
 actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
 		case WM_COMMAND:
-			if (!state->fillingVenue &&
-					(HIWORD(wParam) == EN_CHANGE || HIWORD(wParam) == CBN_SELCHANGE)) {
-				for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
-					if ((HWND)lParam == state->venueInputs[i]) {
-						state->venueDirty = true;
-						if (!setMetadata(state)) {
-							showError(window, L"Cannot update fixture summary.");
-							state->failed = true;
-							DestroyWindow(window);
-						}
-						return 0;
-					}
-				}
-			}
-			if (HIWORD(wParam) == BN_CLICKED && clickFixtureButton(window, state, (HWND)lParam)) {
+			if (commandMessage(window, state, wParam, lParam)) {
 				return 0;
-			}
-			if (HIWORD(wParam) == CBN_EDITCHANGE) {
-				unsigned side = pickerSide(state, (HWND)lParam);
-				if (side < 2) {
-					if (!state->filteringTeams) {
-						filterTeams(state, side, true);
-					}
-					return 0;
-				}
 			}
 			break;
 		case WM_TIMER:

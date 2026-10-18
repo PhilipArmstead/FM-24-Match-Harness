@@ -3,5 +3,7 @@
 /bin/
 
 # personal research data (FM database content; do not distribute)
+__pycache__
 /data
 /knowledge-base
+/results

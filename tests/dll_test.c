@@ -790,6 +790,8 @@ TEST(labels_weather_and_venue_fields) {
 		{.site = 0x1A8EC6C, .path = 1},                      // second landmark coordinate
 		{.site = 0x456AA30, .path = 1},                      // fn_456a9d0+0x158
 		{.site = 0x45844E1, .path = 1},                      // fn_45844b0+0x7
+		{.site = 0x456AC96, .path = 1},                      // fn_456a9d0+0x10c
+		{.site = 0x456ADB4, .path = 1},                      // fn_456a9d0+0x140
 		{.site = 0x43D0774, .caller = 0x43D0256, .path = 1}, // the unnamed first section array
 		{.site = 0x43D0774, .caller = SITE_OCCUPANCY_CALLER, .path = 1},
 		{.site = SITE_TEXT, .caller = SITE_STADIUM_NAME_CALLER, .path = 1},
@@ -820,6 +822,8 @@ TEST(labels_weather_and_venue_fields) {
 		"venue.pitch.centre_spot.y",
 		"venue.attendance",
 		"venue.stand[0].flags",
+		"venue.stand[0].model[0]",
+		"venue.stand[5].model[1]",
 		"",
 		"venue.section[1].occupancy",
 		"venue.stadium.name",
@@ -831,6 +835,80 @@ TEST(labels_weather_and_venue_fields) {
 	}
 	ASSERT_INT_EQ((int)labels[9].flags, FLAGS_STAND);
 	ASSERT_BOOL_EQ(strcmp(labels_flagName(&labels[9], 3), "tunnel") == 0, true);
+	free(labels);
+}
+
+TEST(labels_official_ratings) {
+	TraceRecord records[] = {
+		{.site = SITE_OFFICIAL_ALLOWING_FLOW, .path = 0}, // names the block
+		{.site = SITE_OFFICIAL_DISCIPLINE, .path = 0},
+		{.site = SITE_OFFICIAL_IMPORTANT_MATCHES, .path = 0},
+		{.site = SITE_OFFICIAL_REFEREEING, .path = 0},
+		{.site = SITE_OFFICIAL_RUNNING_LINE, .path = 0},
+		{.site = SITE_OFFICIAL_TIME_KEEPING, .path = 0},
+		{.site = SITE_OFFICIAL_ALLOWING_FLOW, .path = 1},
+		{.site = SITE_OFFICIAL_TIME_KEEPING, .path = 1},
+	};
+	char *paths[] = {"1ac7719", "1ac7775"};
+	Serialised serialised = {
+		.records = records,
+		.recordCount = sizeof records / sizeof records[0],
+		.paths = paths,
+		.pathCount = 2,
+	};
+	PeopleIndex people = {0};
+	FieldLabel *labels = labels_compute(&serialised, &people);
+	ASSERT_BOOL_EQ(labels != NULL, true);
+	if (!labels) {
+		return;
+	}
+	static const char *const expected[] = {
+		"official[0]",
+		"official[0].discipline",
+		"official[0].important_matches",
+		"official[0].refereeing",
+		"official[0].running_line",
+		"official[0].time_keeping",
+		"referee",
+		"referee.time_keeping",
+	};
+	for (size_t i = 0; i < sizeof expected / sizeof expected[0]; ++i) {
+		ASSERT_BOOL_EQ(strcmp(labels[i].name, expected[i]) == 0, true);
+	}
+	free(labels);
+}
+
+TEST(labels_match_focus) {
+	TraceRecord records[] = {
+		{.site = SITE_BACKROOM_FIRST},
+		{.site = SITE_STAFF_FOCUS_COUNT},
+		{.site = SITE_STAFF_FOCUS_CODE},
+		{.site = SITE_STAFF_FOCUS_CODE},
+		{.site = SITE_STAFF_FOCUS_CODE},
+	};
+	char *paths[] = {"1ac77e8>1b6f34b>1ae992a"};
+	Serialised serialised = {
+		.records = records,
+		.recordCount = sizeof records / sizeof records[0],
+		.paths = paths,
+		.pathCount = 1,
+	};
+	PeopleIndex people = {0};
+	FieldLabel *labels = labels_compute(&serialised, &people);
+	ASSERT_BOOL_EQ(labels != NULL, true);
+	if (!labels) {
+		return;
+	}
+	static const char *const expected[] = {
+		"away.manager",
+		"away.manager.match_focus.count",
+		"away.manager.match_focus.code[0]",
+		"away.manager.match_focus.code[1]",
+		"away.manager.match_focus.code[2]",
+	};
+	for (size_t i = 0; i < sizeof expected / sizeof expected[0]; ++i) {
+		ASSERT_BOOL_EQ(strcmp(labels[i].name, expected[i]) == 0, true);
+	}
 	free(labels);
 }
 
@@ -913,6 +991,8 @@ void registerDllTests(void) {
 		"DLL exports staff attributes as one named u8 each", test_labels_staff_attributes_byte_by_byte
 	);
 	test_run("DLL names weather, venue and attendance fields", test_labels_weather_and_venue_fields);
+	test_run("DLL names the officials' ratings", test_labels_official_ratings);
+	test_run("DLL names the managers' match focus", test_labels_match_focus);
 	test_run("DLL only exports valid UTF-8 as JSON text", test_only_merges_valid_utf8_text);
 	buffer_free(&engineOutput);
 }

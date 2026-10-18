@@ -148,6 +148,56 @@ bool fixtureLoad_save(const wchar_t *input, const wchar_t *output, char *error, 
 	return fixtureLoad_saveVenue(input, output, NULL, error, errorSize);
 }
 
+// The fixture as JSON, the JSON with venue edits and its binary encoding, as a save needs them.
+typedef struct SaveBuffers {
+	ByteBuffer text;
+	ByteBuffer edited;
+	ByteBuffer encoded;
+} SaveBuffers;
+
+// Reads the input as JSON, applies the venue edits (if any) and encodes it for a binary output.
+// Returns the bytes to save.
+static const ByteBuffer *convertFixture(
+	const wchar_t *input,
+	bool inputBinary,
+	bool outputBinary,
+	const FixtureNumber values[VENUE_FIELD_COUNT],
+	SaveBuffers *buffers,
+	char *error,
+	size_t errorSize
+) {
+	if (inputBinary) {
+		if (!decodeBinary(input, &buffers->text, error, errorSize)) {
+			return NULL;
+		}
+	} else if (!files_read(input, &buffers->text)) {
+		(void)snprintf(error, errorSize, "Cannot read the current fixture.");
+		return NULL;
+	}
+	const ByteBuffer *json = &buffers->text;
+	if (values) {
+		if (!fixtureData_writeVenue(
+					buffer_string(&buffers->text),
+					buffers->text.length,
+					values,
+					&buffers->edited,
+					error,
+					errorSize
+				)) {
+			return NULL;
+		}
+		json = &buffers->edited;
+	}
+	if (!outputBinary) {
+		return json;
+	}
+	return matchConfig_encode(
+					 buffer_string(json), json->length, &buffers->encoded, NULL, error, errorSize
+				 )
+					 ? &buffers->encoded
+					 : NULL;
+}
+
 bool fixtureLoad_saveVenue(
 	const wchar_t *input,
 	const wchar_t *output,
@@ -162,41 +212,18 @@ bool fixtureLoad_saveVenue(
 		(void)snprintf(error, errorSize, "Expected a .json or .bin fixture.");
 		return false;
 	}
-	ByteBuffer text = {0};
-	ByteBuffer edited = {0};
-	ByteBuffer encoded = {0};
+	SaveBuffers buffers = {0};
 	bool ok = true;
+	const ByteBuffer *bytes = NULL; // NULL copies the input as it is
 	if (values || inputBinary != outputBinary) {
-		if (inputBinary) {
-			ok = decodeBinary(input, &text, error, errorSize);
-		} else if (!files_read(input, &text)) {
-			(void)snprintf(error, errorSize, "Cannot read the current fixture.");
-			ok = false;
-		}
-		if (ok && values) {
-			ok = fixtureData_writeVenue(
-				buffer_string(&text), text.length, values, &edited, error, errorSize
-			);
-		}
-		const ByteBuffer *json = values ? &edited : &text;
-		if (ok && outputBinary) {
-			ok = matchConfig_encode(buffer_string(json), json->length, &encoded, NULL, error, errorSize);
-		}
+		bytes = convertFixture(input, inputBinary, outputBinary, values, &buffers, error, errorSize);
+		ok = bytes != NULL;
 	}
 	if (ok) {
-		ok = writeFixture(
-			input,
-			output,
-			!values && inputBinary == outputBinary ? NULL
-			: outputBinary                         ? &encoded
-			: values                               ? &edited
-																						 : &text,
-			error,
-			errorSize
-		);
+		ok = writeFixture(input, output, bytes, error, errorSize);
 	}
-	buffer_free(&encoded);
-	buffer_free(&edited);
-	buffer_free(&text);
+	buffer_free(&buffers.encoded);
+	buffer_free(&buffers.edited);
+	buffer_free(&buffers.text);
 	return ok;
 }

@@ -434,6 +434,8 @@ static unsigned lowestBit(uint64_t mask);
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelMemberField(const Walk *walk, FieldLabel *label);
 static void labelPersonField(const Walk *walk, FieldLabel *label, const TraceRecord *record);
+static void labelOfficialField(const Walk *walk, FieldLabel *label, const TraceRecord *record);
+static void labelFocusField(const Walk *walk, size_t i, const TraceRecord *record);
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record);
 static bool memberOffset(const char *member, const char *prefix, unsigned *offset);
 static unsigned earlierWrites(const Walk *walk, size_t i);
@@ -783,6 +785,41 @@ static void labelPersonField(const Walk *walk, FieldLabel *label, const TraceRec
 	}
 }
 
+// Names an official's ratings. The first, allowing flow, is left to name the block, which the
+// fixture viewer looks for.
+static void labelOfficialField(const Walk *walk, FieldLabel *label, const TraceRecord *record) {
+	const char *name = NULL;
+	switch (record->site) {
+		case SITE_OFFICIAL_DISCIPLINE: name = "discipline"; break;
+		case SITE_OFFICIAL_IMPORTANT_MATCHES: name = "important_matches"; break;
+		case SITE_OFFICIAL_REFEREEING: name = "refereeing"; break;
+		case SITE_OFFICIAL_RUNNING_LINE: name = "running_line"; break;
+		case SITE_OFFICIAL_TIME_KEEPING: name = "time_keeping"; break;
+		default: return;
+	}
+	(void)snprintf(label->name, sizeof label->name, "%s.%s", walk->block, name);
+}
+
+// Names a staff entry's match focus: its code count and each code, indexed by its place in the run.
+static void labelFocusField(const Walk *walk, size_t i, const TraceRecord *record) {
+	FieldLabel *label = &walk->labels[i];
+	switch (record->site) {
+		case SITE_STAFF_FOCUS_COUNT:
+			(void)snprintf(label->name, sizeof label->name, "%s.match_focus.count", walk->block);
+			break;
+		case SITE_STAFF_FOCUS_CODE:
+			(void)snprintf(
+				label->name,
+				sizeof label->name,
+				"%s.match_focus.code[%u]",
+				walk->block,
+				(unsigned)(i - walk->siteRunStart)
+			);
+			break;
+		default: break;
+	}
+}
+
 // Extends the block label with ".tactic[.part]" if the record was written by the tactic
 // serialiser: one of its return addresses is on the record's call path, or it wrote it directly.
 static void appendTacticPart(Walk *walk, size_t index, const TraceRecord *record) {
@@ -926,7 +963,7 @@ static const char *pitchLandmarkName(const TraceRecord *record, BuiltName *out) 
 	return NULL;
 }
 
-// The venue's seating sections (4 stands x 8 slots) and its 8 stand records.
+// The venue's seating sections (4 stands x 8 slots), its 8 stand records and their models.
 static const char *
 venueArrayName(const TraceRecord *record, const FieldLabel *label, BuiltName *out) {
 	unsigned offset = 0;
@@ -944,6 +981,17 @@ venueArrayName(const TraceRecord *record, const FieldLabel *label, BuiltName *ou
 			sizeof out->text,
 			offset < 0x40 ? "section[%u].seats" : "section[%u].type",
 			offset < 0x40 ? offset / 2 : offset - 0x60
+		);
+	} else if (memberOffset(label->member, "fn_456a9d0+0x", &offset) && offset >= 0x10c &&
+						 offset <= 0x148) {
+		// Two u32s per stand, probably 3D model IDs: symmetric stands share them, and the second is
+		// 0 for an empty corner.
+		(void)snprintf(
+			out->text,
+			sizeof out->text,
+			"stand[%u].model[%u]",
+			(offset - 0x10c) / 4 % 8,
+			(offset - 0x10c) / 32
 		);
 	} else if (memberOffset(label->member, "fn_45844b0+0x", &offset) && offset < 0x40) {
 		// Stand records are 8 bytes: u32 capacity, u16, u8, u8 flags.
@@ -1008,6 +1056,8 @@ static void labelRecord(Walk *walk, size_t i) {
 	labelVenueField(walk, i, record);
 	labelMemberField(walk, label);
 	labelPersonField(walk, label, record);
+	labelOfficialField(walk, label, record);
+	labelFocusField(walk, i, record);
 	if (record->site == SITE_STAFF_ATTRIBUTES && record->length == STAFF_ATTRIBUTE_COUNT) {
 		// The writer names each byte "<name>.<attribute>".
 		(void)snprintf(label->name, sizeof label->name, "%s.attributes", walk->block);

@@ -116,7 +116,7 @@ for a `name` to jump to a block. The blocks, in file order:
 | Block                         | What it is                                                                                             |
 |-------------------------------|--------------------------------------------------------------------------------------------------------|
 | `match`                       | the match header, including the [weather](#weather). The seed is a few fields in                       |
-| `official[0..3]`, `referee`   | the match officials                                                                                    |
+| `official[0..3]`, `referee`   | the match [officials](#officials)                                                                      |
 | `venue`                       | the [stadium, pitch and attendance](#venue)                                                            |
 | `fixture`, `fixture_extra`    | the competition and fixture details                                                                    |
 | `home.team`, `home.team_info` | the home club                                                                                          |
@@ -262,8 +262,9 @@ was checked against the database for all 47 players and every manager, staff
 member and backroom entry, and matched every time.
 
 The referee is the exception: the referee block has the same fields, but its
-personality values differ from the referee's database record (pressure 12
-against 10). The game seems to take referees' values from somewhere else.
+`personality.pressure` differs from the referee's database record (12 against
+10). For officials it holds their Pressure rating instead (see
+[Officials](#officials)).
 
 Whether the engine reads any of them during a match hasn't been tested. As
 with the ratings, editing a field changes only the match, not your save.
@@ -1002,6 +1003,53 @@ match. AI-managed sides are left as they are. Use `run --human-control` to
 play the file's own value instead; a side that the flags say is under human
 control makes no changes during the match, not even for injuries.
 
+# Match focus
+
+The Match Focus picks from the training screen (one phase of play and two set
+pieces) are in `<side>.manager.match_focus`: a `u16` count, then one `u8`
+code per pick:
+
+```json
+{"name": "home.manager.match_focus.count", "u16": 3},
+{"name": "home.manager.match_focus.code[0]", "u8": 0},
+{"name": "home.manager.match_focus.code[1]", "u8": 3},
+{"name": "home.manager.match_focus.code[2]", "u8": 6},
+```
+
+| Code | Focus                | Code | Focus                |
+|------|----------------------|------|----------------------|
+| 0    | In Possession        | 5    | Attacking Free Kicks |
+| 1    | In Transition        | 6    | Defending Free Kicks |
+| 2    | Out of Possession    | 7    | Throw-ins            |
+| 3    | Attacking Corners    | 8    | Penalties            |
+| 4    | Defending Corners    |      |                      |
+
+The phase of play comes first (0-2), then the two set pieces (3-8). An
+AI-managed side has a focus too: the game picks one for it against its
+opponent. Backroom entries and `team_extra` have the same fields with a count
+of 0.
+
+The codes were found by writing three different picks into the game's memory
+and exporting the same fixture with the same seed after each. Nothing else in
+the file changed. Within a match, a code makes the engine re-roll one of a
+player's attributes for the moment when its situation comes up (for example,
+anticipation at the corners for codes 3 and 4), if that player is
+concentrating at the time.
+
+- **Change a code, not the count.** The count is the number of codes after
+  it, so changing it changes the file's structure.
+- **`run` plays edited codes,** with or without `--keep-build`. Changing
+  Villa's codes from 0, 3, 6 to 2, 7, 8 changed all 20 of 20 seeds' matches.
+  The same three codes in another order (6, 0, 3) played exactly as before:
+  the engine only checks whether a code is in the list, so the order doesn't
+  matter.
+- **Not tested yet:** how much a focus changes results.
+
+The field after the codes (`MATCH_STAFF+0x50` in a `--full` export) is set
+when the game builds the match, starting from 75 and, in some cases, adding a
+bonus from the manager's attributes. It was 75 for Aston Villa's manager and 90 for Barnsley's. Its
+meaning isn't known.
+
 # Officials, venue and weather
 
 These are drawn from the seed when the game builds the match: the officials'
@@ -1009,12 +1057,40 @@ ratings for the day, the attendance, the weather and a random number per
 player. `run` takes them from the game's build for each seed, unless you
 edited them. If you edit one, your value is used for every seed.
 
-The officials' fields are mostly unnamed: look in the `official[0..3]` and
-`referee` blocks. The weather and venue fields below were mapped by comparing
-three saves of the same day: Aston Villa at Villa Park, Blackburn at Ewood
-Park and Liepāja at Stadions "Daugava", against the game's weather text and the
-stadiums' profiles in the game and in FMRTE. Whether the engine reads any of
-them during a match hasn't been tested.
+The officials' ratings are below. The weather and venue fields were mapped by
+comparing three saves of the same day: Aston Villa at Villa Park, Blackburn at
+Ewood Park and Liepāja at Stadions "Daugava", against the game's weather text
+and the stadiums' profiles in the game. Whether the engine reads
+any of them during a match hasn't been tested.
+
+## Officials
+
+Each of the `official[0..3]` and `referee` blocks starts with the official's
+ratings, one `u8` each on the in-game 1-20 scale. They were mapped against
+two referees' profiles: Nicoleta Bria and Lauren Impey, whose six
+ratings are all different.
+
+| Name                       | Type | Meaning                                                         |
+|----------------------------|------|-----------------------------------------------------------------|
+| `referee`, `official[i]`   | `u8` | allowing flow (the first field, so it carries the block's name) |
+| `.discipline`              | `u8` | discipline                                                      |
+| `.important_matches`       | `u8` | important matches                                               |
+| `.refereeing`              | `u8` | refereeing                                                      |
+| `.running_line`            | `u8` | running line                                                    |
+| `.time_keeping`            | `u8` | time keeping                                                    |
+| `.personality.pressure`    | `u8` | pressure                                                        |
+
+The two unnamed bytes after `.time_keeping` were 9 and 2 in every block,
+even the empty ones. The referee's ratings are the same as the referee's
+profile in every save. `official[0]` and `official[1]` have no person
+(their `.person_uid` is 4294967295): their ratings change with the seed.
+`official[2]` and `official[3]` were all zeros. Neither reputation nor
+current ability is in the block.
+
+| Referee       | Allowing flow | Discipline | Important matches | Refereeing | Running line | Time keeping | Pressure |
+|---------------|---------------|------------|-------------------|------------|--------------|--------------|----------|
+| Nicoleta Bria | 18            | 5          | 5                 | 9          | 18           | 3            | 8        |
+| Lauren Impey  | 8             | 6          | 14                | 11         | 18           | 5            | 16       |
 
 ## Weather
 
@@ -1054,7 +1130,7 @@ carries the block's name, is the pitch length.
 
 **Pitch.** Lengths are in metres, stored as the raw bits of a 32-bit float
 (convert them as for [height](#every-person)): Villa Park is 105.1 × 67.6,
-Ewood Park 105 × 65, Daugava 105 × 68.
+Ewood Park 105 × 65, Daugava and the Bernabéu 105 × 68.
 
 | Name                                           | Meaning                                                                      |
 |------------------------------------------------|------------------------------------------------------------------------------|
@@ -1076,23 +1152,24 @@ including the engine's opposite post/corner numbering at the two ends.
 
 **Stadium.**
 
-| Name                          | Type  | Meaning                                                                                                            |
-|-------------------------------|-------|--------------------------------------------------------------------------------------------------------------------|
-| `venue.stadium.uid`           | `u32` | the stadium's unique ID (603 Villa Park, 612 Ewood Park, 485756 Daugava)                                           |
-| `venue.uid`                   | `u32` | the same unique ID again                                                                                           |
-| `venue.stadium.index`         | `u32` | an index in one of the game's tables (3, 12 and 2594)                                                              |
-| `venue.stadium.name`          | `str` | the stadium's name                                                                                                 |
-| `venue.nation`                | `u32` | the unique ID of the stadium's nation (765 England, 777 Latvia)                                                    |
-| `venue.city_latitude`         | `u32` | float: the latitude of the stadium's **city**, not the stadium (52.486 for Birmingham, where Villa Park is 52.509) |
-| `venue.city_longitude`        | `u32` | float: the city's longitude                                                                                        |
-| `venue.capacity`              | `u32` | capacity                                                                                                           |
-| `venue.seating_capacity`      | `u32` | seating capacity (Daugava: 4022 of 5083)                                                                           |
-| `venue.used_capacity`         | `u32` | used capacity                                                                                                      |
-| `venue.season_ticket_holders` | `u32` | season-ticket holders (30,000 at Villa, as the club's finances show)                                               |
-| `venue.surface`               | `u8`  | 1 grass, 8 grass/synthetic mix                                                                                     |
-| `venue.pitch_condition`       | `u16` | FMRTE's "pitch condition" (200 in all three)                                                                       |
-| `venue.state`                 | `u8`  | probably the stadium's state: 1 very good, 2 good                                                                  |
-| `venue.seat_colour[0]`, `[1]` | `u32` | seat colours as `0xAABBGGRR`: Villa Park `0xff331973` is claret (R 0x73, G 0x19, B 0x33); `[1]` is a darker shade  |
+| Name                          | Type  | Meaning                                                                                                                                                     |
+|-------------------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `venue.stadium.uid`           | `u32` | the stadium's unique ID (603 Villa Park, 612 Ewood Park, 485756 Daugava, 1056 Bernabéu)                                                                     |
+| `venue.uid`                   | `u32` | the same unique ID again                                                                                                                                    |
+| `venue.stadium.index`         | `u32` | an index in one of the game's tables (3, 12, 2594 and 401)                                                                                                  |
+| `venue.stadium.name`          | `str` | the stadium's name                                                                                                                                          |
+| `venue.nation`                | `u32` | the unique ID of the stadium's nation (765 England, 777 Latvia, 796 Spain)                                                                                  |
+| `venue.city_latitude`         | `u32` | float: the latitude of the stadium's **city**, not the stadium (52.486 for Birmingham, where Villa Park is 52.509; 40.417 for Madrid, where the Bernabéu is 40.453) |
+| `venue.city_longitude`        | `u32` | float: the city's longitude (-1.890 Birmingham, -3.704 Madrid; the stadiums are at -1.885 and -3.688)                                                       |
+| `venue.capacity`              | `u32` | capacity                                                                                                                                                    |
+| `venue.seating_capacity`      | `u32` | seating capacity (Daugava: 4022 of 5083)                                                                                                                    |
+| `venue.used_capacity`         | `u32` | used capacity                                                                                                                                               |
+| `venue.season_ticket_holders` | `u32` | season-ticket holders (30,000 at Villa, as the club's finances show; 63,000 at Real Madrid)                                                                 |
+| `venue.surface`               | `u8`  | 1 grass, 8 grass/synthetic mix                                                                                                                              |
+| `venue.pitch_condition`       | `u16` | 200 in all four                                                                                                                 |
+| `venue.state`                 | `u8`  | probably the stadium's state: 1 very good (Villa Park and the Bernabéu), 2 good                                                                             |
+| `venue.seat_colour[0]`        | `u32` | Villa Park `0xff331973` is claret (R 0x73, G 0x19, B 0x33), the Bernabéu `0xffcc823b` blue                   |
+| `venue.seat_colour[1]`        | `u32` | a second seat colour: a darker claret (`0xff281068`) at Villa Park, but white (`0xfff8f8f8`) at the Bernabéu and Ewood Park                                 |
 
 **Attendance.** `venue.attendance` is `venue.home_fans` plus
 `venue.away_fans`. The game writes the attendance three times: also
@@ -1117,8 +1194,23 @@ against a capacity of 42,777); corners without seats or standing room have 0.
 | 4   | 16    | unknown; set on every stand with a capacity                              |
 | 5   | 32    | unknown (two of Daugava's corners and two stands, one of Ewood's stands) |
 
-Each record also has a `u16` (0 in every record seen) and a `u8` (14, 12, 19
-and 17 at Villa Park, 20 in every Daugava record) that aren't named.
+Each record also has a `u16` and a `u8` that aren't named. The `u16` is 0 at
+Villa Park, Ewood Park, Daugava and Shell Energy Stadium, but 58363 in every
+Bernabéu record. Of these grounds, only the Bernabéu has a retractable roof.
+The `u8` is 14, 12, 19 and 17 on Villa
+Park's sides, 8 and 17 on Ewood Park's, and 20 everywhere else, including
+every Daugava and Bernabéu record and the empty corners.
+
+**Stand models.** `venue.stand[0..7].model[0]` and `.model[1]` (`u32`,
+members `fn_456a9d0+0x10c` to `+0x148`: eight `model[0]`, then eight
+`model[1]`) look like the IDs of each stand's 3D models. They aren't
+capacities or colours. Symmetric stands share a value (at the Bernabéu,
+`model[0]` is the same for stands 0 and 4, for 2 and 6, and for all four
+corners), and the same values turn up at different grounds (`model[0]`
+53972788 on a side stand at both Villa Park and the Bernabéu, `model[1]`
+402171586 on stands 2, 4 and 6 at both). `model[1]` is 0 for a corner with no
+capacity; `model[0]` never is. Two more colours follow them, `0xff00f8f8`
+(yellow) and `0xffffffff`, the same at every ground seen.
 
 **Sections.** `venue.section[0..31]` are 4 stands × 8 slots (`section[s * 8 +
 k]`), each with:
@@ -1134,18 +1226,24 @@ seats × occupancy comes close to the attendance (14,796 against 15,015 at
 Villa Park), though less so at Ewood Park. Just before these comes another
 32-byte array, 0 in every save.
 
-**Unnamed venue members.** Seen at Villa Park, Ewood Park and Daugava:
+**Unnamed venue members.** Values at Villa Park, Ewood Park, Daugava, the
+Bernabéu and Shell Energy Stadium (Houston, with no profile to compare):
 
-| `member`                     | Values                 | Notes                                                                             |
-|------------------------------|------------------------|-----------------------------------------------------------------------------------|
-| `fn_456a9d0+0x1c`            | 1750000, 175000, 75000 | scales with the club; not the expansion capacity or a ticket figure               |
-| `fn_456a9d0+0x24`, `+0x25`   | 3, 3, 3; 14, 14, 29    |                                                                                   |
-| `fn_456a9d0+0x168`, `+0x17c` | 1, 1, 0 (both)         | undersoil heating and digital ad hoardings, one each: both are No only at Daugava |
-| `fn_456a9d0+0x17d`           | 63, 0, 68              |                                                                                   |
-| `fn_456a9d0+0x180`, `+0x181` | 22, 22, 14; 0, 0, 8    | perhaps pitch wear (Villa Park's recovery rate is 20) or Daugava's oval track     |
+| `member`                     | Values                                   | Notes                                                                                                                  |
+|------------------------------|------------------------------------------|------------------------------------------------------------------------------------------------------------------------|
+| `fn_456a9d0+0x1c`            | 1750000, 175000, 75000, 3750000, 1750000 | scales with the club; not the expansion capacity (50,000 Villa Park, 95,000 Bernabéu) or a ticket figure               |
+| `fn_456a9d0+0x24`, `+0x25`   | 3, 3, 3, 3, 4; 14, 14, 29, 27, 9         | perhaps `+0x25` is bit flags: bit 4 (16) is set only at the two grounds with an oval or running track, Daugava and the Bernabéu |
+| `fn_456a9d0+0x168`, `+0x17c` | 1, 1, 0, 1, 0 (both)                     | undersoil heating and digital ad hoardings, one each: both are No at Daugava, both Yes at Villa Park and the Bernabéu   |
+| `fn_456a9d0+0x17d`           | 63, 0, 68, 37, 5                         |                                                                                                                        |
+| `fn_456a9d0+0x180`, `+0x181` | 22, 22, 14, 22, 22; 0, 0, 8, 0, 0        | not the pitch recovery rate (20 at Villa Park, 18 at the Bernabéu); perhaps Daugava's oval track                       |
 
 Not in the venue block: the year built or rebuilt, the expansion capacity,
-the stadium's own coordinates, the owner, and the pitch dates.
+the stadium's own coordinates, the owner, and the pitch dates. No named field
+matches these values, which differ between the Bernabéu and Villa Park:
+"Roof", "Retractable Roof", "Oval", "Used By National Team" (Major Matches
+against No Matches), "Stadium Environment Condition" (State Of The Art against
+High End) and the pitch recovery rate (18 against 20). If they are in the
+block, they are among the unnamed values above.
 
 # Changing teams
 
@@ -1262,9 +1360,11 @@ name used above is unique.
 - Player instruction bit 0:1, and the other unnamed bits.
 - The [staff attributes](#staff-attributes) named `unknown_*`, and how much
   each of the manager's attributes the engine reads changes results.
+- How much the [match focus](#match-focus) changes results, and what the field
+  after the codes means.
 - Which set-piece routine is which, which takers list is which set piece, and
   which opposition record is which opponent.
-- The officials' fields, the weather's unnamed bytes, whether `rain` is rain,
+- The officials' unnamed fields, the weather's unnamed bytes, whether `rain` is rain,
   the unit of a weather change's `time`, and the [unnamed venue
   members](#venue).
 

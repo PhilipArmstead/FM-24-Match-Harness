@@ -71,6 +71,25 @@ enum PersonField {
 	SITE_PERSON_WEIGHT = 0x1A80064, // u8: kg, from PLAYER+0x14C
 };
 
+// Write call sites of an official's ratings (sub_141A267200), each a u8 1-20, matched against two
+// referees' profiles (docs/FIXTURE.md#officials). The first, allowing flow, names the block.
+// The officials' pressure rating is their personality.pressure.
+enum OfficialField {
+	SITE_OFFICIAL_ALLOWING_FLOW = 0x1A267222,
+	SITE_OFFICIAL_DISCIPLINE = 0x1A267238,
+	SITE_OFFICIAL_IMPORTANT_MATCHES = 0x1A26724E,
+	SITE_OFFICIAL_REFEREEING = 0x1A267274,
+	SITE_OFFICIAL_RUNNING_LINE = 0x1A26728A,
+	SITE_OFFICIAL_TIME_KEEPING = 0x1A2672A0,
+};
+
+// Write call sites of a staff entry's match focus (MATCH_STAFF+0x08..+0x10, a byte vector): its
+// length, then one focus code per byte (docs/FIXTURE.md#match-focus). Only managers have codes.
+enum StaffField {
+	SITE_STAFF_FOCUS_COUNT = 0x1A844DC, // u16
+	SITE_STAFF_FOCUS_CODE = 0x1A84508,  // u8: 0-2 phase of play, 3-8 set piece
+};
+
 // Write call sites of the weather, venue and attendance fields that have no member of their own
 // (docs/FIXTURE.md#officials-venue-and-weather). The rest are named by member (labels.c).
 enum VenueField {
@@ -86,7 +105,7 @@ enum VenueField {
 	SITE_STADIUM_NAME_CALLER = 0x4374ADD,  //   for the stadium's name
 	SITE_VENUE_UID = 0x456AC04,            // the stadium's unique ID again (VENUE+0x00)
 	SITE_SEAT_COLOUR_0 = 0x456AB32,        // ABGR
-	SITE_SEAT_COLOUR_1 = 0x456AB67,        // ABGR, shaded
+	SITE_SEAT_COLOUR_1 = 0x456AB67,        // ABGR, a second colour
 	SITE_STAND_0_CAPACITY = 0x45844CE,     // the first stand record's capacity
 	SITE_OCCUPANCY_CALLER = 0x43D0262,     // the call writing the per-section occupancy
 	SITE_OCCUPANCY_FIRST = 0x43D075E,      //   its section 0 (sections 1-30 have members)
