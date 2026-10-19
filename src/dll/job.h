@@ -20,6 +20,7 @@ typedef enum JobCommand {
 	JOB_REPLACE_AWAY, // rebuild an input against another away team, keeping its other edits
 	JOB_REPLACE_HOME, // rebuild an input with another home team, keeping its other edits
 	JOB_LIST_TEAMS,   // write every club's first team (unique ID and short name) to a text file
+	JOB_LIST_PLAYERS, // write every player (unique ID, names and club) to a text file
 	JOB_GET_PLAYER,   // write a player's database values for a match config player block
 } JobCommand;
 
@@ -61,4 +62,5 @@ void jobs_buildNext(const Job *job);
 void jobs_inspect(const Job *job);
 void jobs_replaceTeam(const Job *job);
 void jobs_listTeams(const Job *job);
+void jobs_listPlayers(const Job *job);
 void jobs_getPlayer(const Job *job);

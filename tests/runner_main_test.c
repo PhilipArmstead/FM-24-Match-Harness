@@ -84,6 +84,12 @@ int commands_listTeams(int argc, wchar_t **argv) {
 	return 13;
 }
 
+int commands_listPlayers(int argc, wchar_t **argv) {
+	(void)argc;
+	(void)argv;
+	return 16;
+}
+
 int commands_getPlayer(int argc, wchar_t **argv) {
 	(void)argc;
 	(void)argv;
@@ -140,6 +146,8 @@ TEST(exports_next_fixture_and_dispatches_commands) {
 	ASSERT_INT_EQ(runnerMain(2, arguments), 0);
 	arguments[1] = L"list-teams";
 	ASSERT_INT_EQ(runnerMain(2, arguments), 13);
+	arguments[1] = L"list-players";
+	ASSERT_INT_EQ(runnerMain(2, arguments), 16);
 	arguments[1] = L"get-player";
 	ASSERT_INT_EQ(runnerMain(2, arguments), 14);
 	arguments[1] = L"inject-player";

@@ -107,6 +107,13 @@ TEST(parses_job_messages) {
 	job_free(&job);
 	char noTeamsOutput[] = "command=list_teams\n";
 	ASSERT_BOOL_EQ(job_parse(noTeamsOutput, &job), false);
+	char players[] = "command=list_players\noutput=C:/players.txt\n";
+	ASSERT_BOOL_EQ(job_parse(players, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_LIST_PLAYERS, true);
+	ASSERT_INT_EQ(wcscmp(job.output, L"C:/players.txt"), 0);
+	job_free(&job);
+	char noPlayersOutput[] = "command=list_players\n";
+	ASSERT_BOOL_EQ(job_parse(noPlayersOutput, &job), false);
 	char incomplete[] = "command=run\ninput=C:/in.bin\nseeds=1\n";
 	ASSERT_BOOL_EQ(job_parse(incomplete, &job), false);
 	char bad[] = "command=inspect\ninput=C:/in.bin\noutput=C:/out.json\nseeds=x\n";

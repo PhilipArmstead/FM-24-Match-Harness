@@ -35,9 +35,21 @@ enum {
 	REPLACE_TIMER = 2,
 	FILE_TIMER = 3,
 	TEAMS_TIMER = 4,
+	PLAYERS_TIMER = 5,
+	WM_SWAP_PLAYERS = WM_APP + 2, // the player list has loaded or failed (to the swap prompt)
 };
 
 enum { TEAMS_SHOWN = 200, TEAM_LABEL_LENGTH = 256 }; // the team pickers' lists
+
+// The swap prompt's player list: what is typed is matched once it has this many characters and
+// has not changed for the delay.
+enum {
+	PLAYERS_SHOWN = 200,
+	PLAYER_LABEL_LENGTH = 1024,
+	PLAYER_FILTER_MINIMUM = 3,
+	PLAYER_FILTER_DELAY_MS = 100,
+	SWAP_FILTER_TIMER = 1,
+};
 
 enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
@@ -45,10 +57,9 @@ enum { CELL_COUNT = 9 }; // the squad lists' text cells
 
 // The swap prompt's controls.
 enum {
-	SWAP_PROMPT_OLD_LABEL = 100,
-	SWAP_PROMPT_OLD_PLAYER,
-	SWAP_PROMPT_NEW_LABEL,
+	SWAP_PROMPT_NEW_LABEL = 100,
 	SWAP_PROMPT_NEW_PLAYER,
+	SWAP_PROMPT_DUPLICATES,
 	SWAP_ID_LENGTH = 16,
 };
 
@@ -95,13 +106,19 @@ typedef struct ReplaceTeamJob {
 	FixturePlayerEdits playerEdits;
 	unsigned side;
 	bool swap;
+	bool keepUid; // swap: the player may already be in the fixture (inject-player --keep-uid)
 } ReplaceTeamJob;
 
-// The swap prompt's team, and the player block and unique ID it returns.
+struct WindowState;
+
+// The swap prompt's swapped-out player (the selected row), and the unique ID it returns.
 typedef struct SwapPrompt {
-	const FixtureTeam *team;
-	int block; // the old player's block
+	struct WindowState *state; // its player list, which may still be loading
+	const char *name;          // the swapped-out player's
+	int block;                 // the swapped-out player's block
 	wchar_t id[SWAP_ID_LENGTH];
+	bool filtering; // the new player's list is being refilled (ignore its own edit notifications)
+	bool allowDuplicates; // "Allow duplicates?": the new player may already be in the fixture
 } SwapPrompt;
 
 // An in-memory dialog template (DLGTEMPLATE and its items), for a modal prompt without resources.
@@ -111,17 +128,19 @@ typedef struct DialogTemplate {
 	bool overflow;
 } DialogTemplate;
 
-// A team the team pickers offer (fm24ctl list-teams).
-typedef struct Team {
-	wchar_t *label;  // "Short name (ID)", as listed
-	wchar_t *folded; // the label in lower case, for matching what is typed
-} Team;
+// A team the team pickers offer (fm24ctl list-teams), or a player the swap prompt offers (fm24ctl
+// list-players).
+typedef struct Choice {
+	wchar_t *label;  // "Short name (ID)" or "Name - Club (ID)", as listed
+	wchar_t *folded; // what is matched (foldText): the label, or the player's names
+} Choice;
 
-typedef struct TeamListJob {
+// Fetches the team or player list on a worker thread.
+typedef struct ChoiceListJob {
 	char error[CLIENT_RESULT_LENGTH];
-	Team *teams; // sorted by label
+	Choice *choices; // sorted by label
 	size_t count;
-} TeamListJob;
+} ChoiceListJob;
 
 typedef struct FileJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
@@ -166,9 +185,14 @@ typedef struct WindowState {
 	SimulationJob simulationJob;
 	ReplaceTeamJob replacementJob;
 	FileJob fileJob;
-	TeamListJob teamsJob;
-	Team *teams; // loaded once per viewer; NULL until then (free text still works)
+	ChoiceListJob teamsJob;
+	Choice *teams; // loaded once per viewer; NULL until then (free text still works)
 	size_t teamCount;
+	HANDLE playersThread;
+	ChoiceListJob playersJob;
+	Choice *players; // loaded once per viewer; NULL until then (unique IDs still work)
+	size_t playerCount;
+	HWND swapPrompt; // the open swap prompt, told when the player list is ready
 	wchar_t replacementPath[HARNESS_PATH_LENGTH];
 	unsigned long threadLimit;
 	HFONT font;
@@ -244,6 +268,22 @@ static void enableReplacementActions(const WindowState *state, BOOL enabled);
 static bool
 startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary);
 
+// The block of the side's one selected player, or -1 if none or several are selected.
+static int selectedBlock(const WindowState *state, unsigned side) {
+	int block = -1;
+	for (unsigned i = 0; i < FIXTURE_PLAYERS; ++i) {
+		if (state->selectedPlayers[side][i]) {
+			if (block >= 0) {
+				return -1;
+			}
+			block = (int)i;
+		}
+	}
+	return block;
+}
+
+// The squad lists and the buttons acting on their selection: the player buttons need a player
+// selected, "Swap player" exactly one.
 static void enablePlayers(const WindowState *state) {
 	bool idle = !state->simulationThread && !state->replacementThread && !state->fileThread;
 	for (unsigned side = 0; side < 2; ++side) {
@@ -255,6 +295,7 @@ static void enablePlayers(const WindowState *state) {
 		for (unsigned i = 0; i < PLAYER_BUTTON_COUNT; ++i) {
 			EnableWindow(state->playerButtons[side][i], idle && selected);
 		}
+		EnableWindow(state->swapButtons[side], idle && selectedBlock(state, side) >= 0);
 	}
 }
 
@@ -1206,79 +1247,208 @@ static void teamError(HWND window, WindowState *state, unsigned side, const char
 	layout(window, state);
 }
 
-static void freeTeams(Team *teams, size_t count) {
+static void freeChoices(Choice *choices, size_t count) {
 	for (size_t i = 0; i < count; ++i) {
-		free(teams[i].label);
-		free(teams[i].folded);
+		free(choices[i].label);
+		free(choices[i].folded);
 	}
-	free(teams);
+	free(choices);
 }
 
-static int compareTeams(const void *a, const void *b) {
-	const Team *left = a;
-	const Team *right = b;
+static int compareChoices(const void *a, const void *b) {
+	const Choice *left = a;
+	const Choice *right = b;
 	return CompareStringW(LOCALE_USER_DEFAULT, NORM_IGNORECASE, left->label, -1, right->label, -1) -
 				 CSTR_EQUAL;
 }
 
+// Lower case without accents, so that "odegaard" matches "Ødegaard": accents are split off and
+// dropped, and the Latin letters that do not split are spelled out.
+static bool foldText(const wchar_t *text, wchar_t *out, size_t size) {
+	static const struct {
+		wchar_t letter;
+		const wchar_t *spelling;
+	} letters[] = {
+		{L'Æ', L"ae"},
+		{L'æ', L"ae"},
+		{L'Ð', L"d"},
+		{L'ð', L"d"},
+		{L'Ø', L"o"},
+		{L'ø', L"o"},
+		{L'Þ', L"th"},
+		{L'þ', L"th"},
+		{L'ß', L"ss"},
+		{L'Đ', L"d"},
+		{L'đ', L"d"},
+		{L'Ħ', L"h"},
+		{L'ħ', L"h"},
+		{L'ı', L"i"},
+		{L'Ł', L"l"},
+		{L'ł', L"l"},
+		{L'Œ', L"oe"},
+		{L'œ', L"oe"},
+	};
+	wchar_t split[PLAYER_LABEL_LENGTH * 2];
+	WORD types[PLAYER_LABEL_LENGTH * 2];
+	int length = FoldStringW(MAP_COMPOSITE, text, -1, split, PLAYER_LABEL_LENGTH * 2);
+	if (length <= 0 || !GetStringTypeW(CT_CTYPE3, split, length, types)) {
+		return false;
+	}
+	size_t used = 0;
+	for (int i = 0; i < length && split[i]; ++i) {
+		const wchar_t *spelling = NULL;
+		for (size_t j = 0; j < sizeof letters / sizeof letters[0] && !spelling; ++j) {
+			spelling = split[i] == letters[j].letter ? letters[j].spelling : NULL;
+		}
+		// Letters such as Ø are typed as diacritics too; only the marks that are not letters go.
+		if (!spelling && (types[i] & (C3_NONSPACING | C3_DIACRITIC)) && !(types[i] & C3_ALPHA)) {
+			continue;
+		}
+		size_t count = spelling ? wcslen(spelling) : 1;
+		if (used + count >= size) {
+			return false;
+		}
+		if (spelling) {
+			wmemcpy(out + used, spelling, count);
+		} else {
+			out[used] = split[i];
+		}
+		used += count;
+	}
+	out[used] = 0;
+	CharLowerW(out);
+	return true;
+}
+
+// Adds a choice listed as `label` and found by `matched`; returns false if memory runs out.
+static bool
+addChoice(ChoiceListJob *job, size_t *capacity, const wchar_t *label, const wchar_t *matched) {
+	wchar_t folded[PLAYER_LABEL_LENGTH];
+	if (!foldText(matched, folded, PLAYER_LABEL_LENGTH)) {
+		return true; // not listed, but it can still be typed
+	}
+	if (job->count == *capacity) {
+		size_t grown = *capacity ? *capacity * 2 : 1024;
+		Choice *choices = realloc(job->choices, grown * sizeof *choices);
+		if (!choices) {
+			return false;
+		}
+		job->choices = choices;
+		*capacity = grown;
+	}
+	Choice choice = {.label = _wcsdup(label), .folded = _wcsdup(folded)};
+	if (!choice.label || !choice.folded) {
+		free(choice.label);
+		free(choice.folded);
+		return false;
+	}
+	job->choices[job->count++] = choice;
+	return true;
+}
+
 // Adds "name (id)"; a name that is not valid UTF-8 is skipped.
-static bool addTeam(TeamListJob *job, size_t *capacity, unsigned long id, const char *name) {
+static bool addTeam(ChoiceListJob *job, size_t *capacity, unsigned long id, const char *name) {
 	wchar_t wide[TEAM_LABEL_LENGTH];
 	wchar_t label[TEAM_LABEL_LENGTH + 16];
 	if (!widen(name, wide, TEAM_LABEL_LENGTH)) {
 		return true;
 	}
 	(void)swprintf(label, sizeof label / sizeof label[0], L"%ls (%lu)", wide, id);
-	if (job->count == *capacity) {
-		size_t grown = *capacity ? *capacity * 2 : 1024;
-		Team *teams = realloc(job->teams, grown * sizeof *teams);
-		if (!teams) {
-			return false;
-		}
-		job->teams = teams;
-		*capacity = grown;
-	}
-	Team team = {.label = _wcsdup(label), .folded = _wcsdup(label)};
-	if (!team.label || !team.folded) {
-		free(team.label);
-		free(team.folded);
-		return false;
-	}
-	CharLowerW(team.folded);
-	job->teams[job->count++] = team;
-	return true;
+	return addChoice(job, capacity, label, label);
 }
 
-// "id<TAB>short name" lines (fm24ctl list-teams).
-static bool parseTeams(const ByteBuffer *text, TeamListJob *job) {
+// Adds "Common name (Forename Surname) - Club (id)", leaving out what the player lacks; their
+// names are what is matched. A player without names, or with text that is not valid UTF-8, is
+// skipped. `fields` are the forename, surname, common name and club.
+static bool
+addPlayer(ChoiceListJob *job, size_t *capacity, unsigned long id, char *const fields[4]) {
+	wchar_t names[4][TEAM_LABEL_LENGTH];
+	for (size_t i = 0; i < 4; ++i) {
+		if (!widen(fields[i], names[i], TEAM_LABEL_LENGTH)) {
+			return true;
+		}
+	}
+	wchar_t full[TEAM_LABEL_LENGTH * 2];
+	(void)swprintf(
+		full,
+		sizeof full / sizeof full[0],
+		L"%ls%ls%ls",
+		names[0],
+		names[0][0] && names[1][0] ? L" " : L"",
+		names[1]
+	);
+	const wchar_t *common = names[2];
+	if (!full[0] && !common[0]) {
+		return true;
+	}
+	wchar_t label[PLAYER_LABEL_LENGTH];
+	wchar_t matched[PLAYER_LABEL_LENGTH];
+	(void)swprintf(
+		label,
+		PLAYER_LABEL_LENGTH,
+		L"%ls%ls%ls%ls%ls%ls (%lu)",
+		common[0] ? common : full,
+		common[0] && full[0] ? L" (" : L"",
+		common[0] ? full : L"",
+		common[0] && full[0] ? L")" : L"",
+		names[3][0] ? L" – " : L"",
+		names[3],
+		id
+	);
+	(void)swprintf(matched, PLAYER_LABEL_LENGTH, L"%ls %ls", full, common);
+	return addChoice(job, capacity, label, matched);
+}
+
+// Adds one list line's choice (after "id<TAB>"); false if memory runs out.
+static bool
+addLine(ChoiceListJob *job, size_t *capacity, unsigned long id, char *rest, bool players) {
+	if (!players) {
+		return strlen(rest) >= TEAM_LABEL_LENGTH || addTeam(job, capacity, id, rest);
+	}
+	char *fields[4] = {rest, NULL, NULL, NULL};
+	size_t count = 1;
+	for (char *c = rest; *c && count < 4; ++c) {
+		if (*c == '\t') {
+			*c = 0;
+			fields[count++] = c + 1;
+		}
+	}
+	return count < 4 || strchr(fields[3], '\t') || addPlayer(job, capacity, id, fields);
+}
+
+// "id<TAB>short name" lines (fm24ctl list-teams), or (`players`) "id<TAB>forename<TAB>surname<TAB>
+// common name<TAB>club" lines (fm24ctl list-players).
+static bool parseChoices(const ByteBuffer *text, ChoiceListJob *job, bool players) {
+	const char *kind = players ? "player" : "team";
 	size_t capacity = 0;
 	for (const char *line = buffer_string(text); *line;) {
 		size_t length = strcspn(line, "\n");
 		char *tab = NULL;
 		unsigned long id = strtoul(line, &tab, 10);
-		size_t nameLength = length - (size_t)(tab - line) - 1;
-		if (tab > line && *tab == '\t' && tab < line + length && nameLength < TEAM_LABEL_LENGTH) {
-			char name[TEAM_LABEL_LENGTH];
-			memcpy(name, tab + 1, nameLength);
-			name[nameLength] = 0;
-			name[strcspn(name, "\r")] = 0;
-			if (!addTeam(job, &capacity, id, name)) {
-				(void)snprintf(job->error, sizeof job->error, "out of memory listing teams");
+		size_t restLength = length - (size_t)(tab - line) - 1;
+		if (tab > line && *tab == '\t' && tab < line + length && restLength < PLAYER_LABEL_LENGTH) {
+			char rest[PLAYER_LABEL_LENGTH];
+			memcpy(rest, tab + 1, restLength);
+			rest[restLength] = 0;
+			rest[strcspn(rest, "\r")] = 0;
+			if (!addLine(job, &capacity, id, rest, players)) {
+				(void)snprintf(job->error, sizeof job->error, "out of memory listing %ss", kind);
 				return false;
 			}
 		}
 		line += line[length] ? length + 1 : length;
 	}
 	if (!job->count) {
-		(void)snprintf(job->error, sizeof job->error, "the team list is empty");
+		(void)snprintf(job->error, sizeof job->error, "the %s list is empty", kind);
 		return false;
 	}
-	qsort(job->teams, job->count, sizeof *job->teams, compareTeams);
+	qsort(job->choices, job->count, sizeof *job->choices, compareChoices);
 	return true;
 }
 
-static DWORD WINAPI loadTeams(LPVOID parameter) {
-	TeamListJob *job = parameter;
+// Runs list-teams, or (`players`) list-players, into a temporary file and parses it.
+static DWORD loadChoices(ChoiceListJob *job, bool players) {
+	const char *kind = players ? "player" : "team";
 	wchar_t directory[HARNESS_PATH_LENGTH];
 	wchar_t path[HARNESS_PATH_LENGTH];
 	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
@@ -1286,19 +1456,21 @@ static DWORD WINAPI loadTeams(LPVOID parameter) {
 		(void)snprintf(
 			job->error,
 			sizeof job->error,
-			"cannot create a team list file (Windows error %lu)",
+			"cannot create a %s list file (Windows error %lu)",
+			kind,
 			GetLastError()
 		);
 		return 1;
 	}
-	wchar_t *arguments[] = {L"fm24ctl.exe", L"list-teams", path, NULL};
+	wchar_t *arguments[] = {L"fm24ctl.exe", players ? L"list-players" : L"list-teams", path, NULL};
 	ByteBuffer text = {0};
-	int result = commands_listTeamsWithResult(3, arguments, job->error, sizeof job->error);
+	int result = players ? commands_listPlayersWithResult(3, arguments, job->error, sizeof job->error)
+											 : commands_listTeamsWithResult(3, arguments, job->error, sizeof job->error);
 	if (result == 0 && !files_read(path, &text)) {
-		(void)snprintf(job->error, sizeof job->error, "cannot read the team list");
+		(void)snprintf(job->error, sizeof job->error, "cannot read the %s list", kind);
 		result = 1;
 	}
-	if (result == 0 && !parseTeams(&text, job)) {
+	if (result == 0 && !parseChoices(&text, job, players)) {
 		result = 1;
 	}
 	buffer_free(&text);
@@ -1306,22 +1478,87 @@ static DWORD WINAPI loadTeams(LPVOID parameter) {
 	return (DWORD)result;
 }
 
+static DWORD WINAPI loadTeams(LPVOID parameter) {
+	return loadChoices(parameter, false);
+}
+
+static DWORD WINAPI loadPlayers(LPVOID parameter) {
+	return loadChoices(parameter, true);
+}
+
+// Starts a list's worker unless the list is loaded or loading; `timer` polls it.
+static void startChoiceLoad(
+	HWND window,
+	const Choice *loaded,
+	HANDLE *thread,
+	ChoiceListJob *job,
+	UINT_PTR timer,
+	LPTHREAD_START_ROUTINE load
+) {
+	if (loaded || *thread) {
+		return;
+	}
+	freeChoices(job->choices, job->count);
+	*job = (ChoiceListJob){0};
+	if (!SetTimer(window, timer, 200, NULL)) {
+		return;
+	}
+	*thread = CreateThread(NULL, 0, load, job, 0, NULL);
+	if (!*thread) {
+		KillTimer(window, timer);
+	}
+}
+
 // Fetches the team list in the background the first time either team is edited (FM must be
 // running for the replacement anyway). A failure is retried on the next edit.
 static void startTeamLoad(HWND window, WindowState *state) {
-	if (state->teams || state->teamsThread) {
-		return;
+	startChoiceLoad(
+		window, state->teams, &state->teamsThread, &state->teamsJob, TEAMS_TIMER, loadTeams
+	);
+}
+
+// Fetches the player list in the background the first time the swap prompt opens (FM must be
+// running for the swap anyway). A failure is retried on the next swap.
+static void startPlayerLoad(HWND window, WindowState *state) {
+	startChoiceLoad(
+		window, state->players, &state->playersThread, &state->playersJob, PLAYERS_TIMER, loadPlayers
+	);
+}
+
+// Collects a list's worker once it has finished; true if the list is now in `choices`.
+static bool finishChoiceLoad(
+	HWND window,
+	HANDLE *thread,
+	ChoiceListJob *job,
+	UINT_PTR timer,
+	Choice **choices,
+	size_t *count
+) {
+	if (!*thread || WaitForSingleObject(*thread, 0) == WAIT_TIMEOUT) {
+		return false;
 	}
-	TeamListJob *job = &state->teamsJob;
-	freeTeams(job->teams, job->count);
-	*job = (TeamListJob){0};
-	if (!SetTimer(window, TEAMS_TIMER, 200, NULL)) {
-		return;
+	KillTimer(window, timer);
+	DWORD result = 1;
+	if (!GetExitCodeThread(*thread, &result)) {
+		result = 1;
 	}
-	state->teamsThread = CreateThread(NULL, 0, loadTeams, job, 0, NULL);
-	if (!state->teamsThread) {
-		KillTimer(window, TEAMS_TIMER);
+	CloseHandle(*thread);
+	*thread = NULL;
+	if (result != 0) {
+		fprintf(
+			stderr,
+			"fixture viewer: cannot list %s: %s\n",
+			timer == TEAMS_TIMER ? "teams" : "players",
+			job->error
+		);
+		freeChoices(job->choices, job->count);
+		*job = (ChoiceListJob){0};
+		return false;
 	}
+	*choices = job->choices;
+	*count = job->count;
+	*job = (ChoiceListJob){0};
+	return true;
 }
 
 // The side whose team picker `control` is (or is the edit field of), or 2 for neither.
@@ -1335,66 +1572,95 @@ static unsigned pickerSide(const WindowState *state, HWND control) {
 	return 2;
 }
 
-// Lists the teams whose label contains the typed text (those starting with it first), and drops
-// the list down if asked and the picker has the focus.
-static void filterTeams(WindowState *state, unsigned side, bool drop) {
-	HWND picker = state->teamControls[side][TEAM_INPUT];
-	wchar_t text[TEAM_LABEL_LENGTH] = L"";
-	wchar_t folded[TEAM_LABEL_LENGTH];
+// Where `part` is in `text`: 0 at its start (or, for `words`, at the start of any of its words),
+// 1 only elsewhere, or -1 nowhere.
+static int matchRank(const wchar_t *text, const wchar_t *part, bool words) {
+	int rank = -1;
+	for (const wchar_t *found = wcsstr(text, part); found; found = wcsstr(found + 1, part)) {
+		if (found == text || (words && (found[-1] == L' ' || found[-1] == L'-'))) {
+			return 0;
+		}
+		rank = 1;
+		if (!words || !*found) {
+			break;
+		}
+	}
+	return rank;
+}
+
+// Lists (up to `limit`) the choices that match what is typed in `picker`, those that match at the
+// start first (see matchRank), and drops the list down if asked and the picker has the focus.
+// Fewer than `minimum` characters list nothing.
+static void filterPicker(
+	HWND picker,
+	const Choice *choices,
+	size_t count,
+	size_t limit,
+	size_t minimum,
+	bool words,
+	bool drop,
+	bool *filtering
+) {
+	wchar_t text[PLAYER_LABEL_LENGTH] = L"";
+	wchar_t folded[PLAYER_LABEL_LENGTH] = L"";
 	DWORD start = 0;
 	DWORD end = 0;
-	GetWindowTextW(picker, text, TEAM_LABEL_LENGTH);
+	GetWindowTextW(picker, text, PLAYER_LABEL_LENGTH);
 	SendMessageW(picker, CB_GETEDITSEL, (WPARAM)&start, (LPARAM)&end);
-	wcscpy(folded, text);
-	CharLowerW(folded);
+	if (!foldText(text, folded, PLAYER_LABEL_LENGTH)) {
+		folded[0] = 0;
+	}
 	size_t length = wcslen(folded);
-	state->filteringTeams = true;
+	if (length < minimum) {
+		count = 0;
+	}
+	*filtering = true;
 	// Closing first lets the list resize to its new contents when it is dropped again.
 	SendMessageW(picker, CB_SHOWDROPDOWN, FALSE, 0);
 	SendMessageW(picker, WM_SETREDRAW, FALSE, 0);
 	SendMessageW(picker, CB_RESETCONTENT, 0, 0);
 	size_t shown = 0;
 	for (int pass = 0; pass < 2; ++pass) {
-		for (size_t i = 0; i < state->teamCount && shown < TEAMS_SHOWN; ++i) {
-			const wchar_t *found = wcsstr(state->teams[i].folded, folded);
-			if (found && (found == state->teams[i].folded) == (pass == 0)) {
-				SendMessageW(picker, CB_ADDSTRING, 0, (LPARAM)state->teams[i].label);
+		for (size_t i = 0; i < count && shown < limit; ++i) {
+			if (matchRank(choices[i].folded, folded, words) == pass) {
+				SendMessageW(picker, CB_ADDSTRING, 0, (LPARAM)choices[i].label);
 				++shown;
 			}
 		}
 	}
 	SendMessageW(picker, WM_SETREDRAW, TRUE, 0);
-	if (drop && shown && length && pickerSide(state, GetFocus()) == side) {
+	HWND focus = GetFocus();
+	if (drop && shown && length && focus && (focus == picker || GetParent(focus) == picker)) {
 		SendMessageW(picker, CB_SHOWDROPDOWN, TRUE, 0);
 		// The drop-down hides the mouse pointer and may complete the text to its first match.
 		SetCursor(LoadCursorW(NULL, IDC_ARROW));
 	}
 	SetWindowTextW(picker, text);
 	SendMessageW(picker, CB_SETEDITSEL, 0, MAKELPARAM(start, end));
-	state->filteringTeams = false;
+	*filtering = false;
+}
+
+// Lists the teams whose label contains the typed text (those starting with it first), and drops
+// the list down if asked and the picker has the focus.
+static void filterTeams(WindowState *state, unsigned side, bool drop) {
+	filterPicker(
+		state->teamControls[side][TEAM_INPUT],
+		state->teams,
+		state->teamCount,
+		TEAMS_SHOWN,
+		0,
+		false,
+		drop,
+		&state->filteringTeams
+	);
 }
 
 static void checkTeams(HWND window, WindowState *state) {
-	if (!state->teamsThread || WaitForSingleObject(state->teamsThread, 0) == WAIT_TIMEOUT) {
+	if (!finishChoiceLoad(
+				window, &state->teamsThread, &state->teamsJob, TEAMS_TIMER, &state->teams, &state->teamCount
+			)) {
 		return;
 	}
-	KillTimer(window, TEAMS_TIMER);
-	DWORD result = 1;
-	if (!GetExitCodeThread(state->teamsThread, &result)) {
-		result = 1;
-	}
-	CloseHandle(state->teamsThread);
-	state->teamsThread = NULL;
-	TeamListJob *job = &state->teamsJob;
-	if (result != 0) {
-		fprintf(stderr, "fixture viewer: cannot list teams: %s\n", job->error);
-		freeTeams(job->teams, job->count);
-		*job = (TeamListJob){0};
-		return;
-	}
-	state->teams = job->teams;
-	state->teamCount = job->count;
-	*job = (TeamListJob){0};
 	for (unsigned side = 0; side < 2; ++side) {
 		if (state->editingTeam[side]) {
 			filterTeams(state, side, false);
@@ -1402,10 +1668,30 @@ static void checkTeams(HWND window, WindowState *state) {
 	}
 }
 
-// The ID for a label picked from the list, so that a club whose name is shared still resolves.
-static bool pickedTeamId(const WindowState *state, const wchar_t *text, wchar_t *id, size_t size) {
-	for (size_t i = 0; i < state->teamCount; ++i) {
-		if (wcscmp(state->teams[i].label, text) == 0) {
+// Collects the player list's worker, and tells an open swap prompt that it has finished.
+static void checkPlayers(HWND window, WindowState *state) {
+	if (!state->playersThread || WaitForSingleObject(state->playersThread, 0) == WAIT_TIMEOUT) {
+		return;
+	}
+	(void)finishChoiceLoad(
+		window,
+		&state->playersThread,
+		&state->playersJob,
+		PLAYERS_TIMER,
+		&state->players,
+		&state->playerCount
+	);
+	if (state->swapPrompt) {
+		SendMessageW(state->swapPrompt, WM_SWAP_PLAYERS, 0, 0);
+	}
+}
+
+// The ID in the trailing "(ID)" of a label that is one of the choices', so that a shared name
+// still resolves.
+static bool
+listedId(const Choice *choices, size_t count, const wchar_t *text, wchar_t *id, size_t size) {
+	for (size_t i = 0; i < count; ++i) {
+		if (wcscmp(choices[i].label, text) == 0) {
 			const wchar_t *open = wcsrchr(text, L'(');
 			size_t length = open ? wcscspn(open + 1, L")") : 0;
 			if (!length || length >= size) {
@@ -1417,6 +1703,11 @@ static bool pickedTeamId(const WindowState *state, const wchar_t *text, wchar_t 
 		}
 	}
 	return false;
+}
+
+// The ID for a label picked from the list, so that a club whose name is shared still resolves.
+static bool pickedTeamId(const WindowState *state, const wchar_t *text, wchar_t *id, size_t size) {
+	return listedId(state->teams, state->teamCount, text, id, size);
 }
 
 static void editTeam(HWND window, WindowState *state, unsigned side, bool editing) {
@@ -1471,9 +1762,18 @@ static DWORD WINAPI replaceTeam(LPVOID parameter) {
 	}
 	int result = 0;
 	if (job->swap) {
-		wchar_t *swapArguments[] = {
-			L"fm24ctl.exe", L"inject-player", arguments[2], job->block, job->person, job->output, NULL};
-		result = commands_injectPlayerWithResult(6, swapArguments, job->error, sizeof job->error);
+		// "Allow duplicates?" keeps the block's own unique ID, as the player is already in the fixture.
+		wchar_t *swapArguments[] = {L"fm24ctl.exe",
+			L"inject-player",
+			arguments[2],
+			job->block,
+			job->person,
+			job->output,
+			job->keepUid ? L"--keep-uid" : NULL,
+			NULL};
+		result = commands_injectPlayerWithResult(
+			job->keepUid ? 7 : 6, swapArguments, job->error, sizeof job->error
+		);
 	} else {
 		result = commands_replaceTeamWithResult(5, arguments, job->error, sizeof job->error);
 	}
@@ -1596,21 +1896,20 @@ static void appendTemplateItem(
 	appendTemplate(dialog, &creationData, sizeof creationData);
 }
 
-// The swap prompt (dialog units): the old player's drop-down, the new player's unique ID, Confirm
-// and Cancel.
+// The swap prompt (dialog units): "Swap <name> for...", set once it opens, over the new player's
+// drop-down (a name to search for, or a unique ID), then "Allow duplicates?", Confirm and Cancel.
 static bool swapPromptTemplate(DialogTemplate *dialog) {
-	static const short oldLabelBounds[4] = {7, 9, 48, 10};
-	static const short oldPlayerBounds[4] = {58, 7, 175, 150};
-	static const short newLabelBounds[4] = {7, 28, 48, 10};
-	static const short newPlayerBounds[4] = {58, 26, 175, 13};
-	static const short confirmBounds[4] = {129, 48, 50, 14};
-	static const short cancelBounds[4] = {183, 48, 50, 14};
+	static const short newLabelBounds[4] = {7, 9, 306, 10};
+	static const short newPlayerBounds[4] = {7, 22, 306, 150};
+	static const short duplicatesBounds[4] = {7, 45, 140, 12};
+	static const short confirmBounds[4] = {209, 44, 50, 14};
+	static const short cancelBounds[4] = {263, 44, 50, 14};
 	*dialog = (DialogTemplate){0};
 	DLGTEMPLATE header = {
 		.style = DS_MODALFRAME | DS_CENTER | DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU,
-		.cdit = 6,
-		.cx = 240,
-		.cy = 69};
+		.cdit = 5,
+		.cx = 320,
+		.cy = 65};
 	const WORD noMenuOrClass[2] = {0, 0};
 	const WORD fontPoints = 9;
 	appendTemplate(dialog, &header, sizeof header);
@@ -1618,23 +1917,24 @@ static bool swapPromptTemplate(DialogTemplate *dialog) {
 	appendTemplateString(dialog, L"Swap player");
 	appendTemplate(dialog, &fontPoints, sizeof fontPoints);
 	appendTemplateString(dialog, L"Segoe UI");
-	appendTemplateItem(dialog, SS_LEFT, oldLabelBounds, SWAP_PROMPT_OLD_LABEL, 0x82, L"Old player:");
+	appendTemplateItem(
+		dialog, SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, newLabelBounds, SWAP_PROMPT_NEW_LABEL, 0x82, L""
+	);
 	appendTemplateItem(
 		dialog,
-		WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST,
-		oldPlayerBounds,
-		SWAP_PROMPT_OLD_PLAYER,
+		WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL,
+		newPlayerBounds,
+		SWAP_PROMPT_NEW_PLAYER,
 		0x85,
 		L""
 	);
-	appendTemplateItem(dialog, SS_LEFT, newLabelBounds, SWAP_PROMPT_NEW_LABEL, 0x82, L"New player:");
 	appendTemplateItem(
 		dialog,
-		WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
-		newPlayerBounds,
-		SWAP_PROMPT_NEW_PLAYER,
-		0x81,
-		L""
+		BS_AUTOCHECKBOX | WS_TABSTOP,
+		duplicatesBounds,
+		SWAP_PROMPT_DUPLICATES,
+		0x80,
+		L"Allow duplicates?"
 	);
 	appendTemplateItem(dialog, BS_DEFPUSHBUTTON | WS_TABSTOP, confirmBounds, IDOK, 0x80, L"Confirm");
 	appendTemplateItem(dialog, BS_PUSHBUTTON | WS_TABSTOP, cancelBounds, IDCANCEL, 0x80, L"Cancel");
@@ -1650,30 +1950,74 @@ static bool validSwapId(const wchar_t *text) {
 				 id <= UINT32_MAX;
 }
 
-// Lists the team's players (one per player block, in block order) in the old player drop-down.
-static bool fillSwapPlayers(HWND dialog, const FixtureTeam *team) {
-	HWND players = GetDlgItem(dialog, SWAP_PROMPT_OLD_PLAYER);
-	for (unsigned block = 0; block < FIXTURE_PLAYERS; ++block) {
-		if (!team->players[block].present) {
-			continue;
-		}
-		wchar_t name[FIXTURE_TEXT];
-		const char *text = team->players[block].name;
-		if (!widen(text[0] ? text : "<Unknown>", name, FIXTURE_TEXT)) {
-			return false;
-		}
-		LRESULT index = SendMessageW(players, CB_ADDSTRING, 0, (LPARAM)name);
-		if (index < 0 || SendMessageW(players, CB_SETITEMDATA, (WPARAM)index, block) == CB_ERR) {
-			return false;
-		}
+// Labels the new player's field "Swap <name> for...".
+static bool setSwapLabel(HWND dialog, const char *name) {
+	wchar_t wide[FIXTURE_TEXT];
+	wchar_t label[FIXTURE_TEXT + 16];
+	if (!widen(name, wide, FIXTURE_TEXT)) {
+		return false;
 	}
-	SendMessageW(players, CB_SETCURSEL, 0, 0);
-	return true;
+	(void)swprintf(label, sizeof label / sizeof label[0], L"Swap %ls for...", wide);
+	return SetDlgItemTextW(dialog, SWAP_PROMPT_NEW_LABEL, label);
+}
+
+// What the new player's field takes: a name once the player list has loaded, otherwise only an ID.
+static void setSwapCue(HWND dialog, const WindowState *state) {
+	const wchar_t *cue = L"Unique ID";
+	if (state->players) {
+		cue = L"Player name or unique ID";
+	} else if (state->playersThread) {
+		cue = L"Unique ID (loading player names…)";
+	}
+	SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, CB_SETCUEBANNER, 0, (LPARAM)cue);
+}
+
+// Lists the players whose names match what is typed, unless it is a unique ID.
+static void filterSwapPlayers(HWND dialog, SwapPrompt *prompt) {
+	HWND picker = GetDlgItem(dialog, SWAP_PROMPT_NEW_PLAYER);
+	wchar_t text[PLAYER_LABEL_LENGTH] = L"";
+	GetWindowTextW(picker, text, PLAYER_LABEL_LENGTH);
+	bool id = text[0] && wcsspn(text, L"0123456789") == wcslen(text);
+	filterPicker(
+		picker,
+		prompt->state->players,
+		id || !prompt->state->players ? 0 : prompt->state->playerCount,
+		PLAYERS_SHOWN,
+		PLAYER_FILTER_MINIMUM,
+		true,
+		true,
+		&prompt->filtering
+	);
 }
 
 static void swapPromptError(HWND dialog, const wchar_t *message, int control) {
 	MessageBoxW(dialog, message, L"Swap player", MB_OK | MB_ICONERROR);
 	SetFocus(GetDlgItem(dialog, control));
+}
+
+// The prompt's answer: the new player's unique ID (from the label picked from the list, or as
+// typed). Returns false, having said why, if it is missing.
+static bool readSwapPrompt(HWND dialog, SwapPrompt *prompt) {
+	wchar_t text[PLAYER_LABEL_LENGTH] = L"";
+	GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, text, PLAYER_LABEL_LENGTH);
+	const WindowState *state = prompt->state;
+	if (!listedId(state->players, state->playerCount, text, prompt->id, SWAP_ID_LENGTH)) {
+		prompt->id[0] = 0;
+		if (wcslen(text) < SWAP_ID_LENGTH) {
+			wcscpy(prompt->id, text);
+		}
+	}
+	if (!validSwapId(prompt->id)) {
+		swapPromptError(
+			dialog,
+			L"Choose the new player from the list, or enter their unique ID: a number from 1 to "
+			L"4294967295.",
+			SWAP_PROMPT_NEW_PLAYER
+		);
+		return false;
+	}
+	prompt->allowDuplicates = IsDlgButtonChecked(dialog, SWAP_PROMPT_DUPLICATES) == BST_CHECKED;
+	return true;
 }
 
 static INT_PTR CALLBACK
@@ -1684,17 +2028,44 @@ swapPromptProcedure(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam) {
 		prompt = (SwapPrompt *)lParam;
 		// NOLINTEND(performance-no-int-to-ptr)
 		SetWindowLongPtrW(dialog, DWLP_USER, lParam);
-		SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, EM_LIMITTEXT, SWAP_ID_LENGTH - 1, 0);
-		SendDlgItemMessageW(
-			dialog, SWAP_PROMPT_NEW_PLAYER, EM_SETCUEBANNER, TRUE, (LPARAM)L"Unique ID"
-		);
-		if (!fillSwapPlayers(dialog, prompt->team)) {
+		prompt->state->swapPrompt = dialog;
+		SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, CB_LIMITTEXT, PLAYER_LABEL_LENGTH - 1, 0);
+		setSwapCue(dialog, prompt->state);
+		if (!setSwapLabel(dialog, prompt->name)) {
 			EndDialog(dialog, -1);
 		}
 		return TRUE;
 	}
-	if (message != WM_COMMAND || !prompt) {
+	if (!prompt) {
 		return FALSE;
+	}
+	switch (message) {
+		case WM_SWAP_PLAYERS:
+			setSwapCue(dialog, prompt->state);
+			filterSwapPlayers(dialog, prompt);
+			return TRUE;
+		case WM_TIMER:
+			if (wParam != SWAP_FILTER_TIMER) {
+				return FALSE;
+			}
+			KillTimer(dialog, SWAP_FILTER_TIMER);
+			filterSwapPlayers(dialog, prompt);
+			return TRUE;
+		case WM_DESTROY:
+			KillTimer(dialog, SWAP_FILTER_TIMER);
+			if (prompt->state->swapPrompt == dialog) {
+				prompt->state->swapPrompt = NULL;
+			}
+			return FALSE;
+		case WM_COMMAND: break;
+		default: return FALSE;
+	}
+	if (LOWORD(wParam) == SWAP_PROMPT_NEW_PLAYER && HIWORD(wParam) == CBN_EDITCHANGE) {
+		// Typing restarts the delay, so the list is refilled once the typing pauses.
+		if (!prompt->filtering) {
+			SetTimer(dialog, SWAP_FILTER_TIMER, PLAYER_FILTER_DELAY_MS, NULL);
+		}
+		return TRUE;
 	}
 	if (LOWORD(wParam) == IDCANCEL) {
 		EndDialog(dialog, IDCANCEL);
@@ -1703,33 +2074,23 @@ swapPromptProcedure(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam) {
 	if (LOWORD(wParam) != IDOK) {
 		return FALSE;
 	}
-	LRESULT selected = SendDlgItemMessageW(dialog, SWAP_PROMPT_OLD_PLAYER, CB_GETCURSEL, 0, 0);
-	if (selected == CB_ERR) {
-		swapPromptError(dialog, L"Choose the player to replace.", SWAP_PROMPT_OLD_PLAYER);
-		return TRUE;
+	if (readSwapPrompt(dialog, prompt)) {
+		EndDialog(dialog, IDOK);
 	}
-	GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, prompt->id, SWAP_ID_LENGTH);
-	if (!validSwapId(prompt->id)) {
-		swapPromptError(
-			dialog,
-			L"Enter the new player's unique ID: a number from 1 to 4294967295.",
-			SWAP_PROMPT_NEW_PLAYER
-		);
-		return TRUE;
-	}
-	prompt->block =
-		(int)SendDlgItemMessageW(dialog, SWAP_PROMPT_OLD_PLAYER, CB_GETITEMDATA, (WPARAM)selected, 0);
-	EndDialog(dialog, IDOK);
 	return TRUE;
 }
 
-// Asks which of a side's players to replace and the unique ID of the player to put in their
-// place, then injects that player into a temporary copy of the fixture, shown as unsaved.
+// Asks for the player to put in place of the side's selected player (searched for by name, or
+// given by unique ID), then injects that player into a temporary copy of the fixture, shown as
+// unsaved.
 static void startSwap(HWND window, WindowState *state, unsigned side) {
-	if (state->simulationThread || state->replacementThread || state->fileThread) {
+	int block = selectedBlock(state, side);
+	if (block < 0 || state->simulationThread || state->replacementThread || state->fileThread) {
 		return;
 	}
-	SwapPrompt prompt = {.team = &state->data->teams[side], .block = -1};
+	startPlayerLoad(window, state);
+	SwapPrompt prompt = {
+		.state = state, .name = state->data->teams[side].players[block].name, .block = block};
 	DialogTemplate dialog;
 	INT_PTR answer = swapPromptTemplate(&dialog) ? DialogBoxIndirectParamW(
 																									 GetModuleHandleW(NULL),
@@ -1743,8 +2104,7 @@ static void startSwap(HWND window, WindowState *state, unsigned side) {
 		showError(window, L"Cannot show the swap prompt.");
 	}
 	// The prompt's message loop may have let another job start.
-	if (answer != IDOK || prompt.block < 0 || state->simulationThread || state->replacementThread ||
-			state->fileThread) {
+	if (answer != IDOK || state->simulationThread || state->replacementThread || state->fileThread) {
 		return;
 	}
 	ReplaceTeamJob *job = &state->replacementJob;
@@ -1761,6 +2121,7 @@ static void startSwap(HWND window, WindowState *state, unsigned side) {
 		prompt.block
 	);
 	wcscpy(job->person, prompt.id);
+	job->keepUid = prompt.allowDuplicates;
 	const char *error = launchReplacement(window, state);
 	if (error && error[0]) {
 		showFileError(window, error);
@@ -1774,7 +2135,6 @@ static void enableReplacementActions(const WindowState *state, BOOL enabled) {
 		for (unsigned i = TEAM_ICON; i <= TEAM_CANCEL; ++i) {
 			EnableWindow(state->teamControls[side][i], enabled);
 		}
-		EnableWindow(state->swapButtons[side], enabled);
 	}
 	EnableWindow(state->simulation[SIM_SUBMIT], enabled);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
@@ -1834,6 +2194,15 @@ static void checkReplacement(HWND window, WindowState *state) {
 			SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? focus : state->tabs);
 		}
 	} else if (job->swap) {
+		// The prompt's checkbox stands for inject-player's --keep-uid.
+		char *hint = strstr(job->error, "use --keep-uid to inject anyway");
+		if (hint) {
+			(void)snprintf(
+				hint,
+				sizeof job->error - (size_t)(hint - job->error),
+				"tick \"Allow duplicates?\" to swap them in anyway"
+			);
+		}
 		showFileError(window, job->error);
 	} else {
 		teamError(window, state, side, job->error);
@@ -3166,6 +3535,7 @@ static bool checkTimer(HWND window, WindowState *state, WPARAM timer) {
 		case FILE_TIMER: checkFileJob(window, state); return true;
 		case REPLACE_TIMER: checkReplacement(window, state); return true;
 		case TEAMS_TIMER: checkTeams(window, state); return true;
+		case PLAYERS_TIMER: checkPlayers(window, state); return true;
 		case SIMULATION_TIMER: checkSimulation(window, state); return true;
 		default: return false;
 	}
@@ -3589,8 +3959,11 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	joinThread(state.replacementThread);
 	joinThread(state.fileThread);
 	joinThread(state.teamsThread);
-	freeTeams(state.teamsJob.teams, state.teamsJob.count);
-	freeTeams(state.teams, state.teamCount);
+	joinThread(state.playersThread);
+	freeChoices(state.teamsJob.choices, state.teamsJob.count);
+	freeChoices(state.teams, state.teamCount);
+	freeChoices(state.playersJob.choices, state.playersJob.count);
+	freeChoices(state.players, state.playerCount);
 	releaseTaskbar(&state);
 	if (SUCCEEDED(comResult)) {
 		CoUninitialize();

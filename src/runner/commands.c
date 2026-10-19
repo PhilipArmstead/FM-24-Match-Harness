@@ -253,6 +253,34 @@ int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t 
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
+int commands_listPlayers(int argc, wchar_t **argv) {
+	char result[CLIENT_RESULT_LENGTH];
+	return commands_listPlayersWithResult(argc, argv, result, sizeof result);
+}
+
+int commands_listPlayersWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	if (argc != 3) {
+		(void)snprintf(result, resultSize, "List players requires an output file.");
+		fprintf(stderr, "usage: fm24ctl list-players <output.txt>\n");
+		return EXIT_USAGE;
+	}
+	Path output;
+	if (!absolutePath(argv[2], &output)) {
+		(void)snprintf(result, resultSize, "Cannot resolve the player list path.");
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(job, sizeof job, "command=list_players\noutput=%s\n", output.utf8);
+	(void)snprintf(
+		result, resultSize, "Cannot list players; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
 int commands_getPlayer(int argc, wchar_t **argv) {
 	char person[16];
 	Path output;

@@ -45,6 +45,7 @@ static const char usage[] =
 	"  fm24ctl replace-away <input.json> <team ID or club name> <output.json> [--full]\n"
 	"  fm24ctl replace-home <input.json> <team ID or club name> <output.json> [--full]\n"
 	"  fm24ctl list-teams <output.txt>\n"
+	"  fm24ctl list-players <output.txt>\n"
 	"  fm24ctl get-player <person unique ID> <output.json>\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
 	"      <person unique ID|player.json> <output.json> [--keep-uid]\n"
@@ -86,6 +87,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"replace-away", commands_replaceTeam},
 		{L"replace-home", commands_replaceTeam},
 		{L"list-teams", commands_listTeams},
+		{L"list-players", commands_listPlayers},
 		{L"get-player", commands_getPlayer},
 		{L"inject-player", commands_injectPlayer},
 		{L"probe", commands_probe},

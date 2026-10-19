@@ -51,5 +51,10 @@ bool database_findTeam(const char *spec, uint8_t **team, char *error, size_t err
 // accepts); `count` is the number of lines. Returns false if memory runs out.
 bool database_listTeams(ByteBuffer *out, size_t *count);
 
+// Every player (database_playerRecord) as "uniqueId<TAB>forename<TAB>surname<TAB>common
+// name<TAB>club short name" lines, the last two empty when the player has none; `count` is the
+// number of lines. Returns false if memory runs out.
+bool database_listPlayers(ByteBuffer *out, size_t *count);
+
 // A team's unique ID, or 0 if it cannot be read.
 uint32_t database_teamUniqueId(const uint8_t *team);

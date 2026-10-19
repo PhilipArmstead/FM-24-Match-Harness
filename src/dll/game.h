@@ -84,8 +84,9 @@ enum ManagerLayout {
 // Database layouts.
 enum DatabaseLayout {
 	PERSON_UNIQUE_ID = 0x0C,
-	PERSON_FORENAME = 0x58, // doubly indirect string
-	PERSON_SURNAME = 0x60,  // doubly indirect string
+	PERSON_FORENAME = 0x58,    // doubly indirect string
+	PERSON_SURNAME = 0x60,     // doubly indirect string
+	PERSON_COMMON_NAME = 0x68, // doubly indirect string; absent for most people
 	PERSON_CONTRACT = 0xC8,
 	PERSON_DATE_OF_BIRTH = 0x44, // u16 day of year, u16 year
 	PERSON_NATION = 0x70,        // NATION *

@@ -46,6 +46,8 @@ static void listClubs(uint8_t *const *clubs, size_t count, char *error, size_t e
 static void collectClub(void *context, uint8_t *team);
 static int comparePointers(const void *a, const void *b);
 static bool appendTeam(ByteBuffer *out, const uint8_t *team);
+static bool appendPlayer(ByteBuffer *out, const uint8_t *person);
+static void spaceControls(char *text);
 
 bool database_loadPeople(PeopleIndex *index) {
 	*index = (PeopleIndex){0};
@@ -194,6 +196,26 @@ bool database_listTeams(ByteBuffer *out, size_t *count) {
 	}
 	free(list.clubs);
 	return ok;
+}
+
+bool database_listPlayers(ByteBuffer *out, size_t *count) {
+	*count = 0;
+	uint8_t **start = NULL;
+	uint8_t **end = NULL;
+	if (!peopleRange(&start, &end)) {
+		return true;
+	}
+	for (uint8_t **entry = start; entry < end; ++entry) {
+		uint8_t *person = NULL;
+		if (!memory_readPointer(entry, 0, &person) || !database_playerRecord(person)) {
+			continue;
+		}
+		if (!appendPlayer(out, person)) {
+			return false;
+		}
+		++*count;
+	}
+	return true;
 }
 
 uint32_t database_teamUniqueId(const uint8_t *team) {
@@ -363,12 +385,48 @@ static int comparePointers(const void *a, const void *b) {
 static bool appendTeam(ByteBuffer *out, const uint8_t *team) {
 	char name[MAX_NAME_LENGTH + 1];
 	database_clubShortName(team, name, sizeof name);
-	for (char *c = name; *c; ++c) {
+	spaceControls(name);
+	char line[MAX_NAME_LENGTH + 32];
+	int length = snprintf(line, sizeof line, "%u\t%s\n", database_teamUniqueId(team), name);
+	return length > 0 && buffer_append(out, line, (size_t)length);
+}
+
+// One "uniqueId<TAB>forename<TAB>surname<TAB>common name<TAB>club" line; a name that cannot be read
+// (as most common names are absent) is empty, and control characters become spaces.
+static bool appendPlayer(ByteBuffer *out, const uint8_t *person) {
+	static const ptrdiff_t nameOffsets[3] = {PERSON_FORENAME, PERSON_SURNAME, PERSON_COMMON_NAME};
+	char names[4][MAX_NAME_LENGTH + 1] = {"", "", "", ""};
+	for (size_t i = 0; i < 3; ++i) {
+		if (!readPersonString(person, nameOffsets[i], names[i], sizeof names[i])) {
+			names[i][0] = 0;
+		}
+	}
+	uint8_t *contract = NULL;
+	uint8_t *team = NULL;
+	if (memory_readPointer(person, PERSON_CONTRACT, &contract) &&
+			memory_readPointer(contract, CONTRACT_TEAM, &team)) {
+		database_clubShortName(team, names[3], sizeof names[3]);
+	}
+	if (strcmp(names[3], "?") == 0) {
+		names[3][0] = 0;
+	}
+	for (size_t i = 0; i < 4; ++i) {
+		spaceControls(names[i]);
+	}
+	uint32_t uniqueId = 0;
+	(void)memory_readU32(person, PERSON_UNIQUE_ID, &uniqueId);
+	char line[4 * (MAX_NAME_LENGTH + 1) + 32];
+	int length = snprintf(
+		line, sizeof line, "%u\t%s\t%s\t%s\t%s\n", uniqueId, names[0], names[1], names[2], names[3]
+	);
+	return length > 0 && (size_t)length < sizeof line && buffer_append(out, line, (size_t)length);
+}
+
+// Tabs, newlines and other control characters become spaces, keeping the lines' fields apart.
+static void spaceControls(char *text) {
+	for (char *c = text; *c; ++c) {
 		if ((unsigned char)*c < ' ') {
 			*c = ' ';
 		}
 	}
-	char line[MAX_NAME_LENGTH + 32];
-	int length = snprintf(line, sizeof line, "%u\t%s\n", database_teamUniqueId(team), name);
-	return length > 0 && buffer_append(out, line, (size_t)length);
 }

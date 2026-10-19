@@ -24,6 +24,8 @@ static bool submitJob(const char *job, unsigned timeout, char *result, size_t re
 #define commands_replaceTeamWithResult runnerTest_replaceTeamWithResult
 #define commands_listTeams runnerTest_listTeams
 #define commands_listTeamsWithResult runnerTest_listTeamsWithResult
+#define commands_listPlayers runnerTest_listPlayers
+#define commands_listPlayersWithResult runnerTest_listPlayersWithResult
 #define commands_encode runnerTest_encode
 #define commands_getPlayer runnerTest_getPlayer
 #define commands_injectPlayer runnerTest_injectPlayer

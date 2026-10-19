@@ -320,6 +320,23 @@ but does not cancel DLL work; later jobs still wait for it.
    ID. Like a venue save, it replaces only value tokens (and the block's
    `player` note) through the visitor's source spans, so the structure and
    every other byte stay as they were.
+   `fm24ctl list-players <out.txt>` writes `uniqueId<TAB>forename<TAB>
+   surname<TAB>common name<TAB>club short name` lines for every person with a
+   player record (`database_listPlayers`; the common name, `+0x68`, and the
+   club are empty when the player has none). The viewer loads it in the
+   background the first time its swap prompt opens. "Swap player" swaps
+   out the side's selected row, and is enabled only while exactly one player
+   is selected. The prompt's label names that player ("Swap <name> for...").
+   The new player field
+   lists matches once 3 characters have been typed and the typing has paused
+   for 100 ms. Matching ignores case and accents (`foldText`: "odegaard"
+   finds "Ødegaard"), and a name that starts with the text comes first. Labels
+   show the common name first, e.g. "Pelé (Edson Arantes do Nascimento)". A
+   picked label is injected by the ID at its end. Digits are taken as a
+   unique ID, which also works while the list is loading or if it failed.
+   The prompt's "Allow duplicates?" box passes `--keep-uid`, so a player
+   already in the fixture can be swapped into another block. Without it, the
+   refusal's hint points at the box.
 6. `fm24ctl probe [path\to\fm.exe]` reports where another build of `fm.exe`
    (e.g. the Epic Games one) has the code and data the harness uses. It reads
    the file only: nothing is injected, and the game isn't needed (without a

@@ -15,6 +15,7 @@
 
 
 static int errorMessages;
+static wchar_t lastError[1024]; // the last error message box's text
 static unsigned discardPrompts;
 static int discardAnswer = IDNO;
 static bool calibriInstalled;
@@ -77,7 +78,6 @@ static time_t testTime(time_t *out) {
 
 static int testMessageBox(HWND window, const wchar_t *text, const wchar_t *caption, UINT type) {
 	(void)window;
-	(void)text;
 	(void)caption;
 	if ((type & MB_ICONMASK) == MB_ICONWARNING) {
 		ASSERT_BOOL_EQ((type & MB_YESNO) == MB_YESNO && (type & MB_DEFBUTTON2) != 0, true);
@@ -85,6 +85,7 @@ static int testMessageBox(HWND window, const wchar_t *text, const wchar_t *capti
 		return discardAnswer;
 	}
 	++errorMessages;
+	(void)swprintf(lastError, sizeof lastError / sizeof lastError[0], L"%ls", text);
 	return IDOK;
 }
 
@@ -111,6 +112,8 @@ static const wchar_t *expectedTeam;
 static wchar_t replacementOutput[HARNESS_PATH_LENGTH];
 static unsigned teamLists;
 static bool teamListFailure;
+static unsigned playerLists;
+static bool playerListFailure;
 static unsigned taskbarCreates;
 static unsigned taskbarInitializations;
 static unsigned taskbarReleases;
@@ -433,18 +436,46 @@ int commands_listTeamsWithResult(int argc, wchar_t **argv, char *result, size_t 
 	return 0;
 }
 
+int commands_listPlayersWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	ASSERT_BOOL_EQ(argc == 3 && argv[argc] == NULL, true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"list-players"), 0);
+	++playerLists;
+	if (playerListFailure) {
+		(void)snprintf(result, resultSize, "error: FM24 is not running");
+		return 1;
+	}
+	// Five players: one with a common name, one without a club; then a line with too few fields,
+	// a player without names and a malformed line, which are skipped.
+	static const char list[] = "40347\tMartin\t\xC3\x98"
+														 "degaard\t\tArsenal\n"
+														 "1001\tEdson\tArantes do Nascimento\tPel\xC3\xA9\t\n"
+														 "2002\tThomas\tM\xC3\xBC"
+														 "ller\t\tFC Bayern\n"
+														 "3003\t\xC5\x81ukasz\tFabia\xC5\x84"
+														 "ski\t\tWest Ham\n"
+														 "5005\tJan\tBodegaard\t\t\r\n"
+														 "6006\tToo\tFew\n"
+														 "7007\t\t\t\t\n"
+														 "bad\n";
+	ASSERT_BOOL_EQ(files_write(argv[2], list, sizeof list - 1), true);
+	(void)snprintf(result, resultSize, "ok: 7 players");
+	return 0;
+}
+
 static unsigned swapPrompts;
 static const wchar_t *swapEntry = L"";
 static WPARAM swapButton = IDCANCEL;
-static int swapChoice;           // the old player picked in the drop-down (-1: none)
-static wchar_t swapPlayers[256]; // the drop-down's entries, separated by "|"
+static bool swapDuplicates;                  // tick "Allow duplicates?"
+static bool expectedKeepUid;                 // the swap passes --keep-uid
+static wchar_t swapLabel[FIXTURE_TEXT + 16]; // the prompt's "Swap <name> for..."
 static unsigned swapCalls;
 static int swapResult;
 static HANDLE swapRelease;
 static const wchar_t *expectedBlock;
+static const wchar_t *expectedPerson; // the unique ID injected
 
-// Builds the real prompt from its template (modeless, so the test can drive it), picks
-// `swapChoice`, enters `swapEntry` and presses `swapButton`. An invalid entry keeps the prompt
+// Builds the real prompt from its template (modeless, so the test can drive it), keeps its label
+// in `swapLabel`, enters `swapEntry` and presses `swapButton`. An invalid entry keeps the prompt
 // open; the user then cancels it.
 static INT_PTR WINAPI testDialogBox(
 	HINSTANCE instance,
@@ -468,57 +499,58 @@ static INT_PTR WINAPI testDialogBox(
 		GetDlgItemTextW(dialog, IDCANCEL, text, 32) > 0 && wcscmp(text, L"Cancel") == 0, true
 	);
 	ASSERT_BOOL_EQ(
-		GetDlgItemTextW(dialog, SWAP_PROMPT_OLD_LABEL, text, 32) > 0 &&
-			wcscmp(text, L"Old player:") == 0,
+		GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_LABEL, swapLabel, FIXTURE_TEXT + 16) > 0, true
+	);
+	// The new player's field is a drop-down that takes a typed name or ID.
+	HWND newPlayer = GetDlgItem(dialog, SWAP_PROMPT_NEW_PLAYER);
+	ASSERT_BOOL_EQ((GetWindowLongW(newPlayer, GWL_STYLE) & CBS_DROPDOWNLIST) == CBS_DROPDOWN, true);
+	ASSERT_BOOL_EQ(
+		SendMessageW(FindWindowExW(newPlayer, NULL, L"Edit", NULL), EM_GETLIMITTEXT, 0, 0) ==
+			PLAYER_LABEL_LENGTH - 1,
 		true
 	);
-	ASSERT_BOOL_EQ(
-		GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_LABEL, text, 32) > 0 &&
-			wcscmp(text, L"New player:") == 0,
-		true
-	);
-	ASSERT_BOOL_EQ(
-		SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, EM_GETLIMITTEXT, 0, 0) ==
-			SWAP_ID_LENGTH - 1,
-		true
-	);
-	ASSERT_BOOL_EQ(
-		GetWindowLongW(GetDlgItem(dialog, SWAP_PROMPT_NEW_PLAYER), GWL_STYLE) & ES_NUMBER, true
-	);
-	HWND players = GetDlgItem(dialog, SWAP_PROMPT_OLD_PLAYER);
-	ASSERT_BOOL_EQ(SendMessageW(players, CB_GETCURSEL, 0, 0) == 0, true);
-	swapPlayers[0] = 0;
-	LRESULT count = SendMessageW(players, CB_GETCOUNT, 0, 0);
-	for (LRESULT i = 0; i < count; ++i) {
-		wchar_t name[FIXTURE_TEXT];
-		ASSERT_BOOL_EQ(SendMessageW(players, CB_GETLBTEXT, (WPARAM)i, (LPARAM)name) > 0, true);
-		if (i) {
-			wcscat(swapPlayers, L"|");
-		}
-		wcscat(swapPlayers, name);
-	}
-	SendMessageW(players, CB_SETCURSEL, (WPARAM)swapChoice, 0);
 	ASSERT_BOOL_EQ(SetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, swapEntry), true);
+	// "Allow duplicates?" starts unticked.
+	ASSERT_BOOL_EQ(
+		GetDlgItemTextW(dialog, SWAP_PROMPT_DUPLICATES, text, 32) > 0 &&
+			wcscmp(text, L"Allow duplicates?") == 0,
+		true
+	);
+	ASSERT_BOOL_EQ(IsDlgButtonChecked(dialog, SWAP_PROMPT_DUPLICATES) == BST_UNCHECKED, true);
+	ASSERT_BOOL_EQ(
+		CheckDlgButton(dialog, SWAP_PROMPT_DUPLICATES, swapDuplicates ? BST_CHECKED : BST_UNCHECKED),
+		true
+	);
 	SendMessageW(dialog, WM_COMMAND, swapButton, 0);
-	INT_PTR answer =
-		swapButton == IDOK && swapChoice >= 0 && validSwapId(swapEntry) ? IDOK : IDCANCEL;
+	// NOLINTNEXTLINE(performance-no-int-to-ptr): the parameter carries the prompt's pointer.
+	const WindowState *state = ((const SwapPrompt *)parameter)->state;
+	wchar_t id[SWAP_ID_LENGTH];
+	bool listed = listedId(state->players, state->playerCount, swapEntry, id, SWAP_ID_LENGTH);
+	INT_PTR answer = swapButton == IDOK && (listed || validSwapId(swapEntry)) ? IDOK : IDCANCEL;
+	ASSERT_BOOL_EQ(state->swapPrompt == dialog, true);
 	ASSERT_BOOL_EQ(DestroyWindow(dialog), true);
+	ASSERT_BOOL_EQ(state->swapPrompt == NULL, true);
 	return answer;
 }
 
+// Like inject-player: `swapResult` 1 is an unknown ID, 2 a player already in the fixture.
 int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
-	ASSERT_BOOL_EQ(argc == 6 && argv[argc] == NULL, true);
+	ASSERT_BOOL_EQ(argc == (expectedKeepUid ? 7 : 6) && argv[argc] == NULL, true);
+	ASSERT_BOOL_EQ(!expectedKeepUid || wcscmp(argv[6], L"--keep-uid") == 0, true);
 	ASSERT_INT_EQ(wcscmp(argv[1], L"inject-player"), 0);
 	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
 	ASSERT_INT_EQ(wcscmp(argv[3], expectedBlock), 0);
-	ASSERT_INT_EQ(wcscmp(argv[4], swapEntry), 0);
+	ASSERT_INT_EQ(wcscmp(argv[4], expectedPerson), 0);
 	ASSERT_BOOL_EQ(files_hasExtension(argv[5], L".json"), true);
 	wcscpy(replacementOutput, argv[5]);
 	++swapCalls;
 	ASSERT_BOOL_EQ(WaitForSingleObject(swapRelease, 5000) == WAIT_OBJECT_0, true);
-	(void)snprintf(
-		result, resultSize, "%s", swapResult ? "error: no person with unique ID 404" : "ok"
-	);
+	static const char *const results[] = {
+		"ok",
+		"error: no person with unique ID 404",
+		"error: home.player[3] (Torre) is already this player; use --keep-uid to inject anyway",
+	};
+	(void)snprintf(result, resultSize, "%s", results[swapResult]);
 	if (!swapResult) {
 		ASSERT_BOOL_EQ(files_write(argv[5], "{\"swapped\":true}", 16), true);
 	}
@@ -1358,9 +1390,123 @@ static void checkTeamEditor(HWND window, WindowState *state, unsigned side) {
 	ASSERT_BOOL_EQ(DeleteFileW(state->replacementPath), true);
 	state->replacementPath[0] = 0;
 	replacementInput = NULL;
-	freeTeams(state->teams, state->teamCount);
+	freeChoices(state->teams, state->teamCount);
 	state->teams = NULL;
 	state->teamCount = 0;
+}
+
+static void finishPlayerLoad(HWND window, WindowState *state) {
+	ASSERT_BOOL_EQ(state->playersThread != NULL, true);
+	ASSERT_BOOL_EQ(WaitForSingleObject(state->playersThread, 5000) == WAIT_OBJECT_0, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, PLAYERS_TIMER, 0) == 0, true);
+	ASSERT_BOOL_EQ(state->playersThread == NULL, true);
+}
+
+// Types `text` into the prompt's new player field and checks the labels listed once the typing
+// pauses, in order.
+static void checkPlayerFilter(
+	HWND dialog,
+	const wchar_t *text,
+	const wchar_t *const *expected,
+	unsigned count
+) {
+	HWND picker = GetDlgItem(dialog, SWAP_PROMPT_NEW_PLAYER);
+	wchar_t label[PLAYER_LABEL_LENGTH];
+	ASSERT_BOOL_EQ(SetWindowTextW(picker, text), true);
+	SendMessageW(
+		dialog, WM_COMMAND, MAKEWPARAM(SWAP_PROMPT_NEW_PLAYER, CBN_EDITCHANGE), (LPARAM)picker
+	);
+	// The list waits for the delay: its timer is pending.
+	ASSERT_BOOL_EQ(KillTimer(dialog, SWAP_FILTER_TIMER), true);
+	SendMessageW(dialog, WM_TIMER, SWAP_FILTER_TIMER, 0);
+	ASSERT_BOOL_EQ(SendMessageW(picker, CB_GETCOUNT, 0, 0) == (LRESULT)count, true);
+	for (unsigned i = 0; i < count; ++i) {
+		ASSERT_BOOL_EQ(SendMessageW(picker, CB_GETLBTEXT, i, (LPARAM)label) > 0, true);
+		ASSERT_INT_EQ(wcscmp(label, expected[i]), 0);
+	}
+	ASSERT_BOOL_EQ(GetWindowTextW(picker, label, PLAYER_LABEL_LENGTH) >= 0, true);
+	ASSERT_INT_EQ(wcscmp(label, text), 0);
+}
+
+// Name search in the swap prompt's new player field, on the loaded player list.
+static void checkPlayerSearch(HWND window, WindowState *state) {
+	ASSERT_BOOL_EQ(state->playerCount == 5, true);
+	wchar_t folded[16];
+	ASSERT_BOOL_EQ(foldText(L"ÆßŒéŁ", folded, 16), true);
+	ASSERT_INT_EQ(wcscmp(folded, L"aessoeel"), 0);
+	ASSERT_BOOL_EQ(foldText(L"Æß", folded, 4), false);
+
+	DialogTemplate dialogTemplate;
+	ASSERT_BOOL_EQ(swapPromptTemplate(&dialogTemplate), true);
+	SwapPrompt prompt = {.state = state, .name = "Keeper & Co", .block = 0};
+	HWND dialog = CreateDialogIndirectParamW(
+		GetModuleHandleW(NULL),
+		(LPCDLGTEMPLATEW)dialogTemplate.bytes,
+		window,
+		swapPromptProcedure,
+		(LPARAM)&prompt
+	);
+	ASSERT_BOOL_EQ(dialog != NULL && state->swapPrompt == dialog, true);
+	// The label names the swapped-out player; "&" is shown, not taken as a shortcut key.
+	wchar_t label[64];
+	ASSERT_BOOL_EQ(GetDlgItemTextW(dialog, SWAP_PROMPT_NEW_LABEL, label, 64) > 0, true);
+	ASSERT_INT_EQ(wcscmp(label, L"Swap Keeper & Co for..."), 0);
+	ASSERT_BOOL_EQ(
+		GetWindowLongW(GetDlgItem(dialog, SWAP_PROMPT_NEW_LABEL), GWL_STYLE) & SS_NOPREFIX, true
+	);
+
+	static const wchar_t odegaard[] = L"Martin Ødegaard – Arsenal (40347)";
+	static const wchar_t pele[] = L"Pelé (Edson Arantes do Nascimento) (1001)";
+	// Fewer than three characters, or digits (a unique ID), list nothing.
+	checkPlayerFilter(dialog, L"od", NULL, 0);
+	checkPlayerFilter(dialog, L"40347", NULL, 0);
+	// Accents are ignored either way; a name starting with the text comes first.
+	static const wchar_t *const ode[] = {odegaard, L"Jan Bodegaard (5005)"};
+	checkPlayerFilter(dialog, L"Ode", ode, 2);
+	checkPlayerFilter(dialog, L"øDE", ode, 2);
+	static const wchar_t *const muller[] = {L"Thomas Müller – FC Bayern (2002)"};
+	checkPlayerFilter(dialog, L"muller", muller, 1);
+	static const wchar_t *const lukasz[] = {L"Łukasz Fabiański – West Ham (3003)"};
+	checkPlayerFilter(dialog, L"lukasz fab", lukasz, 1);
+	// The common name leads the label, and it or any name can be searched.
+	static const wchar_t *const nascimento[] = {pele};
+	checkPlayerFilter(dialog, L"pele", nascimento, 1);
+	checkPlayerFilter(dialog, L"nasc", nascimento, 1);
+	checkPlayerFilter(dialog, L"Nobody", NULL, 0);
+
+	// Text typed while the list loads is matched once it arrives.
+	Choice *players = state->players;
+	state->players = NULL;
+	checkPlayerFilter(dialog, L"ode", NULL, 0);
+	state->players = players;
+	SendMessageW(dialog, WM_SWAP_PLAYERS, 0, 0);
+	ASSERT_BOOL_EQ(SendDlgItemMessageW(dialog, SWAP_PROMPT_NEW_PLAYER, CB_GETCOUNT, 0, 0) == 2, true);
+
+	// A label picked from the list gives its ID; free text that is not one is refused.
+	int errors = errorMessages;
+	ASSERT_BOOL_EQ(SetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, odegaard), true);
+	ASSERT_BOOL_EQ(readSwapPrompt(dialog, &prompt), true);
+	ASSERT_BOOL_EQ(wcscmp(prompt.id, L"40347") == 0 && prompt.block == 0, true);
+	ASSERT_BOOL_EQ(SetDlgItemTextW(dialog, SWAP_PROMPT_NEW_PLAYER, L"Martin Odegaard"), true);
+	ASSERT_BOOL_EQ(readSwapPrompt(dialog, &prompt), false);
+	ASSERT_BOOL_EQ(errorMessages == errors + 1, true);
+	ASSERT_BOOL_EQ(DestroyWindow(dialog), true);
+	ASSERT_BOOL_EQ(state->swapPrompt == NULL, true);
+}
+
+// Selects (or deselects) the away team's row of player block `block`, as clicking it would.
+static void selectSwapRow(HWND window, WindowState *state, unsigned block, bool selected) {
+	int row = (int)block + (state->data->teams[1].lineupKnown ? 0 : FIXTURE_SLOTS);
+	UINT itemState = selected ? LVIS_SELECTED : 0;
+	ListView_SetItemState(state->lists[1], row, itemState, LVIS_SELECTED);
+	NMLISTVIEW change = {.hdr = {.hwndFrom = state->lists[1], .code = (UINT)LVN_ITEMCHANGED},
+		.iItem = row,
+		.uChanged = LVIF_STATE,
+		.uNewState = itemState,
+		.uOldState = LVIS_SELECTED ^ itemState,
+		.lParam = (LPARAM)block + 1};
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&change) == 0, true);
+	ASSERT_BOOL_EQ(state->selectedPlayers[1][block] == selected, true);
 }
 
 // Clicks a side's "Swap player" button.
@@ -1401,15 +1547,41 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 		ASSERT_BOOL_EQ(heading.right <= swap.left, true);
 	}
 
-	// Cancel, an invalid ID or no old player leave the fixture as it is.
+	// The swapped-out player is the selected row: the button waits for exactly one.
 	unsigned prompts = swapPrompts;
 	int errors = errorMessages;
 	swapButton = IDCANCEL;
-	swapChoice = 1;
 	swapEntry = L"123";
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->swapButtons[1]), false);
+	clickSwap(window, state, 1);
+	ASSERT_BOOL_EQ(swapPrompts == prompts, true);
+	selectSwapRow(window, state, 0, true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->swapButtons[1]), true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->swapButtons[0]), false);
+	selectSwapRow(window, state, 2, true);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->swapButtons[1]), false);
+	clickSwap(window, state, 1);
+	ASSERT_BOOL_EQ(swapPrompts == prompts, true);
+	selectSwapRow(window, state, 0, false);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->swapButtons[1]), true);
+
+	// Cancel or an invalid ID leave the fixture as it is.
+	// The first prompt starts loading the player list; a failure is retried by the next.
+	unsigned lists = playerLists;
+	playerListFailure = true;
 	clickSwap(window, state, 1);
 	ASSERT_BOOL_EQ(swapPrompts == prompts + 1 && !state->replacementThread, true);
-	ASSERT_INT_EQ(wcscmp(swapPlayers, L"Keeper|Striker"), 0);
+	ASSERT_INT_EQ(wcscmp(swapLabel, L"Swap Striker for..."), 0);
+	finishPlayerLoad(window, state);
+	ASSERT_BOOL_EQ(playerLists == lists + 1 && !state->players && state->playerCount == 0, true);
+	playerListFailure = false;
+	clickSwap(window, state, 1);
+	finishPlayerLoad(window, state);
+	clickSwap(window, state, 1); // loaded: not fetched again
+	ASSERT_BOOL_EQ(playerLists == lists + 2 && !state->playersThread, true);
+	prompts += 2;
+	checkPlayerSearch(window, state);
+	errors = errorMessages;
 	swapButton = IDOK;
 	static const wchar_t *const invalid[] = {L"", L"0", L"4294967296"};
 	for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
@@ -1417,10 +1589,6 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 		clickSwap(window, state, 1);
 		ASSERT_BOOL_EQ(!state->replacementThread && errorMessages == ++errors, true);
 	}
-	swapEntry = L"2000040347";
-	swapChoice = -1;
-	clickSwap(window, state, 1);
-	ASSERT_BOOL_EQ(!state->replacementThread && errorMessages == ++errors, true);
 	ASSERT_BOOL_EQ(swapCalls == 0, true);
 
 	// Confirm injects into a temporary copy, shown as unsaved; the source is unchanged.
@@ -1428,11 +1596,18 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(paths_absolute(source, expectedInput, HARNESS_PATH_LENGTH), true);
 	swapRelease = CreateEventW(NULL, TRUE, FALSE, NULL);
 	ASSERT_BOOL_EQ(swapRelease != NULL, true);
-	swapChoice = 1;
-	expectedBlock = L"away.player[2]"; // the second entry is block 2: block 1 is not a player
+	expectedBlock = L"away.player[2]"; // the selected row's block
 	expectedSide = 1;
-	for (int failed = 1; failed >= 0; --failed) {
-		swapResult = failed;
+	// An unknown unique ID; then a player already in the fixture, refused until "Allow duplicates?"
+	// is ticked, picked by the label from the name search.
+	static const int results[] = {1, 2, 0};
+	for (unsigned attempt = 0; attempt < 3; ++attempt) {
+		int failed = results[attempt] != 0;
+		swapEntry = attempt == 0 ? L"2000040347" : L"Martin Ødegaard – Arsenal (40347)";
+		expectedPerson = attempt == 0 ? L"2000040347" : L"40347";
+		swapDuplicates = attempt == 2;
+		expectedKeepUid = swapDuplicates;
+		swapResult = results[attempt];
 		replacementInput = state->data;
 		ASSERT_BOOL_EQ(ResetEvent(swapRelease), true);
 		clickSwap(window, state, 1);
@@ -1442,14 +1617,22 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 			!IsWindowEnabled(state->swapButtons[0]) && !IsWindowEnabled(state->swapButtons[1]), true
 		);
 		clickSwap(window, state, 0); // busy: no second prompt
-		ASSERT_BOOL_EQ(swapPrompts == prompts + 6 + (unsigned)(1 - failed), true);
+		ASSERT_BOOL_EQ(swapPrompts == prompts + 5 + attempt, true);
 		ASSERT_BOOL_EQ(SetEvent(swapRelease), true);
 		ASSERT_BOOL_EQ(WaitForSingleObject(state->replacementThread, 5000) == WAIT_OBJECT_0, true);
 		checkReplacement(window, state);
-		ASSERT_BOOL_EQ(!state->replacementThread && IsWindowEnabled(state->swapButtons[1]), true);
+		// A failed swap keeps the selected row; the swapped fixture starts with none.
+		ASSERT_BOOL_EQ(!state->replacementThread, true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->swapButtons[1]) == failed, true);
 		ASSERT_BOOL_EQ(IsWindowEnabled(state->simulation[SIM_SUBMIT]), true);
 		if (failed) {
 			ASSERT_BOOL_EQ(errorMessages == ++errors && fileMissing(replacementOutput), true);
+			// The refusal points at the checkbox rather than the command line option.
+			ASSERT_BOOL_EQ(
+				(wcsstr(lastError, L"tick \"Allow duplicates?\" to swap them in anyway") != NULL) ==
+					(results[attempt] == 2),
+				true
+			);
 		} else {
 			ASSERT_BOOL_EQ(errorMessages == errors && state->temporary, true);
 			ASSERT_INT_EQ(wcscmp(state->path, replacementOutput), 0);
@@ -1457,9 +1640,14 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 			firstLine(state->metadata, L"This fixture object is not saved. Click here to export it");
 		}
 	}
-	ASSERT_BOOL_EQ(swapCalls == 2, true);
+	ASSERT_BOOL_EQ(swapCalls == 3, true);
+	swapDuplicates = false;
+	expectedKeepUid = false;
 	ASSERT_BOOL_EQ(CloseHandle(swapRelease), true);
 	replacementInput = NULL;
+	freeChoices(state->players, state->playerCount);
+	state->players = NULL;
+	state->playerCount = 0;
 }
 
 static void checkFonts(HWND window, WindowState *state) {
