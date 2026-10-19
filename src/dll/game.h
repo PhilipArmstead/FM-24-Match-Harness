@@ -18,6 +18,9 @@
 enum {
 	GAME_PE_TIMESTAMP_STEAM = 1744804480,
 	GAME_PE_TIMESTAMP_EPIC = 1744804949,
+	// An older Steam build (March 2024). Its code sits at other addresses; game.c translates the
+	// Steam RVAs used throughout the harness using the shifts `fm24ctl probe` reported for it.
+	GAME_PE_TIMESTAMP_STEAM_OLD = 1710868029,
 };
 
 // Game functions.
@@ -163,7 +166,8 @@ uintptr_t game_base(void);
 // The loaded fm.exe's PE timestamp (one of GAME_PE_TIMESTAMP_*, once game_init succeeded).
 uint32_t game_timestamp(void);
 
-// The address of an RVA in the loaded image.
+// The address of an RVA in the loaded image. RVAs, here and in game_rva, are those of the Steam
+// build; the older build's are translated.
 void *game_address(uint32_t rva);
 
 // A game function at an RVA, as a generic function pointer; cast it to the function's type.

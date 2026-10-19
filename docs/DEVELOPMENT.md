@@ -409,7 +409,7 @@ values the game derives from them (ability, role ratings) don't affect results
 
 # Known limits
 
-- Only the Steam (PE timestamp 1744804480) and Epic Games (1744804949)
+- Only the Steam (PE timestamp 1744804480), an older Steam (1710868029) and Epic Games (1744804949)
   builds are supported; the DLL refuses any other. `fm24ctl probe` maps
   another build's addresses as a first step towards supporting it.
 - On the Epic build, configs lack five tactic plan labels (`.mentality`,

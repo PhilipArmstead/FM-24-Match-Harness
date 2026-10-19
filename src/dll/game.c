@@ -74,7 +74,28 @@ static const Signature signatures[] = {
 	),
 };
 
+// Where the older build's code and data lie relative to the Steam build's, from `fm24ctl probe`.
+// From `start` (a Steam RVA) on, an address is `delta` bytes lower, until the next entry. The
+// boundaries are guesses between the probe's nearest functions; functions the probe could not
+// match exactly (the relocated .arch code) are not translated, so call sites in them don't match.
+typedef struct Shift {
+	uint32_t start;
+	int32_t delta;
+} Shift;
+
+static const Shift oldBuildShifts[] = {
+	{0, 0},
+	{0x1800000, -64},
+	{0x2000000, -528},
+	{0x3800000, -848},
+	{0x557F000, 0}, // .00cfg: data
+	{0x5A40000, -32},
+	{0x6264000, 0}, // .shared
+};
+
 static uint8_t *base;
+static const Shift *shifts; // NULL on the Steam and Epic builds
+static size_t shiftCount;
 
 static bool checkTimestamp(void);
 static bool checkSignatures(void);
@@ -86,6 +107,10 @@ bool game_init(void) {
 		return false;
 	}
 	log_message("loaded into fm.exe at %p", (void *)base);
+	if (game_timestamp() == GAME_PE_TIMESTAMP_STEAM_OLD) {
+		shifts = oldBuildShifts;
+		shiftCount = sizeof oldBuildShifts / sizeof oldBuildShifts[0];
+	}
 	return checkTimestamp() && checkSignatures();
 }
 
@@ -100,6 +125,11 @@ uint32_t game_timestamp(void) {
 }
 
 void *game_address(uint32_t rva) {
+	for (size_t i = shiftCount; i-- > 0;) {
+		if (rva >= shifts[i].start) {
+			return base + rva + shifts[i].delta;
+		}
+	}
 	return base + rva;
 }
 
@@ -112,13 +142,22 @@ VoidFn game_functionAt(const void *address) {
 }
 
 VoidFn game_function(uint32_t rva) {
-	return game_functionAt(base + rva);
+	return game_functionAt(game_address(rva));
 }
 
 uint32_t game_rva(const void *address) {
 	uintptr_t value = (uintptr_t)address;
 	uintptr_t start = (uintptr_t)base;
-	return value > start && value < start + IMAGE_SPAN ? (uint32_t)(value - start) : 0;
+	if (value <= start || value >= start + IMAGE_SPAN) {
+		return 0;
+	}
+	uint32_t rva = (uint32_t)(value - start);
+	for (size_t i = shiftCount; i-- > 0;) {
+		if ((int64_t)rva >= (int64_t)shifts[i].start + shifts[i].delta) {
+			return (uint32_t)((int64_t)rva - shifts[i].delta);
+		}
+	}
+	return rva;
 }
 
 uint8_t *game_initThread(void) {
@@ -139,14 +178,19 @@ static bool checkTimestamp(void) {
 		log_message("fm.exe build %u (Steam)", (unsigned)timestamp);
 		return true;
 	}
+	if (timestamp == GAME_PE_TIMESTAMP_STEAM_OLD) {
+		log_message("fm.exe build %u (older Steam)", (unsigned)timestamp);
+		return true;
+	}
 	if (timestamp == GAME_PE_TIMESTAMP_EPIC) {
 		log_message("fm.exe build %u (Epic Games)", (unsigned)timestamp);
 		return true;
 	}
 	log_message(
-		"refusing: fm.exe timestamp %u, expected %d (Steam) or %d (Epic Games)",
+		"refusing: fm.exe timestamp %u, expected %d (Steam), %d (older Steam) or %d (Epic Games)",
 		(unsigned)timestamp,
 		GAME_PE_TIMESTAMP_STEAM,
+		GAME_PE_TIMESTAMP_STEAM_OLD,
 		GAME_PE_TIMESTAMP_EPIC
 	);
 	return false;
