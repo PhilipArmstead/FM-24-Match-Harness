@@ -17,7 +17,7 @@
 //   fm24ctl get-player <person unique ID> <output.json>
 //       a player's database values, as a config's player block has them
 //   fm24ctl inject-player <input.json> <home|away>.player[N] <person unique ID|player.json>
-//       <output.json> [--keep-uid]
+//       <output.json> [--allow-duplicate]
 //       the input with that player block's database values replaced by another player's
 //   fm24ctl probe [path to fm.exe]
 //       where another build of fm.exe has the code the harness uses (writes probe.txt)
@@ -48,7 +48,7 @@ static const char usage[] =
 	"  fm24ctl list-players <output.txt>\n"
 	"  fm24ctl get-player <person unique ID> <output.json>\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
-	"      <person unique ID|player.json> <output.json> [--keep-uid]\n"
+	"      <person unique ID|player.json> <output.json> [--allow-duplicate]\n"
 	"  fm24ctl probe [path to fm.exe]\n";
 
 int wmain(int argc, wchar_t **argv);

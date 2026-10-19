@@ -299,18 +299,18 @@ int commands_injectPlayer(int argc, wchar_t **argv) {
 }
 
 int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
-	bool keepUid = argc == 7 && wcscmp(argv[6], L"--keep-uid") == 0;
+	bool allowDuplicate = argc == 7 && wcscmp(argv[6], L"--allow-duplicate") == 0;
 	char block[64];
 	char person[16] = "";
 	bool fromFile = argc >= 5 && files_hasExtension(argv[4], L".json");
-	if ((argc != 6 && !keepUid) || !files_hasExtension(argv[2], L".json") ||
+	if ((argc != 6 && !allowDuplicate) || !files_hasExtension(argv[2], L".json") ||
 			!files_hasExtension(argv[5], L".json") || !parsePlayerBlock(argv[3], block, sizeof block) ||
 			(!fromFile && !parsePersonId(argv[4], person, sizeof person))) {
 		(void)snprintf(result, resultSize, "Player injection requires a .json fixture and output.");
 		fprintf(
 			stderr,
 			"usage: fm24ctl inject-player <input.json> <home|away>.player[N]"
-			" <person unique ID|player.json> <output.json> [--keep-uid]\n"
+			" <person unique ID|player.json> <output.json> [--allow-duplicate]\n"
 		);
 		return EXIT_USAGE;
 	}
@@ -345,7 +345,7 @@ int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size
 							 buffer_string(&values),
 							 values.length,
 							 block,
-							 keepUid,
+							 allowDuplicate,
 							 &injected,
 							 &injection,
 							 error,

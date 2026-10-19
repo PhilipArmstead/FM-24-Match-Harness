@@ -44,7 +44,7 @@ typedef struct Injector {
 	const char *block;
 	size_t blockLength;
 	PlayerFile *file;
-	bool keepUid;
+	bool allowDuplicate;
 	// One per value, plus the annotation and the unnamed copies of the unique ID.
 	Patch patches[MAX_PLAYER_FIELDS + 1 + MAX_UID_COPIES];
 	size_t patchCount;
@@ -65,7 +65,7 @@ static void
 addPatch(Injector *injector, size_t offset, size_t length, size_t from, size_t fromLength);
 static void checkCollision(Injector *injector, const ConfigField *field);
 static void injectField(void *context, const ConfigField *field);
-static void listMissing(PlayerFile *file, bool keepUid, PlayerInjection *result);
+static void listMissing(PlayerFile *file, PlayerInjection *result);
 
 bool playerInject_apply(
 	const char *config,
@@ -73,7 +73,7 @@ bool playerInject_apply(
 	const char *player,
 	size_t playerLength,
 	const char *block,
-	bool keepUid,
+	bool allowDuplicate,
 	ByteBuffer *out,
 	PlayerInjection *result,
 	char *error,
@@ -99,7 +99,7 @@ bool playerInject_apply(
 	Injector injector = {.block = block,
 		.blockLength = strlen(block),
 		.file = &file,
-		.keepUid = keepUid,
+		.allowDuplicate = allowDuplicate,
 		.result = result};
 	ConfigVisitor visitor = {.context = &injector, .field = injectField};
 	if (!matchConfig_visit(config, configLength, &visitor, visitError, sizeof visitError)) {
@@ -126,7 +126,7 @@ bool playerInject_apply(
 		(void)snprintf(error, errorSize, "out of memory");
 		return false;
 	}
-	listMissing(&file, keepUid, result);
+	listMissing(&file, result);
 	return true;
 }
 
@@ -189,11 +189,11 @@ addPatch(Injector *injector, size_t offset, size_t length, size_t from, size_t f
 }
 
 // Another player block already holding the injected player's unique ID would give the match the
-// same person twice.
+// same person twice (the engine plays it, but only allowDuplicate asks for it).
 static void checkCollision(Injector *injector, const ConfigField *field) {
 	static const char suffix[] = ".person_uid";
 	size_t length = strlen(field->name);
-	if (injector->keepUid || field->kind != CONFIG_U32 || length < sizeof suffix ||
+	if (injector->allowDuplicate || field->kind != CONFIG_U32 || length < sizeof suffix ||
 			strcmp(field->name + length - (sizeof suffix - 1), suffix) != 0 ||
 			!strstr(field->name, ".player[")) {
 		return;
@@ -202,7 +202,7 @@ static void checkCollision(Injector *injector, const ConfigField *field) {
 		(void)snprintf(
 			injector->error,
 			sizeof injector->error,
-			"%s (%s) is already this player; use --keep-uid to inject anyway",
+			"%s (%s) is already this player; use --allow-duplicate to inject anyway",
 			field->name,
 			injector->currentPlayer
 		);
@@ -246,7 +246,7 @@ static void injectField(void *context, const ConfigField *field) {
 		injector->hasOldUid = true;
 	}
 	PlayerField *value = findField(file, suffix);
-	if (!value || (injector->keepUid && strcmp(suffix, "person_uid") == 0)) {
+	if (!value) {
 		return;
 	}
 	if (value->kind != field->kind || value->length != field->length) {
@@ -264,7 +264,7 @@ static void injectField(void *context, const ConfigField *field) {
 // the match identifies the player by one of them (docs/FIXTURE.md), so they change with it.
 static void replaceUidCopy(Injector *injector, const ConfigField *field) {
 	PlayerField *uid = findField(injector->file, "person_uid");
-	if (injector->keepUid || !injector->hasOldUid || !uid || field->kind != CONFIG_U32 ||
+	if (!injector->hasOldUid || !uid || field->kind != CONFIG_U32 ||
 			loadU32(field->bytes) != injector->oldUid) {
 		return;
 	}
@@ -282,11 +282,11 @@ static void replaceUidCopy(Injector *injector, const ConfigField *field) {
 	addPatch(injector, field->valueOffset, field->valueLength, uid->offset, uid->tokenLength);
 }
 
-static void listMissing(PlayerFile *file, bool keepUid, PlayerInjection *result) {
+static void listMissing(PlayerFile *file, PlayerInjection *result) {
 	size_t length = 0;
 	for (size_t i = 0; i < file->count; ++i) {
 		const PlayerField *field = &file->fields[i];
-		if (field->used || (keepUid && strcmp(field->name, "person_uid") == 0)) {
+		if (field->used) {
 			continue;
 		}
 		++result->missing;

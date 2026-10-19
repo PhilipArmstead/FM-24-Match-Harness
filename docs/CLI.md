@@ -235,7 +235,7 @@ No flags.
 
 ```text
 fm24ctl inject-player <input.json> <home|away>.player[N]
-    <person unique ID|player.json> <output.json> [--keep-uid]
+    <person unique ID|player.json> <output.json> [--allow-duplicate]
 ```
 
 Patch an existing player block without changing squad order or fixture
@@ -250,15 +250,15 @@ derived ability/role ratings, caps or squad number. See
 for the exact scope.
 
 By default, all three unique-ID copies are replaced and duplicate players
-elsewhere in the fixture are rejected. `--keep-uid`, placed last, keeps the
-slot's original IDs, allowing another player's values to be copied without
-duplicating that identity. Detailed statistics then retain the original
-player's identity. The flag defaults to off.
+elsewhere in the fixture are rejected. `--allow-duplicate`, placed last,
+injects the player even if they are already in the fixture, so the same
+person can play twice (for example on both sides). Detailed statistics list
+them once per side, under their own name. The flag defaults to off.
 
 ```powershell
 .\fm24ctl.exe inject-player next-fixture.json "home.player[10]" 2000040347 torre.json
 .\fm24ctl.exe run torre.json 1-100
-.\fm24ctl.exe inject-player next-fixture.json "away.player[0]" torre-values.json edited.json --keep-uid
+.\fm24ctl.exe inject-player next-fixture.json "away.player[0]" torre-values.json edited.json --allow-duplicate
 ```
 
 ## Open the viewer

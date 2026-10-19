@@ -106,7 +106,7 @@ typedef struct ReplaceTeamJob {
 	FixturePlayerEdits playerEdits;
 	unsigned side;
 	bool swap;
-	bool keepUid; // swap: the player may already be in the fixture (inject-player --keep-uid)
+	bool allowDuplicate; // swap: the player may already be in the fixture (--allow-duplicate)
 } ReplaceTeamJob;
 
 struct WindowState;
@@ -1762,17 +1762,17 @@ static DWORD WINAPI replaceTeam(LPVOID parameter) {
 	}
 	int result = 0;
 	if (job->swap) {
-		// "Allow duplicates?" keeps the block's own unique ID, as the player is already in the fixture.
+		// "Allow duplicates?" lets the player appear in the fixture twice, under its own unique ID.
 		wchar_t *swapArguments[] = {L"fm24ctl.exe",
 			L"inject-player",
 			arguments[2],
 			job->block,
 			job->person,
 			job->output,
-			job->keepUid ? L"--keep-uid" : NULL,
+			job->allowDuplicate ? L"--allow-duplicate" : NULL,
 			NULL};
 		result = commands_injectPlayerWithResult(
-			job->keepUid ? 7 : 6, swapArguments, job->error, sizeof job->error
+			job->allowDuplicate ? 7 : 6, swapArguments, job->error, sizeof job->error
 		);
 	} else {
 		result = commands_replaceTeamWithResult(5, arguments, job->error, sizeof job->error);
@@ -2121,7 +2121,7 @@ static void startSwap(HWND window, WindowState *state, unsigned side) {
 		prompt.block
 	);
 	wcscpy(job->person, prompt.id);
-	job->keepUid = prompt.allowDuplicates;
+	job->allowDuplicate = prompt.allowDuplicates;
 	const char *error = launchReplacement(window, state);
 	if (error && error[0]) {
 		showFileError(window, error);
@@ -2194,8 +2194,8 @@ static void checkReplacement(HWND window, WindowState *state) {
 			SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? focus : state->tabs);
 		}
 	} else if (job->swap) {
-		// The prompt's checkbox stands for inject-player's --keep-uid.
-		char *hint = strstr(job->error, "use --keep-uid to inject anyway");
+		// The prompt's checkbox stands for inject-player's --allow-duplicate.
+		char *hint = strstr(job->error, "use --allow-duplicate to inject anyway");
 		if (hint) {
 			(void)snprintf(
 				hint,

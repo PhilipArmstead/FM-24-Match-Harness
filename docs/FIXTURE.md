@@ -209,10 +209,11 @@ fixture's, named by the player block's field names without the block
 (`ratings`, `condition`, ...). You can edit its values like a fixture's.
 
 If the player is already in the fixture (in another block), `inject-player`
-refuses, since the match would have the same person twice. Add `--keep-uid`
-to inject anyway and keep the block's own `.person_uid`. The `--detailed`
-player statistics are listed by unique ID, so with `--keep-uid` the slot's
-row keeps the old player's name.
+refuses, since the match would have the same person twice. Add
+`--allow-duplicate` to inject anyway: both blocks then hold the same
+`.person_uid`, and the engine plays them as two players (checked over 100
+seeds). The `--detailed` player statistics have one row per side and unique
+ID, so a player on both sides gets a row on each, under their own name.
 
 
 ## Ratings

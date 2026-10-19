@@ -20,17 +20,16 @@ typedef struct PlayerInjection {
 	char missingNames[256]; // the first of them, comma-separated
 } PlayerInjection;
 
-// `block` names the player block ("home.player[3]"). With `keepUid`, the block keeps its unique ID.
-// Fails (with a message in `error`) if the block is missing, a value's type differs, or (unless
-// `keepUid`) another player block already has the player's unique ID. `out` receives the config
-// with every other byte unchanged.
+// `block` names the player block ("home.player[3]"). Fails (with a message in `error`) if the block
+// is missing, a value's type differs, or (unless `allowDuplicate`) another player block already has
+// the player's unique ID. `out` receives the config with every other byte unchanged.
 bool playerInject_apply(
 	const char *config,
 	size_t configLength,
 	const char *player,
 	size_t playerLength,
 	const char *block,
-	bool keepUid,
+	bool allowDuplicate,
 	ByteBuffer *out,
 	PlayerInjection *result,
 	char *error,

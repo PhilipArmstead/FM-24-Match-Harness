@@ -315,7 +315,7 @@ but does not cancel DLL work; later jobs still wait for it.
    `db::ACTUAL_PLAYER_AND_NON_PLAYER`. For all 47 players of one fixture,
    every value matched the fixture's.
    `fm24ctl inject-player <in.json> <home|away>.player[N] <uid|player.json>
-   <out.json> [--keep-uid]` patches those values into one block offline
+   <out.json> [--allow-duplicate]` patches those values into one block offline
    (`src/runner/player_inject.c`), fetching them first when given a unique
    ID. Like a venue save, it replaces only value tokens (and the block's
    `player` note) through the visitor's source spans, so the structure and
@@ -334,7 +334,7 @@ but does not cancel DLL work; later jobs still wait for it.
    show the common name first, e.g. "Pelé (Edson Arantes do Nascimento)". A
    picked label is injected by the ID at its end. Digits are taken as a
    unique ID, which also works while the list is loading or if it failed.
-   The prompt's "Allow duplicates?" box passes `--keep-uid`, so a player
+   The prompt's "Allow duplicates?" box passes `--allow-duplicate`, so a player
    already in the fixture can be swapped into another block. Without it, the
    refusal's hint points at the box.
 6. `fm24ctl probe [path\to\fm.exe]` reports where another build of `fm.exe`

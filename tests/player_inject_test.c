@@ -37,7 +37,7 @@ static const char player[] =
 static bool inject(
 	const char *playerJson,
 	const char *block,
-	bool keepUid,
+	bool allowDuplicate,
 	ByteBuffer *out,
 	PlayerInjection *result,
 	char *error,
@@ -49,7 +49,7 @@ static bool inject(
 		playerJson,
 		strlen(playerJson),
 		block,
-		keepUid,
+		allowDuplicate,
 		out,
 		result,
 		error,
@@ -89,16 +89,16 @@ TEST(replaces_only_the_named_values_of_the_block) {
 	buffer_free(&out);
 }
 
-TEST(keeps_the_unique_id_when_asked) {
+TEST(allows_a_duplicate_with_its_own_unique_id_when_asked) {
 	ByteBuffer out = {0};
 	PlayerInjection result;
 	char error[256] = "";
 	ASSERT_BOOL_EQ(inject(player, "home.player[0]", true, &out, &result, error, sizeof error), true);
-	ASSERT_BOOL_EQ(strstr(buffer_string(&out), "\"home.player[0].person_uid\", \"u32\": 11") != NULL, true);
+	ASSERT_BOOL_EQ(strstr(buffer_string(&out), "\"home.player[0].person_uid\", \"u32\": 33") != NULL, true);
 	ASSERT_BOOL_EQ(strstr(buffer_string(&out), "\"a\": 19, \"b\": 20") != NULL, true);
-	ASSERT_BOOL_EQ(strstr(buffer_string(&out), "{\"u32\": 11}") != NULL, true);
-	ASSERT_BOOL_EQ(result.replaced == 2, true);
-	ASSERT_BOOL_EQ(result.uidCopies == 0, true);
+	ASSERT_BOOL_EQ(strstr(buffer_string(&out), "{\"u32\": 11}") == NULL, true);
+	ASSERT_BOOL_EQ(result.replaced == 3, true);
+	ASSERT_BOOL_EQ(result.uidCopies == 1, true);
 	ASSERT_BOOL_EQ(result.missing == 1, true);
 	buffer_free(&out);
 }
@@ -147,7 +147,7 @@ void registerPlayerInjectTests(void) {
 		"player injection replaces only the named values of the block",
 		test_replaces_only_the_named_values_of_the_block
 	);
-	test_run("player injection keeps the unique ID when asked", test_keeps_the_unique_id_when_asked);
+	test_run("player injection allows a duplicate with its own unique ID when asked", test_allows_a_duplicate_with_its_own_unique_id_when_asked);
 	test_run(
 		"player injection rejects a player already in the match",
 		test_rejects_a_player_already_in_the_match

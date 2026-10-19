@@ -213,7 +213,7 @@ class Tournament:
                     ("away", away, intermediate, fixture),
                 ):
                     # A keeper already in this slot may also occupy the opposite baseline slot.
-                    extra = ("--keep-uid",) if keeper.uid == self.original_uids[side] else ()
+                    extra = ("--allow-duplicate",) if keeper.uid == self.original_uids[side] else ()
                     self.command(
                         log, "inject-player", source, f"{side}.player[0]",
                         self.player_file(keeper, log), target, *extra,

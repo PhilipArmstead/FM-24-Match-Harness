@@ -466,7 +466,7 @@ static unsigned swapPrompts;
 static const wchar_t *swapEntry = L"";
 static WPARAM swapButton = IDCANCEL;
 static bool swapDuplicates;                  // tick "Allow duplicates?"
-static bool expectedKeepUid;                 // the swap passes --keep-uid
+static bool expectedAllowDuplicate;                 // the swap passes --allow-duplicate
 static wchar_t swapLabel[FIXTURE_TEXT + 16]; // the prompt's "Swap <name> for..."
 static unsigned swapCalls;
 static int swapResult;
@@ -535,8 +535,8 @@ static INT_PTR WINAPI testDialogBox(
 
 // Like inject-player: `swapResult` 1 is an unknown ID, 2 a player already in the fixture.
 int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
-	ASSERT_BOOL_EQ(argc == (expectedKeepUid ? 7 : 6) && argv[argc] == NULL, true);
-	ASSERT_BOOL_EQ(!expectedKeepUid || wcscmp(argv[6], L"--keep-uid") == 0, true);
+	ASSERT_BOOL_EQ(argc == (expectedAllowDuplicate ? 7 : 6) && argv[argc] == NULL, true);
+	ASSERT_BOOL_EQ(!expectedAllowDuplicate || wcscmp(argv[6], L"--allow-duplicate") == 0, true);
 	ASSERT_INT_EQ(wcscmp(argv[1], L"inject-player"), 0);
 	ASSERT_INT_EQ(wcscmp(argv[2], expectedInput), 0);
 	ASSERT_INT_EQ(wcscmp(argv[3], expectedBlock), 0);
@@ -548,7 +548,7 @@ int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size
 	static const char *const results[] = {
 		"ok",
 		"error: no person with unique ID 404",
-		"error: home.player[3] (Torre) is already this player; use --keep-uid to inject anyway",
+		"error: home.player[3] (Torre) is already this player; use --allow-duplicate to inject anyway",
 	};
 	(void)snprintf(result, resultSize, "%s", results[swapResult]);
 	if (!swapResult) {
@@ -1606,7 +1606,7 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 		swapEntry = attempt == 0 ? L"2000040347" : L"Martin Ødegaard – Arsenal (40347)";
 		expectedPerson = attempt == 0 ? L"2000040347" : L"40347";
 		swapDuplicates = attempt == 2;
-		expectedKeepUid = swapDuplicates;
+		expectedAllowDuplicate = swapDuplicates;
 		swapResult = results[attempt];
 		replacementInput = state->data;
 		ASSERT_BOOL_EQ(ResetEvent(swapRelease), true);
@@ -1642,7 +1642,7 @@ static void checkPlayerSwap(HWND window, WindowState *state) {
 	}
 	ASSERT_BOOL_EQ(swapCalls == 3, true);
 	swapDuplicates = false;
-	expectedKeepUid = false;
+	expectedAllowDuplicate = false;
 	ASSERT_BOOL_EQ(CloseHandle(swapRelease), true);
 	replacementInput = NULL;
 	freeChoices(state->players, state->playerCount);
