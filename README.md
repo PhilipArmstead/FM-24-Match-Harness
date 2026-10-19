@@ -16,153 +16,23 @@ Written in C17.
 - You must be running Football Manager 24, with match engine v24.2 on Windows.
 - You must have an upcoming fixture.
 
-## Export the next fixture
+## UI
 
-If you're using Powershell, run `.\fm24ctl get-next-fixture next-fixture.json`  
-If you're using Command Prompt,
-run `fm24ctl.exe get-next-fixture next-fixture.json`
+- Opening the UI creates a temporary file based on your next fixture.
+  - Opening the app by dragging a fixture file on to it will open the file.
+  - You can save this or open an existing fixture file.
+- You can modify the condition and morale of players in the fixture.
+- You can swap players and teams in the fixture.
+- You can modify venue/attendnace details in the fixture.
+- You can run the fixture with a single seed or a range of seeds and save
+   detailed output.
 
-This will dump the internal **NEXT_FIXTURE** object in to an editable JSON
-object. You can name it whatever you like and also optionally specify a seed via
-the `--seed <N>` flag. Besides the match itself, the seed decides some pre-match
-details: crowd attendance, the officials, the weather and a random value per
-player.
+## CLI
 
-If you're trying to replicate a match that the game itself is about to play, 
-you need to export after clicking "Simulate Match"/"Submit Team" but before
-clicking "Continue"/"Go to Match". If you don't care about the exact result of
-the game's real match, you can export the fixture whenever.
-
-## Run the next fixture
-
-If you're using Powershell, run `.\fm24ctl run next-fixture.json`  
-If you're using Command Prompt, run `fm24ctl.exe run next-fixture.json`
-
-This will run the fixture using the exported settings and generated seed once.
-
-You can run multiple times or with a new seed by specifying the seed flag.
-A given seed plays exactly as the game would with that seed, including the
-result and the statistics:
-
-```
-.\fm24ctl run next-fixture.json 1
-.\fm24ctl run next-fixture.json 1-10
-.\fm24ctl run next-fixture.json 42,99,300-400
-```
-
-> Note: fixtures run on threads but they take around ~4s to execute so don't
-> set the range of seeds too high if you're not prepared to wait.
-
-Results are output in a CSV file whose name matches your input file, or you can
-specify your own:
-
-```
-.\fm24ctl run next-fixture.json results.csv
-.\fm24ctl run next-fixture.json 1-10 results.csv
-.\fm24ctl run next-fixture.json 42,99,300-400 lots-of-results.csv
-```
-
-If you want to see more detailed outputs, add the `--detailed` flag to the end
-of a `run` command and check the extra CSVs generated: one for players and one
-for teams, with each statistic averaged over all the seeds. They match the
-game's own match statistics screens.
-
-## Replace either team
-
-Have the game rebuild either side of your next fixture, keeping the edits
-you made to the rest of the file:
-
-```
-.m24ctl replace-away next-fixture.json "Luton Town" luton.json
-.m24ctl replace-away next-fixture.json 677 luton.json
-.m24ctl run luton.json 1-100
-```
-
-Use `fm24ctl replace-home next-fixture.json "Norwich City" norwich.json` to
-replace the home team instead. Name the team by its club's short name as the
-game shows it ("Man City") or by its unique ID. The game picks the new side's
-squad and tactic; the other side and its edits are kept. Both replacements
-are retained when you replace the other side or run another seed. See
-[docs/FIXTURE.md](docs/FIXTURE.md#changing-teams) for the details.
-
-## Put another player in a slot
-
-Copy any player's database values (attributes, condition, personality,
-traits, ...) over one player of a fixture, so that player's slot is played
-by the other player:
-
-```
-.\fm24ctl inject-player next-fixture.json "home.player[10]" 2000040347 torre.json
-.\fm24ctl run torre.json 1-100
-```
-
-The player is named by their unique ID in the game's database.
-`fm24ctl get-player <ID> <player.json>` saves a player's values to a file,
-which `inject-player` also accepts in place of the ID. See
-[docs/FIXTURE.md](docs/FIXTURE.md#putting-another-player-in-a-slot) for what
-is copied and what isn't.
-
-## View a fixture
-
-Launch `fm24ctl.exe` without arguments to export the next fixture from the
-running game to `temp-fixture.json` in the operating system's temporary
-directory and open it in the viewer. If the export fails, the reason is
-printed to the console and the application exits without opening a window.
-
-The summary warns that this temporary fixture is not saved. Select **Click
-here** (or focus the summary and press Enter) to copy the JSON into the
-current working directory as `<home-team>-v-<away-team>-<unix-timestamp>.json`.
-Team names are lower case, spaces become hyphens, and non-printable,
-non-ASCII and Windows-invalid filename characters are removed. Existing
-files are never overwritten. After export the summary shows the saved
-filename. If the temporary file is gone, it instead says **Fixture cannot
-be found; restart the app**.
-
-Pass the fixture path as the first and only argument, without `run`:
-
-```powershell
-.\fm24ctl.exe next-fixture.json
-.\fm24ctl.exe next-fixture.bin
-```
-
-> Note: you can also accomplish this by dragging the file on to the
-> application in Explorer.
-
-This opens a fixture window, with both teams' pitch diagrams, stored tactic
-names, formation shapes, positions, roles and duties. Player tables include
-morale, condition, sharpness and signed fatigue. The **Squads**
-tab lists substitutes beneath the known starters, with `Sub` in the Position
-column and blank Slot, Role and Duty cells.
-
-The **Simulation** tab runs the viewed fixture using the existing match job:
-choose a thread count, enter a seed pattern such as `1`, `42`, `1-1000`,
-`1,3,5` or `1,4,7-70`, optionally select **Generate detailed reports?**, then
-click **Simulate fixture**. Threads default to the logical CPU count minus
-one, with a minimum of 1 and the existing harness cap of 16; that default is
-also the field's maximum. The optional seed pattern defaults to blank, which
-uses `keep` (the fixture's own seed). The window remains responsive while running,
-but another simulation cannot be started from this window and it cannot be closed
-until the run finishes.
-Completion or failure appears in the tab, with results and errors also
-printed to the console.
-
-Results use the fixture's path with a `.csv` extension; detailed reports
-add `-players.csv` and `-teams.csv`. Running again replaces the previous result files.
-
-JSON viewing does not need FM24. Binary viewing requires the supported game
-running and idle: the harness decodes and re-exports the input, without
-building a new fixture, preparing the match or playing it. The viewer does
-not modify the input file unless you explicitly save over it.
-
-**Data limits:** the human-controlled side's starting XI maps to its first
-11 players. AI squad order is different, so its 11 tactic rows show
-`<Unknown>` players, followed by its full squad with blank Slot, Position,
-Role and Duty cells. Weather and the
-league/cup type codes are not mapped yet; the competition name is displayed,
-and `Friendly` is recognised. Date/time is shown from the JSON export's
-advisory source annotation, converted from its one-based day of year to
-`YYYY-MM-DD HH:MM` with Gregorian leap years; binary dates without that
-annotation are unknown. Only the referee is shown, not the other officials.
+See the [CLI reference](docs/CLI.md) for every console command, flag,
+configuration default and usage example. This is useful if you're interacting
+with the harness using Python or if you're more comfortable in the command line
+than the UI.
 
 ## Experiments
 
@@ -187,6 +57,15 @@ Got an idea for how I can enhance this? Maybe even more detailed outputs? Better
 annotated inputs or additional viewer features?
 [Open an issue](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues)
 and ask kindly.
+
+# Troubleshooting
+
+I've had reports of FM24 crashing while matches are simulating. The game must
+be in an idle state and, ideally, you won't be clicking around in it. If you
+encounter errors, send me a crash dump and I will investigate.
+
+If you run in to other problems, please
+[open an issue](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues).
 
 # Development
 
