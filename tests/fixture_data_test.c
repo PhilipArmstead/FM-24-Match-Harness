@@ -110,10 +110,12 @@ static void makeConfig(
 			ASSERT_BOOL_EQ(
 				append(
 					out,
-					",{\"name\":\"%s.player[%u]\",\"player\":\"Stale name\",\"u8\":255},"
+					",{\"name\":\"%s.player[%u]\"%s,\"u8\":255},"
 					"{\"name\":\"%s.player[%u].ratings\",\"u8map\":{",
 					name,
 					i,
+					// player[0] has no note; the others are named by it, as after inject-player.
+					i ? ",\"player\":\"Injected player\"" : "",
 					name,
 					i
 				),
@@ -237,6 +239,7 @@ static void checkConfig(bool labelled, bool swapControl) {
 	ASSERT_INT_EQ(data->officials[0][0], 0);
 	ASSERT_INT_EQ(strcmp(data->when, "2023-07-05 19:30"), 0);
 	ASSERT_INT_EQ(strcmp(data->teams[0].players[0].name, "Emiliano Mart\xC3\xADnez"), 0);
+	ASSERT_INT_EQ(strcmp(data->teams[0].players[1].name, "Injected player"), 0);
 	ASSERT_BOOL_EQ(data->teams[0].players[0].condition.known, true);
 	ASSERT_BOOL_EQ(data->teams[0].players[0].condition.value == (labelled ? 9876U : 10000U), true);
 	ASSERT_BOOL_EQ(data->teams[1].players[11].morale.value == (labelled ? 12U : 15U), true);

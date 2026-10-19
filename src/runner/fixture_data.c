@@ -39,6 +39,7 @@ typedef struct Reader {
 	ValueSpan fitnessSpans[14];
 	ValueSpan (*playerSpans)[FIXTURE_PLAYERS][5];
 	char firstName[FIXTURE_TEXT];
+	bool noted; // the player block's "player" note named it, so its strings don't
 	char error[192];
 } Reader;
 
@@ -114,6 +115,7 @@ static void setSection(Reader *reader, Section section) {
 	reader->fitnessIndex = 0;
 	reader->fitnessValid = false;
 	reader->firstName[0] = 0;
+	reader->noted = false;
 }
 
 static void teamField(Reader *reader, const ConfigField *field, const char *name) {
@@ -498,7 +500,12 @@ static void playerValue(Reader *reader, const ConfigField *field) {
 	}
 }
 
+// A player block's strings stay its exported player's after inject-player, which renames only the
+// block's note, so they name the player only when there is no note (as in a .bin dump).
 static void personName(Reader *reader, const char *text, size_t length, unsigned index) {
+	if (reader->section == SECTION_PLAYER && reader->noted) {
+		return;
+	}
 	char *target = reader->section == SECTION_PLAYER
 									 ? reader->out->teams[reader->side].players[reader->player].name
 									 : reader->out->officials[reader->official];
@@ -567,6 +574,7 @@ static void visitField(void *context, const ConfigField *field) {
 				field->player,
 				strlen(field->player)
 			);
+			reader->noted = true;
 		}
 	}
 	if (field->kind == CONFIG_STRING) {
