@@ -1,82 +1,113 @@
 FM24 match-engine harness
 ===
 
-Runs Football Manager 24's own match engine (`GAME_MATCH__Run`) headlessly,
-inside the running game. You provide a match config--exportable from the
-game--and run it across thousands of different seeds or the same one repeatedly.
+Run Football Manager 24's own match engine headlessly inside the running
+game. Export a fixture, edit it, and simulate it across many random seeds
+to compare tactics, players and match conditions.
 
-The output is a CSV showing the results of all matches played.
-
+The app includes a Windows UI and a command-line interface. Results are
+saved as CSV files, with optional detailed player and team statistics.
 Written in C17.
 
-> NOTE: this is for Windows 10 or newer only. Steam and Epic Games compatible.
+## Features
 
- # How to use?
+- Export the human manager's next fixture as editable JSON or binary data.
+- Inspect squads, stored tactics, player condition and venue details.
+- Maximise selected players' morale, condition and sharpness, and clear
+  their fatigue.
+- Replace players or teams and edit pitch, stadium and attendance values.
+- Run a single seed, a range or repeated seeds, with parallel simulation.
+- Automate experiments through the CLI and annotated fixture JSON.
 
-- You must be running Football Manager 24, with match engine v24.2 on Windows.
-- You must have an upcoming fixture.
+## Requirements
 
-## UI
+- 64-bit Windows 10 or newer.
+- A supported Steam or Epic Games build of FM24, using match engine 24.2.
+  Compatibility is build-specific, not guaranteed for every release.
+  Older Steam FM 24.2.4 support is experimental.
+- For exporting and simulating: FM24 running with a save loaded, an upcoming
+  human-managed fixture, and the game **idle**, not processing.
 
-- Opening the UI creates a temporary file based on your next fixture.
-  - Opening the app by dragging a fixture file on to it will open the file.
-  - You can save this or open an existing fixture file.
-- You can modify the condition and morale of players in the fixture.
-- You can swap players and teams in the fixture.
-- You can modify venue/attendnace details in the fixture.
-- You can run the fixture with a single seed or a range of seeds and save
-   detailed output.
+Existing JSON fixtures can be viewed and edited offline. Simulation, team
+replacement and fetching players from the game require FM24.
 
-## CLI
+## Download and quick start
 
-See the [CLI reference](docs/CLI.md) for every console command, flag,
-configuration default and usage example. This is useful if you're interacting
-with the harness using Python or if you're more comfortable in the command line
-than the UI.
+1. Download `fm24ctl.exe` from the
+   [latest release](https://github.com/PhilipArmstead/FM-24-Match-Harness/releases/latest).
+2. Start FM24, load your save and leave the game idle before an upcoming
+   fixture. Avoid interacting with FM24 while the harness is working.
+3. Open `fm24ctl.exe`. It exports the next fixture to a temporary JSON file
+   and opens the UI.
+4. Save the fixture, make any edits, then use the **Simulation** tab to
+   choose seeds and run matches. Results are saved beside the fixture.
 
-## Experiments
+For comparisons with the real match, export after submitting your team and
+before continuing to the match. Keep the game at that point while running
+your experiments.
 
-There's a few things you might want to do with this feature:
+### View a fixture
 
-1. Try many variations of your tactic played over thousands of games, measuring
-   gains to find the best instructions
-2. Repeatedly tweak the attributes of players to find what impacts the result
-   the most significantly
+Drag a `.json` or `.bin` fixture onto `fm24ctl.exe`, or use **Open** in the
+UI. JSON opens without the game; binary fixtures need FM24 running and idle.
+Opening a file does not run a simulation or overwrite it.
 
-I suggest knocking together a Python script repeatedly run the fixture against a
-few hundred seeds, tweaking it and running again, then tabulating the results.
+The UI shows stored fixture data, not a live match or tactical editor.
+Use the [fixture editing guide](docs/FIXTURE.md) for manual JSON edits;
+change values without adding, removing or reordering fields.
 
-It should be trivial for an LLM to read the fixture JSON file--which I've taken
-great pains to annotate--and modify it on a loop until it's iterated over all
-the things you might care about. And it should be cheap too; it's the Python
-script and my DLL doing most of the work, not your agent.
+### Command line
 
-# Feature suggestions
+From PowerShell in the executable's folder:
 
-Got an idea for how I can enhance this? Maybe even more detailed outputs? Better
-annotated inputs or additional viewer features?
-[Open an issue](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues)
-and ask kindly.
+```powershell
+.\fm24ctl.exe get-next-fixture next-fixture.json
+.\fm24ctl.exe run next-fixture.json 1-100 results.csv --detailed
+```
 
-# Troubleshooting
+This runs 100 matches and writes `results.csv`, `results-players.csv` and
+`results-teams.csv`. By default, the AI handles in-match changes for both
+teams.
 
-I've had reports of FM24 crashing while matches are simulating. The game must
-be in an idle state and, ideally, you won't be clicking around in it. If you
-encounter errors, send me a crash dump and I will investigate.
+Explicit numeric seeds rebuild the fixture in the current game state and
+reapply your edits. Keep the exported fixture as the manager's upcoming
+match. For older fixtures, `--keep-build` skips rebuilding, but leaves
+pre-match values such as attendance and weather unchanged.
 
-If you run in to other problems, please
-[open an issue](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues).
+See the [CLI reference](docs/CLI.md) for commands, flags, output formats and
+more examples.
 
-# Development
+## Troubleshooting
 
-See [technical details here](./docs/DEVELOPMENT.md).
+Keep FM24 idle and avoid clicking around in the game during simulations.
+Restart FM24 after updating the harness if it reports that an older DLL
+cannot be replaced.
 
-# Support
+For failures, check the console and `harness.log`, normally at
+`%LOCALAPPDATA%\fm24-harness\harness.log`. Unsupported game builds are
+refused.
 
-This work is released for free for anybody to download or modify. I'll never
-charge money for it.
+[Report a bug or suggest a feature](https://github.com/PhilipArmstead/FM-24-Match-Harness/issues).
+For bugs, include the harness version, game version and storefront,
+reproduction steps, and relevant console or log output. For crashes,
+include a crash dump if available.
 
-That said, a lot of work went in to this so, if you think that's worth a couple
-of quid, I'd be extremely grateful for a hot cup of tea or pack of biscuits.
+## Development and contributions
+
+See the [development guide](docs/DEVELOPMENT.md) for prerequisites, cloning,
+building, tests and code-style guidelines. Keep contributions focused and
+add regression tests for changed behaviour.
+
+## License
+
+The source code is licensed under
+[GPL-3.0-or-later](https://www.gnu.org/licenses/gpl-3.0.html), as indicated
+by its SPDX headers.
+
+## Support
+
+This work is free to download or modify. I'll never charge money for it.
+If you've found it useful, I'd be grateful for a hot cup of tea or a pack
+of biscuits.
 
 [![Support me on Ko-fi](docs/kofi.png?v=1)](https://ko-fi.com/philarmstead)
