@@ -64,6 +64,20 @@ enum PlayerField {
 	SITE_ROLE_POSITION = 0x1A80FD4,
 };
 
+// Write call sites of a player's tactical familiarity (MATCH_PLAYER_DATA+0x190, written by
+// sub_141BF3340; docs/FIXTURE.md#tactical-familiarity): a version byte, the position/role/duty
+// entries, then seven setting categories of {setting, amount} entries.
+enum FamiliarityField {
+	SITE_FAMILIARITY_VERSION = 0x1BF3372,        // u8, always 1
+	SITE_FAMILIARITY_ROLE_COUNT = 0x1BF1829,     // u32: position/role/duty entries
+	SITE_FAMILIARITY_ROLE_KEY = 0x1BF1879,       // u16: position, role and duty
+	SITE_FAMILIARITY_ROLE_POSITIONS = 0x1BF18B1, // 11 bytes: position codes, 0xF0 unused
+	SITE_FAMILIARITY_ROLE_AMOUNT = 0x1BF18DB,    // u32: 0-10000
+	SITE_FAMILIARITY_COUNT = 0x1BF33D0,          // u32: a category's entries
+	SITE_FAMILIARITY_SETTING = 0x1BF3400,        // u8: signed, the tactic setting (1-20)
+	SITE_FAMILIARITY_AMOUNT = 0x1BF341D,         // u32: 0-10000
+};
+
 // Write call sites in the person block (sub_141A7FDC0) every player, staff member and official has
 // (docs/PLAN.md Phase 21). Players get their database values; others mostly a default.
 enum PersonField {

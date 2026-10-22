@@ -32,6 +32,7 @@ void jobs_buildNext(const Job *job) {
 		(void *)next.fixture,
 		seed
 	);
+	bool attended = fixture_isAttended(next.fixture);
 	uint8_t *match = match_build(next.fixture, seed);
 	if (!match) {
 		job_writeResult("error: match allocation failed");
@@ -44,7 +45,17 @@ void jobs_buildNext(const Job *job) {
 	(void)snprintf(source, sizeof source, "%s, %s, seed %u", next.description, next.when, seed);
 	if (ok && output_write(job->output, &serialised, source, NULL, job->full)) {
 		log_message("build_next: wrote %zu bytes", serialised.bytes.length);
-		job_writeResult("ok: %s, %zu bytes", source, serialised.bytes.length);
+		if (attended) {
+			job_writeResult("ok: %s, %zu bytes", source, serialised.bytes.length);
+		} else {
+			log_message("build_next: the fixture is not among the human's attended matches");
+			job_writeResult(
+				"ok: %s, %zu bytes; warning: the game has not yet scheduled you to attend this match "
+				"(it does on match day), so the AI picked your team's line-up and tactic",
+				source,
+				serialised.bytes.length
+			);
+		}
 	} else {
 		job_writeResult("error: serialise or write failed; see harness.log");
 	}

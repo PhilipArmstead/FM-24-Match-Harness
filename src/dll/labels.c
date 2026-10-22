@@ -252,6 +252,18 @@ static const char *const traitNames[] = {
 	"plays ball with feet",
 };
 
+// A player's tactical familiarity categories, in the order they are written (the game's tactic
+// familiarity panel shows them in another order).
+static const char *const familiarityCategoryNames[] = {
+	"mentality",
+	"passing_style",
+	"creative_freedom",
+	"trigger_press",
+	"marking",
+	"tempo",
+	"width",
+};
+
 typedef struct MemberName {
 	const char *member;
 	const char *name;
@@ -401,8 +413,10 @@ typedef struct Walk {
 	int backroom;
 	size_t playerStart;
 	bool playerNamed;
-	int tacticSlot;    // formation slot of the current tactic plan
-	unsigned planRole; // role keying the current set of player instructions
+	int tacticSlot;          // formation slot of the current tactic plan
+	unsigned planRole;       // role keying the current set of player instructions
+	int familiarityCategory; // setting category of the player's current familiarity entries
+	int familiarityEntry;    // entry within the current familiarity list
 	size_t siteRunStart;
 	char block[LABEL_LENGTH];
 	char previousBlock[LABEL_LENGTH];
@@ -419,6 +433,7 @@ static void appendIndexedBlock(Walk *walk, const char *text, int index);
 static void roleText(unsigned role, char *out, size_t size);
 static void roleEntryName(const Walk *walk, size_t first, char *out, size_t size);
 static void labelDerivedField(Walk *walk, size_t i, const TraceRecord *record);
+static void labelFamiliarityField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelTeamField(
 	Walk *walk,
@@ -597,6 +612,72 @@ static void labelDerivedField(Walk *walk, size_t i, const TraceRecord *record) {
 	}
 }
 
+// Names a player's tactical familiarity: its position/role/duty entries, then each setting
+// category's entries, numbered within their list (docs/FIXTURE.md#tactical-familiarity).
+static void labelFamiliarityField(Walk *walk, size_t i, const TraceRecord *record) {
+	const char *field = NULL;
+	bool roles = false;
+	switch (record->site) {
+		case SITE_FAMILIARITY_VERSION:
+			walk->familiarityCategory = -1;
+			field = "version";
+			break;
+		case SITE_FAMILIARITY_ROLE_COUNT:
+			walk->familiarityEntry = -1;
+			field = "count";
+			roles = true;
+			break;
+		case SITE_FAMILIARITY_ROLE_KEY:
+			++walk->familiarityEntry;
+			field = "key";
+			roles = true;
+			break;
+		case SITE_FAMILIARITY_ROLE_POSITIONS:
+			field = "positions";
+			roles = true;
+			break;
+		case SITE_FAMILIARITY_ROLE_AMOUNT:
+			field = "amount";
+			roles = true;
+			break;
+		case SITE_FAMILIARITY_COUNT:
+			++walk->familiarityCategory;
+			walk->familiarityEntry = -1;
+			field = "count";
+			break;
+		case SITE_FAMILIARITY_SETTING:
+			++walk->familiarityEntry;
+			field = "setting";
+			break;
+		case SITE_FAMILIARITY_AMOUNT: field = "amount"; break;
+		default: return;
+	}
+	FieldLabel *label = &walk->labels[i];
+	size_t categories = sizeof familiarityCategoryNames / sizeof familiarityCategoryNames[0];
+	int category = walk->familiarityCategory;
+	const char *list = roles ? "position_role_duty"
+										 : category >= 0 && (size_t)category < categories
+											 ? familiarityCategoryNames[category]
+											 : "unknown";
+	if (record->site == SITE_FAMILIARITY_VERSION) {
+		(void)snprintf(label->name, sizeof label->name, "%s.tactical_familiarity.version", walk->block);
+	} else if (strcmp(field, "count") == 0) {
+		(void)snprintf(
+			label->name, sizeof label->name, "%s.tactical_familiarity.%s.count", walk->block, list
+		);
+	} else {
+		(void)snprintf(
+			label->name,
+			sizeof label->name,
+			"%s.tactical_familiarity.%s[%d].%s",
+			walk->block,
+			list,
+			walk->familiarityEntry,
+			field
+		);
+	}
+}
+
 static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record) {
 	if (record->site == SITE_PLAYER_FIRST) {
 		++walk->player;
@@ -624,6 +705,7 @@ static void labelPlayerField(Walk *walk, size_t i, const TraceRecord *record) {
 		label->ratings = true;
 	}
 	labelDerivedField(walk, i, record);
+	labelFamiliarityField(walk, i, record);
 }
 
 static void labelTeamField(

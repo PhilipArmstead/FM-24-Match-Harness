@@ -912,6 +912,58 @@ TEST(labels_match_focus) {
 	free(labels);
 }
 
+TEST(labels_tactical_familiarity) {
+	TraceRecord records[] = {
+		{.site = SITE_PLAYER_FIRST},
+		{.site = SITE_FAMILIARITY_VERSION},
+		{.site = SITE_FAMILIARITY_ROLE_COUNT},
+		{.site = SITE_FAMILIARITY_ROLE_KEY},
+		{.site = SITE_FAMILIARITY_ROLE_POSITIONS},
+		{.site = SITE_FAMILIARITY_ROLE_AMOUNT},
+		{.site = SITE_FAMILIARITY_COUNT},
+		{.site = SITE_FAMILIARITY_SETTING},
+		{.site = SITE_FAMILIARITY_AMOUNT},
+		{.site = SITE_FAMILIARITY_SETTING},
+		{.site = SITE_FAMILIARITY_AMOUNT},
+		{.site = SITE_FAMILIARITY_COUNT},
+		{.site = SITE_FAMILIARITY_COUNT},
+		{.site = SITE_FAMILIARITY_SETTING},
+	};
+	char *paths[] = {"1ac77d5>1b6f456>1a808b0"};
+	Serialised serialised = {
+		.records = records,
+		.recordCount = sizeof records / sizeof records[0],
+		.paths = paths,
+		.pathCount = 1,
+	};
+	PeopleIndex people = {0};
+	FieldLabel *labels = labels_compute(&serialised, &people);
+	ASSERT_BOOL_EQ(labels != NULL, true);
+	if (!labels) {
+		return;
+	}
+	static const char *const expected[] = {
+		"home.player[0]",
+		"home.player[0].tactical_familiarity.version",
+		"home.player[0].tactical_familiarity.position_role_duty.count",
+		"home.player[0].tactical_familiarity.position_role_duty[0].key",
+		"home.player[0].tactical_familiarity.position_role_duty[0].positions",
+		"home.player[0].tactical_familiarity.position_role_duty[0].amount",
+		"home.player[0].tactical_familiarity.mentality.count",
+		"home.player[0].tactical_familiarity.mentality[0].setting",
+		"home.player[0].tactical_familiarity.mentality[0].amount",
+		"home.player[0].tactical_familiarity.mentality[1].setting",
+		"home.player[0].tactical_familiarity.mentality[1].amount",
+		"home.player[0].tactical_familiarity.passing_style.count",
+		"home.player[0].tactical_familiarity.creative_freedom.count",
+		"home.player[0].tactical_familiarity.creative_freedom[0].setting",
+	};
+	for (size_t i = 0; i < sizeof expected / sizeof expected[0]; ++i) {
+		ASSERT_BOOL_EQ(strcmp(labels[i].name, expected[i]) == 0, true);
+	}
+	free(labels);
+}
+
 TEST(only_merges_valid_utf8_text) {
 	static const char *const valid[] = {
 		"text",
@@ -993,6 +1045,7 @@ void registerDllTests(void) {
 	test_run("DLL names weather, venue and attendance fields", test_labels_weather_and_venue_fields);
 	test_run("DLL names the officials' ratings", test_labels_official_ratings);
 	test_run("DLL names the managers' match focus", test_labels_match_focus);
+	test_run("DLL names the players' tactical familiarity", test_labels_tactical_familiarity);
 	test_run("DLL only exports valid UTF-8 as JSON text", test_only_merges_valid_utf8_text);
 	buffer_free(&engineOutput);
 }

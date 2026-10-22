@@ -13,7 +13,8 @@ tested, this page says so.
 To inspect a fixture visually, run `fm24ctl <file>.json` (or `<file>.bin`).
 This opens a read-only Windows viewer, not a match run. JSON is read offline;
 binary inspection requires FM24 running and idle. The viewer shows stored
-tactics and player wellbeing; it does not guess AI starting assignments,
+tactics, player wellbeing and [tactical
+familiarity](#tactical-familiarity); it does not guess AI starting assignments,
 weather meanings or league/cup type codes. Its date/time comes from the
 export's advisory `source` annotation, converted to `YYYY-MM-DD HH:MM`
 (accounting for leap years), not a decoded date field. Binary dates remain
@@ -301,6 +302,103 @@ each role, with `.role` and `.position`).
 a test, changing these values made no difference to results, while changing
 the attributes did. The game uses them to pick its team, not to play the
 match.
+
+## Tactical familiarity
+
+Each player block carries the player's tactical familiarity: what the game's
+"Tactic familiarity levels" panel shows as eight bars. The game doesn't store
+a level per tactic. It stores how well the player knows particular *settings*
+(a mentality, a tempo, a position and role), and works each bar out against
+the tactic in use. Two identical tactics therefore always show the same
+familiarity.
+
+The fields, in file order:
+
+| Name                                                         | Type   | Meaning                                         |
+|--------------------------------------------------------------|--------|-------------------------------------------------|
+| `.tactical_familiarity.version`                              | `u8`   | always 1                                        |
+| `.tactical_familiarity.position_role_duty.count`             | `u32`  | how many position/role/duty entries follow      |
+| (unnamed)                                                    | `u8`   | a constant (3)                                  |
+| `.tactical_familiarity.position_role_duty[N].key`            | `u16`  | the position, role and duty (below)             |
+| (unnamed)                                                    | `u8`   | a constant (1)                                  |
+| `.tactical_familiarity.position_role_duty[N].positions`      | `hex`  | 11 position codes, `f0` for none                |
+| `.tactical_familiarity.position_role_duty[N].amount`         | `u32`  | 0-10000                                         |
+| `.tactical_familiarity.<category>.count`                     | `u32`  | how many entries follow, for each category      |
+| `.tactical_familiarity.<category>[N].setting`                | `u8`   | the tactic setting this entry is for (1-20)     |
+| `.tactical_familiarity.<category>[N].amount`                 | `u32`  | 0-10000                                         |
+
+The seven categories come in this order: `mentality`, `passing_style`,
+`creative_freedom`, `trigger_press`, `marking`, `tempo`, `width`. Each has its
+own list of `{setting, amount}` entries.
+
+**Don't add or remove entries.** The counts are structure (see [the
+rules](#the-rules)). Change an `amount` or a `setting` instead.
+
+### How a bar is worked out
+
+Amounts are on a 0-10000 scale, and a bar's length is its value divided by
+10000. The panel's words are fixed bands:
+
+| Value      | Shown as     |
+|------------|--------------|
+| 0-2999     | Awkward      |
+| 3000-5999  | Competent    |
+| 6000-8999  | Accomplished |
+| 9000-10000 | Fluid        |
+
+For the seven setting categories, the tactic's setting for that category is
+compared with each entry. An entry is worth its `amount` minus 1000 for every
+step its `setting` is away from the tactic's. The bar shows the best entry,
+and never less than a floor: 1500 for marking, 2500 for tempo and width, 1000
+for the others. For example, a tactic with mentality setting 16 and a player
+whose only mentality entry is `{setting 10, amount 8200}` gets 8200 - 6000 =
+2200: Awkward.
+
+The tactic's settings are the game's 1-20 scale, worked out from
+`plan[0]`'s mentality, its team instructions and, for creative freedom, the
+unnamed `u8` just before the mentality (five times its value, then "be more
+expressive" adds 5 and "be more disciplined" takes 5 off). Mentality maps very
+defensive to attacking as 1, 3, 7, 10, 13, 16 and very attacking to 20. The
+"trigger press" bar follows the line of engagement, and "marking" the
+tackling instruction.
+
+**In the viewer**, the squad tables show each player's value for the seven
+setting categories against their side's `plan[0]`, as a percentage. **Max
+familiarity** sets each category's first entry to the tactic's setting at
+10000, so the selected players show 100% (a category with no entries can't
+gain one, and keeps its floor). Saving or simulating writes these edits into
+the file, like the other player buttons. Position/role/duty isn't shown or
+changed. Exports from before these fields were named show `-` and can't be
+maximised: export the fixture again.
+
+**Position/role/duty** compares each entry's `key` with the player's slot in
+the formation. The `key` packs three signed codes: bits 0-5 the position,
+bits 6-12 the role, bits 13-15 the duty. They are the game's internal codes,
+not the bit numbers [the tactic uses](#formation-positions-roles-and-duties);
+an entry for the same slot has the same key as the game builds for that slot.
+An exact match is worth the full `amount`. Otherwise the entry loses a
+percentage: 10 to 25 for the same role in the mirrored position, more for
+different positions or roles (where the role's key attributes differ), and 15
+more for each code in its `positions` list. At 100 or more it is worth
+nothing. In one tactic (4-2-2-2: two DMs, AML, AMR, two strikers), entries
+with an empty `positions` list were
+worth this much in another slot, and nothing in any slot not listed:
+
+| Trained for                             | Played at                    | Worth |
+|-----------------------------------------|------------------------------|-------|
+| DC (left of two), same role and duty    | DC (right of two)            | 90%   |
+| DM (left of two), same role and duty    | DM (right of two)            | 90%   |
+| DL, same role and duty                  | DR                           | 75%   |
+| AML                                     | AMR, in a different role     | 63%   |
+
+The darker bar behind each one in the panel is the team's average.
+
+These were checked against the game's panel for two Aston Villa players, and
+by changing one player's amounts in a running game and comparing the bars.
+In the game, the familiarity lives in a separate object the player record
+points to (`+0x100`); the file holds the copy taken when the match is built
+(`MATCH_PLAYER_DATA+0x190`). **Whether the match engine reads it hasn't been
+tested.**
 
 # Values copied from the game's database
 
@@ -1407,6 +1505,9 @@ name used above is unique.
   database](#values-copied-from-the-games-database) (condition, sharpness,
   personality, ...).
 - Player instruction bit 0:1, and the other unnamed bits.
+- Whether the engine reads [tactical familiarity](#tactical-familiarity), the
+  exact position/role penalty, and what a position/role entry's `positions`
+  list stands for.
 - The [staff attributes](#staff-attributes) named `unknown_*`, and how much
   each of the manager's attributes the engine reads changes results.
 - How much the [match focus](#match-focus) changes results, and what the field

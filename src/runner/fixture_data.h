@@ -31,6 +31,18 @@ enum {
 	VENUE_FIELD_COUNT,
 };
 
+// A player's tactical familiarity with one tactic setting category, as {setting, amount} entries
+// (docs/FIXTURE.md#tactical-familiarity). Categories, in file order: mentality, passing style,
+// creative freedom, trigger press, marking, tempo, width.
+enum { FIXTURE_FAMILIARITY_CATEGORIES = 7, FIXTURE_FAMILIARITY_ENTRIES = 24 };
+
+typedef struct FixtureFamiliarity {
+	bool known; // its count was read and every entry fits
+	uint8_t count;
+	int8_t setting[FIXTURE_FAMILIARITY_ENTRIES];  // 1-20 scale
+	uint16_t amount[FIXTURE_FAMILIARITY_ENTRIES]; // 0-10000
+} FixtureFamiliarity;
+
 typedef struct FixturePlayer {
 	char name[FIXTURE_TEXT];
 	bool present;
@@ -38,6 +50,7 @@ typedef struct FixturePlayer {
 	FixtureNumber condition;
 	FixtureNumber sharpness[2];
 	FixtureNumber fatigue;
+	FixtureFamiliarity familiarity[FIXTURE_FAMILIARITY_CATEGORIES];
 } FixturePlayer;
 
 typedef struct FixtureSlot {
@@ -51,6 +64,9 @@ typedef struct FixtureTeam {
 	char formation[64];
 	FixtureNumber managerFlags;
 	FixtureNumber playerCount;
+	FixtureNumber mentality;       // plan[0]
+	FixtureNumber planByte18;      // plan[0]'s unnamed u8 before the mentality: creative freedom
+	FixtureNumber instructions[3]; // plan[0] team instructions
 	FixtureSlot slots[FIXTURE_SLOTS];
 	FixturePlayer players[FIXTURE_PLAYERS];
 	bool lineupKnown;
@@ -67,7 +83,7 @@ typedef struct FixtureData {
 	FixtureTeam teams[2];
 } FixtureData;
 
-enum { FIXTURE_MAX_HAPPINESS = 1, FIXTURE_MAX_CONDITION = 2 };
+enum { FIXTURE_MAX_HAPPINESS = 1, FIXTURE_MAX_CONDITION = 2, FIXTURE_MAX_FAMILIARITY = 4 };
 
 typedef struct FixturePlayerEdits {
 	uint8_t players[2][FIXTURE_PLAYERS];
@@ -107,6 +123,21 @@ bool fixtureData_writeVenue(
 	ByteBuffer *out,
 	char *error,
 	size_t errorSize
+);
+
+// The tactic's setting (1-20 scale) for each familiarity category, as the game works it out from
+// plan[0]'s mentality, team instructions and creative freedom byte. False if any is missing.
+bool fixtureData_familiaritySettings(
+	const FixtureTeam *team,
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES]
+);
+// How familiar the player is with one category of the team's tactic, 0-10000, as the game's tactic
+// familiarity panel shows it. False if the player's or the tactic's values are missing.
+bool fixtureData_familiarity(
+	const FixtureTeam *team,
+	const FixturePlayer *player,
+	unsigned category,
+	unsigned *value
 );
 
 void fixtureData_position(uint64_t mask, char *out, size_t size);

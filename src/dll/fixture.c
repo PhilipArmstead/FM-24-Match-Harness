@@ -53,6 +53,34 @@ bool fixture_findNext(NextFixture *next, const char **error) {
 }
 
 // Orders dates: year, then day of year, then kick-off time code.
+bool fixture_isAttended(const uint8_t *fixture) {
+	uint8_t *home = NULL;
+	uint8_t *away = NULL;
+	uint8_t *holder = NULL;
+	uint8_t *start = NULL;
+	uint8_t *end = NULL;
+	if (!memory_readPointer(fixture, FIXTURE_HOME, &home) ||
+			!memory_readPointer(fixture, FIXTURE_AWAY, &away) ||
+			!memory_readPointer(game_address(RVA_HUMAN_MATCHES_HOLDER), 0, &holder) ||
+			!memory_readPointer(holder, HUMAN_MATCHES, &start) ||
+			!memory_readPointer(holder, HUMAN_MATCHES + sizeof(void *), &end)) {
+		return false;
+	}
+	// Each entry points to a match whose first member is its copy of the fixture.
+	for (uint8_t *entry = start; entry < end; entry += sizeof(void *)) {
+		uint8_t *match = NULL;
+		uint8_t *copy = NULL;
+		uint8_t *copyHome = NULL;
+		uint8_t *copyAway = NULL;
+		if (memory_readPointer(entry, 0, &match) && memory_readPointer(match, 0, &copy) &&
+				memory_readPointer(copy, FIXTURE_HOME, &copyHome) &&
+				memory_readPointer(copy, FIXTURE_AWAY, &copyAway) && copyHome == home && copyAway == away) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static uint64_t dateKey(uint16_t dayWord, uint16_t year) {
 	return ((uint64_t)year << 32) | ((uint64_t)(dayWord & DAY_MASK) << 16) |
 				 (uint64_t)(dayWord >> TIME_SHIFT);

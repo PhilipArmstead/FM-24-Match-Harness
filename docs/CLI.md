@@ -59,6 +59,11 @@ with the real match, export after **Simulate Match**/**Submit Team** and before
 **Continue**/**Go to Match**, then run before advancing the game. Before team
 submission, the game may choose a different human line-up for each seed.
 
+Before match day the game hasn't yet scheduled you to attend the match, so it
+builds your side as it would an AI side: the AI picks your line-up and tactic.
+The export still succeeds, but the result line ends with a `warning:` saying so.
+Export again on match day to get your own line-up and tactic.
+
 ```powershell
 .\fm24ctl.exe get-next-fixture next-fixture.json
 .\fm24ctl.exe get-next-fixture next-fixture.json --seed 42 --full

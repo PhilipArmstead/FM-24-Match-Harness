@@ -5,6 +5,7 @@
 #include "match_config.h"
 #include "tactic_names.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,24 @@ typedef struct ValueSpan {
 	size_t length;
 } ValueSpan;
 
+// Where a player's editable values are in the JSON: the five wellbeing values, then each
+// familiarity category's first entry (setting, amount).
+typedef struct PlayerSpans {
+	ValueSpan wellbeing[5];
+	ValueSpan familiarity[FIXTURE_FAMILIARITY_CATEGORIES][2];
+} PlayerSpans;
+
+// A player's familiarity categories as labels.c names them, in file order.
+static const char *const familiarityNames[FIXTURE_FAMILIARITY_CATEGORIES] = {
+	"mentality",
+	"passing_style",
+	"creative_freedom",
+	"trigger_press",
+	"marking",
+	"tempo",
+	"width",
+};
+
 typedef struct Reader {
 	FixtureData *out;
 	Section section;
@@ -37,7 +56,8 @@ typedef struct Reader {
 	bool fitnessValid;
 	FixtureNumber fitness[14];
 	ValueSpan fitnessSpans[14];
-	ValueSpan (*playerSpans)[FIXTURE_PLAYERS][5];
+	PlayerSpans (*playerSpans)[FIXTURE_PLAYERS];
+	FixtureNumber previousU8; // the previous field's value, if it was a u8
 	char firstName[FIXTURE_TEXT];
 	bool noted; // the player block's "player" note named it, so its strings don't
 	char error[192];
@@ -137,12 +157,20 @@ static void teamField(Reader *reader, const ConfigField *field, const char *name
 	} else if (strcmp(name, "manager.tactic.plan[0]") == 0) {
 		setSection(reader, SECTION_PLAN);
 	} else if (strncmp(name, planPrefix, prefixLength) == 0) {
-		if (indexed(name + prefixLength, "slot[", &index, &suffix) && index < FIXTURE_SLOTS) {
+		const char *planField = name + prefixLength;
+		if (indexed(planField, "slot[", &index, &suffix) && index < FIXTURE_SLOTS) {
 			if (strcmp(suffix, ".position") == 0) {
 				(void)scalar(field, CONFIG_U32, &team->slots[index].position);
 			} else if (strcmp(suffix, ".role") == 0) {
 				(void)scalar(field, CONFIG_U64, &team->slots[index].role);
 			}
+		} else if (strcmp(planField, "mentality") == 0) {
+			// The unnamed byte before it is the plan's +0x18 (fn_11ee0e10+0x18 in a --full export).
+			if (scalar(field, CONFIG_U8, &team->mentality)) {
+				team->planByte18 = reader->previousU8;
+			}
+		} else if (indexed(planField, "team_instructions[", &index, &suffix) && index < 3 && !*suffix) {
+			(void)scalar(field, CONFIG_U32, &team->instructions[index]);
 		}
 	} else {
 		setSection(reader, SECTION_NONE);
@@ -425,10 +453,72 @@ bool fixtureData_writeVenue(
 	return ok;
 }
 
+// The familiarity category `*text` starts with (skipping it), or FIXTURE_FAMILIARITY_CATEGORIES.
+static unsigned familiarityCategory(const char **text) {
+	size_t length = strcspn(*text, ".[");
+	for (unsigned category = 0; category < FIXTURE_FAMILIARITY_CATEGORIES; ++category) {
+		if (strlen(familiarityNames[category]) == length &&
+				strncmp(*text, familiarityNames[category], length) == 0) {
+			*text += length;
+			return category;
+		}
+	}
+	return FIXTURE_FAMILIARITY_CATEGORIES;
+}
+
+// Reads a player's ".tactical_familiarity.<category>.count", "[N].setting" and "[N].amount".
+static void familiarityValue(Reader *reader, const ConfigField *field, const char *suffix) {
+	static const char prefix[] = ".tactical_familiarity.";
+	if (strncmp(suffix, prefix, sizeof prefix - 1) != 0) {
+		return;
+	}
+	const char *rest = suffix + sizeof prefix - 1;
+	unsigned category = familiarityCategory(&rest);
+	if (category == FIXTURE_FAMILIARITY_CATEGORIES) {
+		return;
+	}
+	FixturePlayer *player = &reader->out->teams[reader->side].players[reader->player];
+	FixtureFamiliarity *familiarity = &player->familiarity[category];
+	FixtureNumber number = {0};
+	if (strcmp(rest, ".count") == 0) {
+		if (scalar(field, CONFIG_U32, &number)) {
+			familiarity->known = number.value <= FIXTURE_FAMILIARITY_ENTRIES;
+			familiarity->count = familiarity->known ? (uint8_t)number.value : 0;
+		}
+		return;
+	}
+	char *end = NULL;
+	unsigned long entry = rest[0] == '[' ? strtoul(rest + 1, &end, 10) : ULONG_MAX;
+	if (!end || end == rest + 1 || *end != ']' || entry >= familiarity->count) {
+		return;
+	}
+	bool setting = strcmp(end + 1, ".setting") == 0;
+	if (!setting && strcmp(end + 1, ".amount") != 0) {
+		return;
+	}
+	if (!scalar(field, setting ? CONFIG_U8 : CONFIG_U32, &number) ||
+			(!setting && number.value > 10000)) {
+		familiarity->known = false;
+		return;
+	}
+	if (setting) {
+		familiarity->setting[entry] = (int8_t)(uint8_t)number.value;
+	} else {
+		familiarity->amount[entry] = (uint16_t)number.value;
+	}
+	if (entry == 0 && reader->playerSpans) {
+		reader->playerSpans[reader->side][reader->player].familiarity[category][setting ? 0 : 1] =
+			(ValueSpan){field->valueOffset, field->valueLength};
+	}
+}
+
 static void playerValue(Reader *reader, const ConfigField *field) {
 	FixturePlayer *player = &reader->out->teams[reader->side].players[reader->player];
 	const char *suffix = strchr(field->name, ']');
 	suffix = suffix ? suffix + 1 : "";
+	if (*suffix) {
+		familiarityValue(reader, field, suffix);
+	}
 	static const struct {
 		const char *name;
 		ConfigValueKind kind;
@@ -451,7 +541,7 @@ static void playerValue(Reader *reader, const ConfigField *field) {
 			if (!scalar(field, values[i].kind, numbers[i])) {
 				(void)snprintf(reader->error, sizeof reader->error, "wrong type for %s", field->name);
 			} else if (reader->playerSpans) {
-				reader->playerSpans[reader->side][reader->player][i] =
+				reader->playerSpans[reader->side][reader->player].wellbeing[i] =
 					(ValueSpan){field->valueOffset, field->valueLength};
 			}
 		}
@@ -494,7 +584,8 @@ static void playerValue(Reader *reader, const ConfigField *field) {
 		if (reader->playerSpans) {
 			static const unsigned indices[] = {0, 1, 2, 6, 13};
 			for (unsigned i = 0; i < 5; ++i) {
-				reader->playerSpans[reader->side][reader->player][i] = reader->fitnessSpans[indices[i]];
+				reader->playerSpans[reader->side][reader->player].wellbeing[i] =
+					reader->fitnessSpans[indices[i]];
 			}
 		}
 	}
@@ -580,6 +671,8 @@ static void visitField(void *context, const ConfigField *field) {
 	if (field->kind == CONFIG_STRING) {
 		textField(reader, field);
 	}
+	reader->previousU8 = (FixtureNumber){0};
+	(void)scalar(field, CONFIG_U8, &reader->previousU8);
 }
 
 static void visitSource(void *context, const char *source) {
@@ -683,7 +776,7 @@ static bool readData(
 	const char *json,
 	size_t length,
 	FixtureData *out,
-	ValueSpan spans[2][FIXTURE_PLAYERS][5],
+	PlayerSpans spans[2][FIXTURE_PLAYERS],
 	char *error,
 	size_t errorSize
 ) {
@@ -755,10 +848,12 @@ static int comparePlayerPatches(const void *a, const void *b) {
 	return (left->span.offset > right->span.offset) - (left->span.offset < right->span.offset);
 }
 
-// Checks one player's edit flags and appends a patch for each wellbeing field they set.
+// Checks one player's edit flags and appends a patch for each wellbeing field they set and, for
+// maximum familiarity, each category's first entry: the tactic's setting at amount 10000. A
+// category with no entries can't gain one (the file's structure is fixed), so it is left alone.
 static bool addPlayerPatches(
 	const FixtureTeam *team,
-	const ValueSpan spans[5],
+	const PlayerSpans *spans,
 	unsigned side,
 	unsigned i,
 	unsigned flags,
@@ -768,22 +863,47 @@ static bool addPlayerPatches(
 	size_t errorSize
 ) {
 	const FixturePlayer *player = &team->players[i];
-	if (flags & ~(FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION) || i >= team->playerCount.value ||
-			!player->present || !player->name[0] || strcmp(player->name, "<Unknown>") == 0) {
-		(void)snprintf(error, errorSize, "Cannot edit %s.player[%u].", side ? "away" : "home", i);
+	const char *sideName = side ? "away" : "home";
+	if (flags & ~(FIXTURE_MAX_HAPPINESS | FIXTURE_MAX_CONDITION | FIXTURE_MAX_FAMILIARITY) ||
+			i >= team->playerCount.value || !player->present || !player->name[0] ||
+			strcmp(player->name, "<Unknown>") == 0) {
+		(void)snprintf(error, errorSize, "Cannot edit %s.player[%u].", sideName, i);
 		return false;
 	}
 	for (unsigned field = 0; field < 5; ++field) {
 		if (!(flags & (field == 4 ? FIXTURE_MAX_HAPPINESS : FIXTURE_MAX_CONDITION))) {
 			continue;
 		}
-		if (!spans[field].length) {
+		if (!spans->wellbeing[field].length) {
+			(void)snprintf(error, errorSize, "Missing wellbeing field for %s.player[%u].", sideName, i);
+			return false;
+		}
+		patches[(*count)++] = (PlayerPatch){spans->wellbeing[field],
+			field == 4   ? 20U
+			: field == 3 ? 0U
+									 : 10000U};
+	}
+	if (!(flags & FIXTURE_MAX_FAMILIARITY)) {
+		return true;
+	}
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES];
+	if (!fixtureData_familiaritySettings(team, settings)) {
+		(void)snprintf(error, errorSize, "Missing %s tactic values for familiarity.", sideName);
+		return false;
+	}
+	for (unsigned k = 0; k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+		const FixtureFamiliarity *familiarity = &player->familiarity[k];
+		if (!familiarity->known || (familiarity->count && (!spans->familiarity[k][0].length ||
+																												!spans->familiarity[k][1].length))) {
 			(void)snprintf(
-				error, errorSize, "Missing wellbeing field for %s.player[%u].", side ? "away" : "home", i
+				error, errorSize, "Missing familiarity fields for %s.player[%u].", sideName, i
 			);
 			return false;
 		}
-		patches[(*count)++] = (PlayerPatch){spans[field], field == 4 ? 20U : field == 3 ? 0U : 10000U};
+		if (familiarity->count) {
+			patches[(*count)++] = (PlayerPatch){spans->familiarity[k][0], (unsigned)settings[k]};
+			patches[(*count)++] = (PlayerPatch){spans->familiarity[k][1], 10000U};
+		}
 	}
 	return true;
 }
@@ -821,8 +941,8 @@ bool fixtureData_writePlayers(
 	buffer_clear(out);
 	struct {
 		FixtureData data;
-		ValueSpan spans[2][FIXTURE_PLAYERS][5];
-		PlayerPatch patches[2 * FIXTURE_PLAYERS * 5];
+		PlayerSpans spans[2][FIXTURE_PLAYERS];
+		PlayerPatch patches[2 * FIXTURE_PLAYERS * (5 + 2 * FIXTURE_FAMILIARITY_CATEGORIES)];
 	} *work = calloc(1, sizeof *work);
 	if (!work) {
 		(void)snprintf(error, errorSize, "Out of memory editing players.");
@@ -835,7 +955,7 @@ bool fixtureData_writePlayers(
 			unsigned flags = edits->players[side][i];
 			ok = !flags || addPlayerPatches(
 											 &work->data.teams[side],
-											 work->spans[side][i],
+											 &work->spans[side][i],
 											 side,
 											 i,
 											 flags,
@@ -855,6 +975,117 @@ bool fixtureData_writePlayers(
 		buffer_clear(out);
 	}
 	return ok;
+}
+
+#define BIT(value, n) (((value) >> (n)) & 1)
+
+// Tempo: from the mentality, within 5 of the passing style, then the tempo instructions.
+static int tempoSetting(uint64_t words, unsigned mentality, int passing) {
+	int tempo = mentality < 7 ? (int)(UINT64_C(0x100D0A07070713) >> (8 * mentality) & 0xFF) : 19;
+	int base = tempo;
+	tempo = tempo < passing - 5 ? passing - 5 : tempo;
+	tempo = tempo > passing + 5 ? passing + 5 : tempo;
+	tempo = tempo < base - 10 ? base - 10 : tempo;
+	tempo = tempo > base + 10 ? base + 10 : tempo;
+	tempo = tempo < 2 ? 1 : tempo;
+	if (BIT(words, 41)) {
+		return tempo < 15 ? 15 : tempo;
+	}
+	if (BIT(words, 42)) {
+		return tempo < 12 ? 12 : tempo;
+	}
+	if (BIT(words, 44)) {
+		return tempo > 5 ? 5 : tempo;
+	}
+	if (BIT(words, 43)) {
+		return tempo >= 9 ? 8 : tempo;
+	}
+	return tempo;
+}
+
+// Width: from the mentality, then the attacking width instructions where the mentality allows.
+static int widthSetting(uint64_t words, unsigned mentality) {
+	int width = 16;
+	bool fairlyWide = false;
+	bool wide = false;
+	bool fairlyNarrow = true;
+	if (mentality <= 6) {
+		width = (int)(UINT64_C(0xE0C0A0A080610) >> (8 * mentality) & 0xFF);
+		fairlyWide = BIT(30U, mentality);
+		wide = BIT(126U, mentality);
+		fairlyNarrow = BIT(121U, mentality);
+	}
+	if (BIT(words, 46)) {
+		return fairlyWide ? 12 : width;
+	}
+	if (BIT(words, 45)) {
+		return wide ? 15 : width;
+	}
+	if (BIT(words, 47)) {
+		return fairlyNarrow ? 8 : width;
+	}
+	return BIT(words, 48) ? 5 : width;
+}
+
+// Ports the game's sub_141BF1160 (FM24 24.2): each category's setting from the plan's mentality,
+// team instruction bits (word 0 low, word 1 high, then word 2) and its byte +0x18.
+bool fixtureData_familiaritySettings(
+	const FixtureTeam *team,
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES]
+) {
+	if (!team->mentality.known || !team->planByte18.known || !team->instructions[0].known ||
+			!team->instructions[1].known || !team->instructions[2].known) {
+		return false;
+	}
+	uint64_t words = team->instructions[0].value | team->instructions[1].value << 32;
+	uint64_t word2 = team->instructions[2].value;
+	unsigned mentality = (unsigned)team->mentality.value;
+	settings[0] = mentality < 7 ? (int)(UINT64_C(0x100D0A07030114) >> (8 * mentality) & 0xFF) : 20;
+	// Passing style: passing directness.
+	int passing = BIT(words, 1) ? 20 : 10;
+	passing += BIT(words, 2) ? 5 : 0;
+	passing -= BIT(words, 4) ? 10 : 0;
+	passing -= BIT(words, 3) ? 5 : 0;
+	settings[1] = passing;
+	// Creative freedom: the plan's byte, then "be more expressive" / "be more disciplined".
+	int creative = (int)(signed char)(uint8_t)(5 * team->planByte18.value + (BIT(words, 16) ? 5 : 0) -
+																						 (BIT(words, 17) ? 5 : 0));
+	settings[2] = creative < 2 ? 1 : creative >= 20 ? 20 : creative;
+	// Trigger press, as the game names it: the line of engagement.
+	int engagement = BIT(words, 58) ? 20 : 10;
+	settings[3] = BIT(words, 60) ? engagement - 10 : engagement;
+	// Marking: tackling.
+	settings[4] = BIT(word2, 6) ? 5 * (int)BIT(word2, 5) : 5 * (int)BIT(word2, 5) + 5;
+	settings[5] = tempoSetting(words, mentality, passing);
+	settings[6] = widthSetting(words, mentality);
+#undef BIT
+	return true;
+}
+
+// Ports the game's sub_141BF3BB0: the best entry, each losing 1000 per step its setting is from the
+// tactic's, but never below the category's floor.
+bool fixtureData_familiarity(
+	const FixtureTeam *team,
+	const FixturePlayer *player,
+	unsigned category,
+	unsigned *value
+) {
+	static const int floors[FIXTURE_FAMILIARITY_CATEGORIES] = {
+		1000, 1000, 1000, 1000, 1500, 2500, 2500};
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES];
+	if (category >= FIXTURE_FAMILIARITY_CATEGORIES || !player->familiarity[category].known ||
+			!fixtureData_familiaritySettings(team, settings)) {
+		return false;
+	}
+	const FixtureFamiliarity *familiarity = &player->familiarity[category];
+	int best = floors[category];
+	for (unsigned i = 0; i < familiarity->count; ++i) {
+		int distance = abs(familiarity->setting[i] - settings[category]);
+		int worth = (int)familiarity->amount[i] - 1000 * distance;
+		best = worth > best ? worth : best;
+	}
+	*value = (unsigned)best;
+	return true;
 }
 
 void fixtureData_position(uint64_t mask, char *out, size_t size) {

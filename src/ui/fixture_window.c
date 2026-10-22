@@ -53,7 +53,8 @@ enum {
 
 enum { FILE_OPEN_BUTTON, FILE_SAVE_BUTTON, FILE_CONTROL_COUNT };
 
-enum { CELL_COUNT = 9 }; // the squad lists' text cells
+// The squad lists' text cells: slot to fatigue, then each tactical familiarity category.
+enum { FAMILIARITY_CELL = 9, CELL_COUNT = FAMILIARITY_CELL + FIXTURE_FAMILIARITY_CATEGORIES };
 
 // The swap prompt's controls.
 enum {
@@ -65,7 +66,7 @@ enum {
 
 enum { TEAM_ICON, TEAM_INPUT, TEAM_CONFIRM, TEAM_CANCEL, TEAM_ERROR, TEAM_CONTROL_COUNT };
 
-enum { PLAYER_HAPPINESS, PLAYER_CONDITION, PLAYER_BUTTON_COUNT };
+enum { PLAYER_HAPPINESS, PLAYER_CONDITION, PLAYER_FAMILIARITY, PLAYER_BUTTON_COUNT };
 
 enum {
 	SIM_THREADS_LABEL,
@@ -231,8 +232,16 @@ static const wchar_t *const columns[] = {
 	L"Condition",
 	L"Sharpness",
 	L"Fatigue",
+	L"Mentality",
+	L"Passing Style",
+	L"Creative Freedom",
+	L"Trigger Press",
+	L"Marking",
+	L"Tempo",
+	L"Width",
 };
-static const int columnWidths[] = {38, 210, 65, 185, 75, 65, 85, 90, 70};
+static const int columnWidths[] =
+	{38, 210, 65, 185, 75, 65, 85, 90, 70, 85, 100, 125, 105, 85, 85, 85};
 static const wchar_t *const venueLabels[VENUE_FIELD_COUNT] = {
 	L"Pitch width (m):",
 	L"Pitch length (m):",
@@ -1064,6 +1073,22 @@ static void roleTitle(const char *name, char *out, size_t size) {
 	out[i] = 0;
 }
 
+// Each familiarity category's value against the team's tactic, as a percentage (the game's bar).
+static void familiarityCells(
+	const FixtureTeam *team,
+	const FixturePlayer *player,
+	char cells[CELL_COUNT][FIXTURE_TEXT]
+) {
+	for (unsigned k = 0; k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+		FixtureNumber number = {0};
+		unsigned value = 0;
+		if (player && fixtureData_familiarity(team, player, k, &value)) {
+			number = (FixtureNumber){.value = value, .known = true};
+		}
+		percentage(number, cells[FAMILIARITY_CELL + k], FIXTURE_TEXT);
+	}
+}
+
 static bool setListCell(HWND list, unsigned row, unsigned column, const char *text) {
 	wchar_t wide[FIXTURE_TEXT];
 	if (!widen(text, wide, FIXTURE_TEXT)) {
@@ -1129,6 +1154,7 @@ static bool fillList(WindowState *state, unsigned side) {
 			cells[4][0] = 0;
 		}
 		playerCells(player, cells);
+		familiarityCells(team, player, cells);
 		int playerIndex =
 			player && player->present && player->name[0] && strcmp(player->name, "<Unknown>") != 0
 				? (int)(player - team->players)
@@ -1144,6 +1170,52 @@ static bool fillList(WindowState *state, unsigned side) {
 	return ok;
 }
 
+// Whether every familiarity category of the player, and the tactic's settings, were read.
+static bool familiarityKnown(const FixtureTeam *team, const FixturePlayer *player) {
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES];
+	bool known = fixtureData_familiaritySettings(team, settings);
+	for (unsigned k = 0; known && k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+		known = player->familiarity[k].known;
+	}
+	return known;
+}
+
+// What FIXTURE_MAX_FAMILIARITY writes: each category's first entry becomes the tactic's setting at
+// 10000. A category with no entries keeps its floor.
+static void maxFamiliarity(const FixtureTeam *team, FixturePlayer *player) {
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES];
+	if (!fixtureData_familiaritySettings(team, settings)) {
+		return;
+	}
+	for (unsigned k = 0; k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+		FixtureFamiliarity *familiarity = &player->familiarity[k];
+		if (familiarity->count) {
+			familiarity->setting[0] = (int8_t)settings[k];
+			familiarity->amount[0] = 10000;
+		}
+	}
+}
+
+// Why a player button can't change the player, or NULL if it can.
+static const wchar_t *
+maxProblem(const FixtureTeam *team, const FixturePlayer *player, unsigned button) {
+	static const wchar_t wellbeing[] =
+		L"The selected player is missing wellbeing data; no players were changed.";
+	if (!player->present || !player->name[0] || strcmp(player->name, "<Unknown>") == 0) {
+		return wellbeing;
+	}
+	if (button == PLAYER_FAMILIARITY) {
+		return familiarityKnown(team, player)
+						 ? NULL
+						 : L"The selected player or tactic is missing tactical familiarity data (export the "
+							 L"fixture again); no players were changed.";
+	}
+	bool known = button == PLAYER_HAPPINESS ? player->morale.known
+																					: player->condition.known && player->sharpness[0].known &&
+																							player->sharpness[1].known && player->fatigue.known;
+	return known ? NULL : wellbeing;
+}
+
 static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned button) {
 	if (state->simulationThread || state->replacementThread || state->fileThread) {
 		return;
@@ -1154,12 +1226,9 @@ static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned 
 		if (!state->selectedPlayers[side][i]) {
 			continue;
 		}
-		const FixturePlayer *player = &team->players[i];
-		if (!player->present || !player->name[0] || strcmp(player->name, "<Unknown>") == 0 ||
-				(button == PLAYER_HAPPINESS ? !player->morale.known
-																		: !player->condition.known || !player->sharpness[0].known ||
-																				!player->sharpness[1].known || !player->fatigue.known)) {
-			showError(window, L"The selected player is missing wellbeing data; no players were changed.");
+		const wchar_t *problem = maxProblem(team, &team->players[i], button);
+		if (problem) {
+			showError(window, problem);
 			return;
 		}
 		selected = true;
@@ -1173,7 +1242,10 @@ static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned 
 			continue;
 		}
 		FixturePlayer *player = &team->players[i];
-		if (button == PLAYER_HAPPINESS) {
+		if (button == PLAYER_FAMILIARITY) {
+			maxFamiliarity(team, player);
+			state->playerEdits.players[side][i] |= FIXTURE_MAX_FAMILIARITY;
+		} else if (button == PLAYER_HAPPINESS) {
 			player->morale.value = 20;
 			state->playerEdits.players[side][i] |= FIXTURE_MAX_HAPPINESS;
 		} else {
@@ -1185,6 +1257,7 @@ static void maxPlayers(HWND window, WindowState *state, unsigned side, unsigned 
 		}
 		char cells[CELL_COUNT][FIXTURE_TEXT] = {"", "", "", "", "", "-", "-", "-", "-"};
 		playerCells(player, cells);
+		familiarityCells(team, player, cells);
 		unsigned row = i + (team->lineupKnown ? 0 : FIXTURE_SLOTS);
 		for (unsigned cell = 5; cell < CELL_COUNT; ++cell) {
 			ok = setListCell(state->lists[side], row, cell, cells[cell]) && ok;
@@ -2627,6 +2700,41 @@ placeTeamPicker(const WindowState *state, unsigned side, int x, int y, int width
 	SendMessageW(picker, CB_SETDROPPEDWIDTH, (WPARAM)scaled(state, 320), 0);
 }
 
+// The room a team's heading row keeps left of its buttons: the edit icon or, while editing, the
+// heading and the team editor (input, Confirm, Cancel and some of its error text).
+static int reservedWidth(const WindowState *state, unsigned side, int headingWidth) {
+	if (!state->editingTeam[side]) {
+		return scaled(state, 27);
+	}
+	return headingWidth + scaled(state, 190) + 2 * scaled(state, 70) + 3 * scaled(state, 6) +
+				 scaled(state, 20);
+}
+
+// Places the player buttons and "Swap player" ending at `right` in `room` pixels; returns the width
+// they take. The player buttons narrow, rather than overlap what is left of them, when the row is
+// short of room (a window below its minimum size, or a long heading while editing).
+static int placePlayerActions(WindowState *state, unsigned side, int right, int y, int room) {
+	int header = scaled(state, 27);
+	int buttonGap = scaled(state, 6);
+	int swapWidth = scaled(state, 100);
+	room = (room - swapWidth - (PLAYER_BUTTON_COUNT + 1) * buttonGap) / PLAYER_BUTTON_COUNT;
+	int actionWidth = scaled(state, 120);
+	actionWidth = actionWidth > room ? (room > 0 ? room : 0) : actionWidth;
+	int actionsWidth = PLAYER_BUTTON_COUNT * (actionWidth + buttonGap) + buttonGap + swapWidth;
+	MoveWindow(state->swapButtons[side], right - swapWidth, y, swapWidth, header, TRUE);
+	for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+		MoveWindow(
+			state->playerButtons[side][button],
+			right - actionsWidth + (int)button * (actionWidth + buttonGap) + buttonGap,
+			y,
+			actionWidth,
+			header,
+			TRUE
+		);
+	}
+	return actionsWidth;
+}
+
 static void layout(HWND window, WindowState *state) {
 	RECT bounds;
 	GetClientRect(window, &bounds);
@@ -2705,28 +2813,14 @@ static void layout(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < 2; ++i) {
 		int y = top + (int)i * (panelHeight + margin);
 		int header = scaled(state, 27);
-		int actionWidth = scaled(state, 120);
-		int buttonGap = scaled(state, 6);
-		int swapWidth = scaled(state, 100);
-		// The player buttons, then "Swap player" at the right edge.
-		int actionsWidth = PLAYER_BUTTON_COUNT * (actionWidth + buttonGap) + buttonGap + swapWidth;
-		MoveWindow(state->swapButtons[i], left + width - swapWidth, y, swapWidth, header, TRUE);
-		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
-			MoveWindow(
-				state->playerButtons[i][button],
-				left + width - actionsWidth + (int)button * (actionWidth + buttonGap) + buttonGap,
-				y,
-				actionWidth,
-				header,
-				TRUE
-			);
-		}
 		HDC dc = GetDC(window);
 		HGDIOBJ oldFont = SelectObject(dc, state->headingFont);
 		SIZE extent = {0};
 		GetTextExtentPoint32W(dc, state->headingText[i], (int)wcslen(state->headingText[i]), &extent);
 		SelectObject(dc, oldFont);
 		int headingWidth = extent.cx + scaled(state, 4);
+		int actionsWidth =
+			placePlayerActions(state, i, left + width, y, width - reservedWidth(state, i, headingWidth));
 		if (headingWidth > width - header - actionsWidth) {
 			headingWidth = width - header - actionsWidth;
 		}
@@ -3021,7 +3115,8 @@ static bool createControls(HWND window, WindowState *state) {
 		return false;
 	}
 	for (unsigned i = 0; i < 2; ++i) {
-		static const wchar_t *const playerLabels[] = {L"Max happiness", L"Max condition"};
+		static const wchar_t *const playerLabels[] = {
+			L"Max happiness", L"Max condition", L"Max familiarity"};
 		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
 			state->playerButtons[i][button] = CreateWindowExW(
 				0,

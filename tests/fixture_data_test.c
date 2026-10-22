@@ -1020,12 +1020,297 @@ TEST(edits_only_selected_players_losslessly) {
 	}
 }
 
+// Settings the game's own sub_141BF1030 built for variations of a real plan: team instruction words,
+// plan byte +0x18, mentality, then the seven settings.
+static const struct {
+	uint32_t words[3];
+	unsigned byte18;
+	unsigned mentality;
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES];
+} settingVectors[] = {
+	{{131072U, 268468736U, 0U}, 2, 6, {16, 10, 5, 0, 5, 15, 8}},
+	{{4U, 0U, 0U}, 4, 2, {3, 15, 20, 10, 5, 10, 8}},
+	{{65538U, 268468736U, 0U}, 1, 7, {20, 20, 10, 0, 5, 19, 8}},
+	{{65536U, 8192U, 64U}, 1, 4, {10, 10, 10, 10, 0, 10, 15}},
+	{{131076U, 268502016U, 0U}, 1, 5, {13, 15, 1, 0, 5, 13, 5}},
+	{{8U, 268468224U, 0U}, 1, 6, {16, 5, 5, 0, 5, 10, 8}},
+	{{65536U, 268470272U, 32U}, 3, 2, {3, 10, 20, 0, 10, 7, 8}},
+	{{131072U, 16896U, 32U}, 0, 5, {13, 10, 1, 10, 10, 15, 12}},
+	{{131072U, 8704U, 0U}, 1, 2, {3, 10, 1, 10, 5, 15, 15}},
+	{{2U, 34816U, 0U}, 3, 7, {20, 20, 15, 10, 5, 8, 8}},
+	{{65536U, 69632U, 64U}, 0, 1, {1, 10, 5, 10, 0, 5, 5}},
+	{{0U, 268501504U, 0U}, 1, 7, {20, 10, 5, 0, 5, 15, 5}},
+	{{65544U, 16896U, 64U}, 3, 1, {1, 5, 20, 10, 0, 15, 12}},
+	{{65538U, 268436480U, 64U}, 1, 5, {13, 20, 10, 0, 0, 15, 12}},
+	{{131074U, 10240U, 32U}, 1, 7, {20, 20, 1, 10, 10, 8, 16}},
+	{{2U, 268503040U, 0U}, 0, 6, {16, 20, 1, 0, 5, 8, 5}},
+	{{8U, 67141632U, 64U}, 0, 5, {13, 5, 1, 20, 0, 10, 8}},
+	{{2U, 65536U, 64U}, 0, 1, {1, 20, 1, 10, 0, 15, 5}},
+	{{8U, 134217728U, 32U}, 0, 4, {10, 5, 1, 10, 10, 10, 10}},
+	{{65552U, 134254592U, 0U}, 3, 6, {16, 0, 20, 10, 5, 5, 8}},
+	{{65544U, 0U, 64U}, 1, 3, {7, 5, 10, 10, 0, 7, 10}},
+	{{65552U, 2048U, 0U}, 2, 1, {1, 0, 15, 10, 5, 5, 6}},
+	{{0U, 268500992U, 0U}, 4, 2, {3, 10, 20, 0, 5, 7, 5}},
+	{{131072U, 33280U, 0U}, 3, 5, {13, 10, 10, 10, 5, 15, 8}},
+	{{16U, 67110912U, 64U}, 3, 1, {1, 0, 15, 20, 0, 5, 6}},
+	{{131080U, 134287360U, 0U}, 0, 7, {20, 5, 1, 10, 5, 5, 5}},
+	{{131072U, 268502016U, 0U}, 1, 4, {10, 10, 1, 0, 5, 12, 5}},
+	{{131088U, 8704U, 0U}, 0, 7, {20, 0, 1, 10, 5, 15, 16}},
+	{{2U, 67109888U, 0U}, 2, 2, {3, 20, 10, 20, 5, 15, 8}},
+	{{131080U, 134219776U, 64U}, 0, 1, {1, 5, 1, 10, 0, 7, 6}},
+	{{65536U, 268472320U, 64U}, 1, 4, {10, 10, 10, 0, 0, 5, 8}},
+	{{131080U, 134287360U, 64U}, 3, 3, {7, 5, 10, 10, 0, 5, 5}},
+	{{2U, 34816U, 0U}, 3, 4, {10, 20, 15, 10, 5, 8, 8}},
+	{{16U, 34816U, 64U}, 1, 4, {10, 0, 5, 10, 0, 5, 8}},
+	{{0U, 134234624U, 0U}, 2, 6, {16, 10, 10, 10, 5, 15, 14}},
+	{{2U, 67176448U, 64U}, 2, 2, {3, 20, 10, 20, 0, 8, 5}},
+	{{131072U, 4096U, 64U}, 4, 1, {1, 10, 15, 10, 0, 5, 6}},
+	{{0U, 0U, 64U}, 2, 5, {13, 10, 10, 10, 0, 13, 12}},
+	{{131088U, 67125248U, 32U}, 4, 1, {1, 0, 15, 20, 10, 5, 12}},
+	{{0U, 67143680U, 0U}, 3, 6, {16, 10, 15, 20, 5, 8, 8}},
+	{{2U, 134252544U, 64U}, 4, 4, {10, 20, 20, 10, 0, 8, 8}},
+	{{131074U, 67112960U, 0U}, 3, 3, {7, 20, 10, 20, 5, 5, 10}},
+	{{2U, 65536U, 0U}, 4, 5, {13, 20, 20, 10, 5, 15, 5}},
+	{{131088U, 268435456U, 0U}, 4, 4, {10, 0, 15, 0, 5, 5, 10}},
+	{{8U, 4096U, 32U}, 0, 7, {20, 5, 1, 10, 10, 5, 16}},
+	{{65544U, 8192U, 0U}, 1, 5, {13, 5, 10, 10, 5, 10, 15}},
+	{{65536U, 67108864U, 64U}, 2, 2, {3, 10, 15, 20, 0, 7, 8}},
+	{{0U, 512U, 64U}, 3, 3, {7, 10, 15, 10, 0, 15, 10}},
+	{{0U, 67110912U, 0U}, 0, 4, {10, 10, 1, 20, 5, 8, 10}},
+	{{131072U, 268468736U, 0U}, 0, 3, {7, 10, 1, 0, 5, 15, 8}},
+	{{65536U, 512U, 0U}, 4, 7, {20, 10, 20, 10, 5, 15, 16}},
+	{{65538U, 4096U, 32U}, 1, 4, {10, 20, 10, 10, 10, 5, 10}},
+	{{4U, 134217728U, 64U}, 2, 1, {1, 15, 10, 10, 0, 10, 6}},
+	{{0U, 0U, 32U}, 4, 2, {3, 10, 20, 10, 10, 7, 8}},
+	{{65536U, 10240U, 0U}, 3, 2, {3, 10, 20, 10, 5, 7, 15}},
+	{{0U, 67141632U, 0U}, 0, 6, {16, 10, 1, 20, 5, 15, 8}},
+	{{0U, 134234112U, 0U}, 1, 6, {16, 10, 5, 10, 5, 15, 14}},
+	{{131080U, 8192U, 0U}, 0, 7, {20, 5, 1, 10, 5, 10, 16}},
+	{{0U, 134234112U, 32U}, 4, 7, {20, 10, 20, 10, 10, 15, 16}},
+	{{131074U, 67117056U, 0U}, 2, 2, {3, 20, 5, 20, 5, 15, 15}},
+	{{131076U, 67112960U, 64U}, 2, 4, {10, 15, 5, 20, 0, 5, 10}},
+	{{65536U, 8704U, 0U}, 1, 2, {3, 10, 10, 10, 5, 15, 15}},
+	{{131088U, 33792U, 0U}, 1, 3, {7, 0, 1, 10, 5, 12, 8}},
+	{{131072U, 4096U, 32U}, 3, 5, {13, 10, 10, 10, 10, 5, 12}},
+	{{65536U, 134251520U, 0U}, 0, 7, {20, 10, 5, 10, 5, 15, 8}},
+	{{8U, 134219776U, 64U}, 0, 2, {3, 5, 1, 10, 0, 7, 8}},
+	{{2U, 8192U, 32U}, 1, 2, {3, 20, 5, 10, 10, 15, 15}},
+	{{65536U, 134217728U, 64U}, 3, 3, {7, 10, 20, 10, 0, 7, 10}},
+	{{0U, 268503040U, 32U}, 4, 4, {10, 10, 20, 0, 10, 8, 5}},
+	{{131080U, 67109376U, 32U}, 3, 5, {13, 5, 10, 20, 10, 15, 12}},
+	{{8U, 134218240U, 0U}, 4, 6, {16, 5, 20, 10, 5, 15, 14}},
+	{{131072U, 134284288U, 64U}, 0, 4, {10, 10, 1, 10, 0, 12, 5}},
+	{{8U, 134219776U, 32U}, 0, 2, {3, 5, 1, 10, 10, 7, 8}},
+	{{131088U, 67109888U, 0U}, 1, 5, {13, 0, 1, 20, 5, 12, 12}},
+	{{8U, 268437504U, 0U}, 2, 3, {7, 5, 10, 0, 5, 7, 10}},
+	{{16U, 0U, 32U}, 3, 1, {1, 0, 15, 10, 10, 5, 6}},
+	{{131088U, 67142656U, 32U}, 0, 2, {3, 0, 1, 20, 10, 12, 8}},
+	{{131072U, 268451840U, 64U}, 4, 4, {10, 10, 15, 0, 0, 10, 12}},
+	{{0U, 67126272U, 64U}, 4, 1, {1, 10, 20, 20, 0, 12, 12}},
+	{{8U, 67145728U, 32U}, 1, 6, {16, 5, 5, 20, 10, 5, 8}},
+};
+
+TEST(works_out_familiarity_settings_as_the_game) {
+	FixtureTeam *team = calloc(1, sizeof *team);
+	ASSERT_BOOL_EQ(team != NULL, true);
+	if (!team) {
+		return;
+	}
+	int settings[FIXTURE_FAMILIARITY_CATEGORIES];
+	ASSERT_BOOL_EQ(fixtureData_familiaritySettings(team, settings), false);
+	for (size_t i = 0; i < sizeof settingVectors / sizeof settingVectors[0]; ++i) {
+		for (unsigned word = 0; word < 3; ++word) {
+			team->instructions[word] = (FixtureNumber){settingVectors[i].words[word], true};
+		}
+		team->planByte18 = (FixtureNumber){settingVectors[i].byte18, true};
+		team->mentality = (FixtureNumber){settingVectors[i].mentality, true};
+		ASSERT_BOOL_EQ(fixtureData_familiaritySettings(team, settings), true);
+		for (unsigned k = 0; k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+			ASSERT_INT_EQ(settings[k], settingVectors[i].settings[k]);
+		}
+	}
+	free(team);
+}
+
+// Two Aston Villa players' {setting, amount} entries, read from the game, and the values its tactic
+// familiarity panel showed for them against a tactic with settings {16, 5, 10, 20, 10, 15, 5}.
+static const struct {
+	unsigned count[FIXTURE_FAMILIARITY_CATEGORIES];
+	unsigned entries[FIXTURE_FAMILIARITY_CATEGORIES][3][2];
+	unsigned shown[FIXTURE_FAMILIARITY_CATEGORIES];
+} familiarityPlayers[] = {
+	{{2, 2, 2, 2, 1, 2, 2},
+		{{{10, 8200}, {12, 8200}},
+			{{9, 8200}, {8, 8200}},
+			{{9, 8200}, {8, 8200}},
+			{{10, 8200}, {15, 8200}},
+			{{0, 8300}},
+			{{10, 8500}, {13, 8500}},
+			{{0, 8500}, {14, 8500}}},
+		{4200, 5200, 7200, 3200, 1500, 6500, 3500}},
+	{{3, 3, 3, 3, 2, 3, 3},
+		{{{10, 10000}, {15, 10000}, {12, 8000}},
+			{{9, 10000}, {3, 10000}, {8, 9000}},
+			{{8, 10000}, {7, 10000}, {9, 9000}},
+			{{9, 10000}, {15, 10000}, {10, 9000}},
+			{{20, 10000}, {0, 1500}},
+			{{10, 10000}, {3, 10000}, {13, 7000}},
+			{{0, 10000}, {7, 10000}, {14, 3000}}},
+		{9000, 8000, 8000, 5000, 1500, 5000, 8000}},
+};
+
+// Puts `text` before the first `marker` in `json`.
+static bool insertBefore(ByteBuffer *json, const char *marker, const ByteBuffer *text) {
+	const char *found = strstr(buffer_string(json), marker);
+	if (!found) {
+		return false;
+	}
+	size_t at = (size_t)(found - (const char *)json->data);
+	ByteBuffer out = {0};
+	bool ok = buffer_append(&out, json->data, at) && buffer_append(&out, text->data, text->length) &&
+						buffer_append(&out, json->data + at, json->length - at);
+	if (ok) {
+		buffer_free(json);
+		*json = out;
+	} else {
+		buffer_free(&out);
+	}
+	return ok;
+}
+
+// Appends player `player`'s familiarity fields from familiarityPlayers[p].
+static void appendFamiliarity(ByteBuffer *text, unsigned player, unsigned p) {
+	static const char *const categories[] = {
+		"mentality", "passing_style", "creative_freedom", "trigger_press", "marking", "tempo", "width"};
+	for (unsigned k = 0; k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+		ASSERT_BOOL_EQ(
+			append(
+				text,
+				",{\"name\":\"home.player[%u].tactical_familiarity.%s.count\",\"u32\":%u}",
+				player,
+				categories[k],
+				familiarityPlayers[p].count[k]
+			),
+			true
+		);
+		for (unsigned e = 0; e < familiarityPlayers[p].count[k]; ++e) {
+			ASSERT_BOOL_EQ(
+				append(
+					text,
+					",{\"name\":\"home.player[%u].tactical_familiarity.%s[%u].setting\",\"u8\":%u},"
+					"{\"name\":\"home.player[%u].tactical_familiarity.%s[%u].amount\",\"u32\":%u}",
+					player,
+					categories[k],
+					e,
+					familiarityPlayers[p].entries[k][e][0],
+					player,
+					categories[k],
+					e,
+					familiarityPlayers[p].entries[k][e][1]
+				),
+				true
+			);
+		}
+	}
+}
+
+// A config whose home plan gives settings {16, 5, 10, 20, 10, 15, 5} (the game's, for this plan)
+// and whose home players 1 and 2 carry familiarityPlayers[0] and [1].
+static bool makeFamiliarityConfig(ByteBuffer *json) {
+	ByteBuffer text = {0};
+	makeConfig(json, false, false, "familiarity", NULL);
+	bool ok = append(
+							&text,
+							"{\"name\":\"home.manager.tactic.plan[0].team_instructions[0]\",\"u32\":%u},"
+							"{\"name\":\"home.manager.tactic.plan[0].team_instructions[1]\",\"u32\":%u},"
+							"{\"name\":\"home.manager.tactic.plan[0].team_instructions[2]\",\"u32\":%u},"
+							"{\"u8\":2},",
+							0x100C0C28U,
+							0x44230280U,
+							0x1032CU
+						) &&
+						insertBefore(json, "{\"name\":\"home.manager.tactic.plan[0].mentality\"", &text);
+	for (unsigned p = 0; ok && p < 2; ++p) {
+		buffer_clear(&text);
+		appendFamiliarity(&text, p + 1, p);
+		char marker[64];
+		(void)snprintf(marker, sizeof marker, ",{\"name\":\"home.player[%u]\"", p + 2);
+		ok = insertBefore(json, marker, &text);
+	}
+	buffer_free(&text);
+	return ok;
+}
+
+// Checks home players 1 and 2's values; player 1's are `first` if not 0.
+static void checkFamiliarity(const FixtureData *data, unsigned first) {
+	for (unsigned p = 0; p < 2; ++p) {
+		for (unsigned k = 0; k < FIXTURE_FAMILIARITY_CATEGORIES; ++k) {
+			unsigned value = 0;
+			ASSERT_BOOL_EQ(
+				fixtureData_familiarity(&data->teams[0], &data->teams[0].players[p + 1], k, &value), true
+			);
+			ASSERT_INT_EQ((int)value, (int)(p == 0 && first ? first : familiarityPlayers[p].shown[k]));
+		}
+	}
+}
+
+TEST(reads_and_maximises_tactical_familiarity) {
+	ByteBuffer json = {0};
+	ByteBuffer edited = {0};
+	FixtureData *data = malloc(sizeof *data);
+	char error[256] = "";
+	bool ok = data && makeFamiliarityConfig(&json) &&
+						fixtureData_read(buffer_string(&json), json.length, data, error, sizeof error);
+	ASSERT_BOOL_EQ(ok, true);
+	if (!ok) {
+		free(data);
+		buffer_free(&json);
+		return;
+	}
+	checkFamiliarity(data, 0);
+	unsigned value = 0;
+	ASSERT_BOOL_EQ(fixtureData_familiarity(&data->teams[0], &data->teams[0].players[3], 0, &value), false);
+	FixturePlayerEdits edits = {0};
+	edits.players[0][1] = FIXTURE_MAX_FAMILIARITY;
+	ok = fixtureData_writePlayers(buffer_string(&json), json.length, &edits, &edited, error, sizeof error) &&
+			 fixtureData_read(buffer_string(&edited), edited.length, data, error, sizeof error);
+	ASSERT_BOOL_EQ(ok, true);
+	if (ok) {
+		checkFamiliarity(data, 10000);
+		// Only each category's first entry changes.
+		const FixtureFamiliarity *mentality = &data->teams[0].players[1].familiarity[0];
+		ASSERT_BOOL_EQ(
+			mentality->setting[0] == 16 && mentality->setting[1] == 12 && mentality->amount[1] == 8200,
+			true
+		);
+	}
+	// A player without familiarity fields (an older export) can't be maximised.
+	edits.players[0][1] = 0;
+	edits.players[0][3] = FIXTURE_MAX_FAMILIARITY;
+	ASSERT_BOOL_EQ(
+		fixtureData_writePlayers(buffer_string(&json), json.length, &edits, &edited, error, sizeof error),
+		false
+	);
+	ASSERT_BOOL_EQ(strstr(error, "Missing familiarity") != NULL, true);
+	free(data);
+	buffer_free(&edited);
+	buffer_free(&json);
+}
+
 void registerFixtureDataTests(void) {
 	test_run("fixture data reads unlabelled configs", test_reads_unlabelled_config);
 	test_run("fixture data reads labelled configs", test_reads_labelled_config);
 	test_run("fixture data identifies the controlled side", test_reads_swapped_control);
 	test_run("fixture data reads export dates", test_reads_export_dates);
 	test_run("fixture data decodes tactic masks", test_decodes_tactic_masks);
+	test_run(
+		"fixture data works out familiarity settings as the game does",
+		test_works_out_familiarity_settings_as_the_game
+	);
+	test_run(
+		"fixture data reads and maximises tactical familiarity",
+		test_reads_and_maximises_tactical_familiarity
+	);
 	test_run("fixture data rejects invalid configs", test_rejects_invalid_configs);
 	test_run("fixture data encodes and visits config fields", test_encodes_and_visits_config_fields);
 	test_run(
