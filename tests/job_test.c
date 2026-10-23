@@ -135,6 +135,10 @@ TEST(parses_job_messages) {
 	job_free(&job);
 	char getDevelopmentNoOutput[] = "command=get_development\nperson=1\n";
 	ASSERT_BOOL_EQ(job_parse(getDevelopmentNoOutput, &job), false);
+	char getDevelopmentDirectory[] = "command=get_development\nperson=1\noutput_directory=C:/out\n";
+	ASSERT_BOOL_EQ(job_parse(getDevelopmentDirectory, &job), true);
+	ASSERT_BOOL_EQ(job.output[0] == 0 && wcscmp(job.outputDirectory, L"C:/out") == 0, true);
+	job_free(&job);
 	char noSeed[] = "command=seed_development\nperson=2000147523\n";
 	ASSERT_BOOL_EQ(job_parse(noSeed, &job), false);
 	char noPerson[] = "command=seed_development\nseed=7\n";

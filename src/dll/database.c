@@ -139,6 +139,14 @@ bool database_personName(const uint8_t *person, char *out, size_t size) {
 	return ok && written > 0 && (size_t)written < size;
 }
 
+bool database_personCommonName(const uint8_t *person, char *out, size_t size) {
+	bool ok = readPersonString(person, PERSON_COMMON_NAME, out, size); // fails if there is none
+	if (!ok && size) {
+		out[0] = 0;
+	}
+	return ok && out[0];
+}
+
 void database_clubShortName(const uint8_t *team, char *out, size_t size) {
 	uint8_t *club = NULL;
 	uint8_t *string = NULL;

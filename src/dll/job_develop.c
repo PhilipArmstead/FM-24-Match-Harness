@@ -23,6 +23,7 @@
 #include "log.h"
 #include "memory.h"
 #include "rng.h"
+#include "slug.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,6 +107,42 @@ findPlayer(uint32_t uniqueId, uint8_t **person, uint8_t **player, char *name, si
 	return error == NULL;
 }
 
+// `directory`\<name>.json, the name being the person's common name, or else forename and surname,
+// as lowercase hyphenated ASCII (slug.h); player-<unique ID> if no letters are left.
+static bool defaultOutput(
+	const uint8_t *person,
+	uint32_t uniqueId,
+	const wchar_t *directory,
+	wchar_t *out,
+	char *fileName,
+	size_t fileNameSize
+) {
+	char name[PLAYER_NAME_LENGTH];
+	char slug[PLAYER_NAME_LENGTH];
+	if (!database_personCommonName(person, name, sizeof name) &&
+			!database_personName(person, name, sizeof name)) {
+		name[0] = 0;
+	}
+	if (!slug_fromName(name, slug, sizeof slug)) {
+		(void)snprintf(slug, sizeof slug, "player-%u", uniqueId);
+	}
+	int written = snprintf(fileName, fileNameSize, "%s.json", slug);
+	size_t length = wcslen(directory);
+	bool separator = length && directory[length - 1] != L'\\' && directory[length - 1] != L'/';
+	if (written < 0 || (size_t)written >= fileNameSize ||
+			length + separator + (size_t)written >= HARNESS_PATH_LENGTH) {
+		return false;
+	}
+	wmemcpy(out, directory, length);
+	if (separator) {
+		out[length++] = L'\\';
+	}
+	for (int i = 0; i <= written; ++i) { // the name is ASCII; <= copies its terminator
+		out[length + (size_t)i] = (wchar_t)fileName[i];
+	}
+	return true;
+}
+
 void jobs_getDevelopment(const Job *job) {
 	uint8_t *person = NULL;
 	uint8_t *player = NULL;
@@ -113,8 +150,23 @@ void jobs_getDevelopment(const Job *job) {
 	if (!findPlayer(job->personId, &person, &player, name, sizeof name)) {
 		return;
 	}
-	if (!developmentFile_write(job->output, player, job->personId, name)) {
+	wchar_t path[HARNESS_PATH_LENGTH];
+	char fileName[PLAYER_NAME_LENGTH + 8] = "";
+	const wchar_t *output = job->output;
+	if (!output[0]) {
+		if (!defaultOutput(
+					person, job->personId, job->outputDirectory, path, fileName, sizeof fileName
+				)) {
+			job_writeResult("error: cannot name the output file; give one");
+			return;
+		}
+		output = path;
+	}
+	if (!developmentFile_write(output, player, job->personId, name)) {
 		job_writeResult("error: cannot write the output file");
+	} else if (fileName[0]) {
+		log_message("get_development: %s (%u) -> %s", name, job->personId, fileName);
+		job_writeResult("ok: %s (%u), wrote %s", name, job->personId, fileName);
 	} else {
 		log_message("get_development: %s (%u)", name, job->personId);
 		job_writeResult("ok: %s (%u)", name, job->personId);

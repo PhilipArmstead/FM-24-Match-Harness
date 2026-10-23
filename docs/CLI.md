@@ -286,7 +286,7 @@ who are also staff, and players the game does not develop, are refused.
 ## Export a player's development inputs: `get-development`
 
 ```text
-fm24ctl get-development <person unique ID> <output.json>
+fm24ctl get-development <person unique ID> [output.json]
 ```
 
 Writes the values the development routine reads from a player as an
@@ -294,10 +294,17 @@ editable `fm24-development/1` file, in the same field syntax as a fixture
 (change values only; don't add, remove or reorder fields or ratings). Remove
 a field to leave the player's own value alone. Nothing in the game is changed.
 
+Without an output file, it writes to the current directory, named after the
+player's common name, or else forename and surname, in lowercase ASCII
+letters joined by hyphens: accents are dropped (`Álex Moreno` →
+`alex-moreno.json`), as are apostrophes (`Tommi O'Reilly` →
+`tommi-oreilly.json`). A name with no Latin letters gives
+`player-<unique ID>.json`. An existing file is overwritten.
+
 ```powershell
-.\fm24ctl.exe get-development 2000128236 rhoades.json
-# edit rhoades.json, then
-.\fm24ctl.exe develop rhoades.json 12 1-200 rhoades-edited.csv
+.\fm24ctl.exe get-development 2000128236          # harvey-rhoades.json
+# edit harvey-rhoades.json, then
+.\fm24ctl.exe develop harvey-rhoades.json 12 1-200 rhoades-edited.csv
 ```
 
 | Field | Values |

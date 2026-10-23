@@ -217,6 +217,16 @@ static bool parseThreads(Job *job, const char *value) {
 	return true;
 }
 
+static bool outputPath(Job *job, const char *key, const char *value) {
+	if (strcmp(key, "output") == 0) {
+		return widen(value, job->output, HARNESS_PATH_LENGTH);
+	}
+	if (strcmp(key, "output_directory") == 0) {
+		return widen(value, job->outputDirectory, HARNESS_PATH_LENGTH);
+	}
+	return true; // another key starting "output": ignored, as unknown keys are
+}
+
 // A development file's values; development_file.c checks their content.
 static bool copyValues(Job *job, const char *value) {
 	free(job->values);
@@ -253,8 +263,8 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "input") == 0) {
 		return widen(value, job->input, HARNESS_PATH_LENGTH);
 	}
-	if (strcmp(key, "output") == 0) {
-		return widen(value, job->output, HARNESS_PATH_LENGTH);
+	if (strncmp(key, "output", 6) == 0) { // "output" or "output_directory"
+		return outputPath(job, key, value);
 	}
 	if (strcmp(key, "profile") == 0) {
 		return widen(value, job->profile, HARNESS_PATH_LENGTH);
@@ -328,7 +338,8 @@ static bool isComplete(const Job *job) {
 			return hasOutput && job->personId != 0 && job->months != 0 && job->seedCount > 0;
 		case JOB_SEED_DEVELOPMENT: // optional seeds and output: a prediction made by the hook
 			return job->personId != 0 && job->hasSeed && (job->seedCount > 0) == hasOutput;
-		case JOB_GET_DEVELOPMENT: return hasOutput && job->personId != 0;
+		case JOB_GET_DEVELOPMENT:
+			return (hasOutput || job->outputDirectory[0] != 0) && job->personId != 0;
 	}
 	return false;
 }

@@ -33,8 +33,9 @@ typedef struct Job {
 	JobCommand command;
 	wchar_t input[HARNESS_PATH_LENGTH];
 	wchar_t output[HARNESS_PATH_LENGTH];
-	wchar_t profile[HARNESS_PATH_LENGTH]; // run: optional sample file (see profiler.h)
-	uint32_t *seeds;                      // run
+	wchar_t outputDirectory[HARNESS_PATH_LENGTH]; // get_development without output: name it here
+	wchar_t profile[HARNESS_PATH_LENGTH];         // run: optional sample file (see profiler.h)
+	uint32_t *seeds;                              // run
 	size_t seedCount;
 	unsigned threads;         // run: worker threads (1..HARNESS_MAX_THREADS)
 	uintptr_t progressWindow; // run: optional viewer window receiving HARNESS_PROGRESS_MESSAGE

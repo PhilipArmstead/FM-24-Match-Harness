@@ -39,6 +39,9 @@ uint8_t *database_playerRecord(const uint8_t *person);
 // "Forename Surname"; returns false (and writes "") if the names cannot be read.
 bool database_personName(const uint8_t *person, char *out, size_t size);
 
+// The common name ("Diego Carlos"); returns false (and writes "") if the person has none.
+bool database_personCommonName(const uint8_t *person, char *out, size_t size);
+
 // The short name of a team's club, or "?".
 void database_clubShortName(const uint8_t *team, char *out, size_t size);
 

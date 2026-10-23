@@ -307,17 +307,24 @@ int commands_getPlayer(int argc, wchar_t **argv) {
 int commands_getDevelopment(int argc, wchar_t **argv) {
 	char person[16];
 	Path output;
-	if (argc != 4 || !parsePersonId(argv[2], person, sizeof person) ||
-			!files_hasExtension(argv[3], L".json")) {
-		fprintf(stderr, "usage: fm24ctl get-development <person unique ID> <output.json>\n");
+	bool named = argc == 4;
+	if ((argc != 3 && !named) || !parsePersonId(argv[2], person, sizeof person) ||
+			(named && !files_hasExtension(argv[3], L".json"))) {
+		fprintf(stderr, "usage: fm24ctl get-development <person unique ID> [output.json]\n");
 		return EXIT_USAGE;
 	}
-	if (!absolutePath(argv[3], &output)) {
+	// Without a name, the DLL names the file after the player, in the current directory.
+	if (!absolutePath(named ? argv[3] : L".", &output)) {
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
 	(void)snprintf(
-		job, sizeof job, "command=get_development\nperson=%s\noutput=%s\n", person, output.utf8
+		job,
+		sizeof job,
+		"command=get_development\nperson=%s\n%s=%s\n",
+		person,
+		named ? "output" : "output_directory",
+		output.utf8
 	);
 	return submitAndReport(job);
 }

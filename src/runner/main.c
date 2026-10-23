@@ -16,7 +16,7 @@
 //       the input rebuilt against another away team, keeping its other edits
 //   fm24ctl get-player <person unique ID> <output.json>
 //       a player's database values, as a config's player block has them
-//   fm24ctl get-development <person unique ID> <output.json>
+//   fm24ctl get-development <person unique ID> [output.json]
 //       a player's development inputs, as an editable "fm24-development/1" file
 //   fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>
 //       the player's monthly training and development, simulated in the game (reload afterwards);
@@ -55,7 +55,7 @@ static const char usage[] =
 	"  fm24ctl list-teams <output.txt>\n"
 	"  fm24ctl list-players <output.txt>\n"
 	"  fm24ctl get-player <person unique ID> <output.json>\n"
-	"  fm24ctl get-development <person unique ID> <output.json>\n"
+	"  fm24ctl get-development <person unique ID> [output.json]\n"
 	"  fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>\n"
 	"  fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
