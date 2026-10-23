@@ -16,6 +16,8 @@
 //       the input rebuilt against another away team, keeping its other edits
 //   fm24ctl get-player <person unique ID> <output.json>
 //       a player's database values, as a config's player block has them
+//   fm24ctl develop <person unique ID> <months> <seeds> <output.csv>
+//       the player's monthly training and development, simulated in the game (reload afterwards)
 //   fm24ctl inject-player <input.json> <home|away>.player[N] <person unique ID|player.json>
 //       <output.json> [--allow-duplicate]
 //       the input with that player block's database values replaced by another player's
@@ -47,6 +49,7 @@ static const char usage[] =
 	"  fm24ctl list-teams <output.txt>\n"
 	"  fm24ctl list-players <output.txt>\n"
 	"  fm24ctl get-player <person unique ID> <output.json>\n"
+	"  fm24ctl develop <person unique ID> <months> <seeds> <output.csv>\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
 	"      <person unique ID|player.json> <output.json> [--allow-duplicate]\n"
 	"  fm24ctl probe [path to fm.exe]\n";
@@ -89,6 +92,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"list-teams", commands_listTeams},
 		{L"list-players", commands_listPlayers},
 		{L"get-player", commands_getPlayer},
+		{L"develop", commands_develop},
 		{L"inject-player", commands_injectPlayer},
 		{L"probe", commands_probe},
 	};

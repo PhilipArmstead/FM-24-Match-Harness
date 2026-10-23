@@ -96,6 +96,12 @@ int commands_getPlayer(int argc, wchar_t **argv) {
 	return 14;
 }
 
+int commands_develop(int argc, wchar_t **argv) {
+	(void)argc;
+	(void)argv;
+	return 17;
+}
+
 int commands_injectPlayer(int argc, wchar_t **argv) {
 	(void)argc;
 	(void)argv;
@@ -150,6 +156,8 @@ TEST(exports_next_fixture_and_dispatches_commands) {
 	ASSERT_INT_EQ(runnerMain(2, arguments), 16);
 	arguments[1] = L"get-player";
 	ASSERT_INT_EQ(runnerMain(2, arguments), 14);
+	arguments[1] = L"develop";
+	ASSERT_INT_EQ(runnerMain(2, arguments), 17);
 	arguments[1] = L"inject-player";
 	ASSERT_INT_EQ(runnerMain(2, arguments), 15);
 	arguments[1] = exportedPath;

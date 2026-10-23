@@ -293,6 +293,45 @@ int commands_getPlayer(int argc, wchar_t **argv) {
 																				: EXIT_FAILED;
 }
 
+int commands_develop(int argc, wchar_t **argv) {
+	char person[16];
+	Path output;
+	char months[16];
+	char seeds[256];
+	// The DLL checks the month count's range and the seeds in full.
+	bool valid = argc == 6 && argv[3][0] != 0 && wcsspn(argv[3], L"0123456789") == wcslen(argv[3]) &&
+							 paths_toUtf8(argv[3], months, sizeof months) &&
+							 parsePersonId(argv[2], person, sizeof person) && isSeedList(argv[4]) &&
+							 wcscmp(argv[4], L"keep") != 0 && paths_toUtf8(argv[4], seeds, sizeof seeds) &&
+							 files_hasExtension(argv[5], L".csv");
+	if (!valid) {
+		fprintf(stderr, "usage: fm24ctl develop <person unique ID> <months> <seeds> <output.csv>\n");
+		return EXIT_USAGE;
+	}
+	if (!absolutePath(argv[5], &output)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job,
+		sizeof job,
+		"command=develop\nperson=%s\nmonths=%s\nseeds=%s\noutput=%s\n",
+		person,
+		months,
+		seeds,
+		output.utf8
+	);
+	char result[CLIENT_RESULT_LENGTH];
+	(void)snprintf(
+		result, sizeof result, "Cannot simulate; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
 int commands_injectPlayer(int argc, wchar_t **argv) {
 	char result[CLIENT_RESULT_LENGTH];
 	return commands_injectPlayerWithResult(argc, argv, result, sizeof result);

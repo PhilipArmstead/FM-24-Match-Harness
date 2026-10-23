@@ -114,6 +114,22 @@ TEST(parses_job_messages) {
 	job_free(&job);
 	char noPlayersOutput[] = "command=list_players\n";
 	ASSERT_BOOL_EQ(job_parse(noPlayersOutput, &job), false);
+	char develop[] = "command=develop\nperson=2000147523\nmonths=24\nseeds=1-10\noutput=C:/g.csv\n";
+	ASSERT_BOOL_EQ(job_parse(develop, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_DEVELOP && job.personId == 2000147523, true);
+	ASSERT_BOOL_EQ(job.months == 24 && job.seedCount == 10, true);
+	job_free(&job);
+	char noMonths[] = "command=develop\nperson=1\nseeds=1\noutput=C:/g.csv\n";
+	ASSERT_BOOL_EQ(job_parse(noMonths, &job), false);
+	char noSeeds[] = "command=develop\nperson=1\nmonths=1\noutput=C:/g.csv\n";
+	ASSERT_BOOL_EQ(job_parse(noSeeds, &job), false);
+	char invalidMonths[][16] = {"0", "601", "-1", "1x", ""};
+	for (size_t i = 0; i < sizeof invalidMonths / sizeof invalidMonths[0]; ++i) {
+		ASSERT_BOOL_EQ(parseLine(&job, "months", invalidMonths[i]), false);
+	}
+	ASSERT_BOOL_EQ(parseLine(&job, "months", "600"), true);
+	ASSERT_BOOL_EQ(job.months == 600, true);
+	job_free(&job);
 	char incomplete[] = "command=run\ninput=C:/in.bin\nseeds=1\n";
 	ASSERT_BOOL_EQ(job_parse(incomplete, &job), false);
 	char bad[] = "command=inspect\ninput=C:/in.bin\noutput=C:/out.json\nseeds=x\n";

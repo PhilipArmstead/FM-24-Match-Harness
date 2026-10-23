@@ -41,3 +41,11 @@ runs on the same seed less trustworthy.
 - Heal all
 - Fix morale
 - Edit players/training/weather/venue in the app
+- `develop` (training simulator) enhancements:
+  - Intensity override (player `+450`: 254 half, 0 normal, 2 double)
+  - Fixed per-category progress before each month, to test the monthly step without the weekly maths
+  - Custom weekly schedule of session ids (the schedule object must be found first)
+  - Coach rating override per category (club `+160 -> +208[m]`)
+  - Several players or a whole squad per job; a UI tab like Simulation
+  - Players who are also staff; the older 24.2.4 build
+  - Read-only mode (knowledge-base training note, section 12, "Option A")

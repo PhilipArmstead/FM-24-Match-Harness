@@ -14,7 +14,7 @@
 #include <windows.h>
 
 
-enum { MAX_SEED_RANGE = 10000000 };
+enum { MAX_SEED_RANGE = 10000000, MAX_MONTHS = 600 };
 
 static bool widen(const char *text, wchar_t *out, size_t size);
 static bool appendSeed(Job *job, size_t *capacity, uint32_t seed);
@@ -167,6 +167,7 @@ static bool parseCommand(Job *job, const char *value) {
 		{"list_teams", JOB_LIST_TEAMS},
 		{"list_players", JOB_LIST_PLAYERS},
 		{"get_player", JOB_GET_PLAYER},
+		{"develop", JOB_DEVELOP},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -210,6 +211,16 @@ static bool parseThreads(Job *job, const char *value) {
 		return false;
 	}
 	job->threads = (unsigned)threads;
+	return true;
+}
+
+static bool parseMonths(Job *job, const char *value) {
+	char *end = NULL;
+	unsigned long long months = 0;
+	if (!parseNumber(value, &end, &months) || *end != 0 || months == 0 || months > MAX_MONTHS) {
+		return false;
+	}
+	job->months = (unsigned)months;
 	return true;
 }
 
@@ -264,6 +275,9 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->personId = (uint32_t)person;
 		return true;
 	}
+	if (strcmp(key, "months") == 0) {
+		return parseMonths(job, value);
+	}
 	if (strcmp(key, "threads") == 0) {
 		return parseThreads(job, value);
 	}
@@ -292,6 +306,8 @@ static bool isComplete(const Job *job) {
 		case JOB_LIST_TEAMS:
 		case JOB_LIST_PLAYERS: return hasOutput;
 		case JOB_GET_PLAYER: return hasOutput && job->personId != 0;
+		case JOB_DEVELOP:
+			return hasOutput && job->personId != 0 && job->months != 0 && job->seedCount > 0;
 	}
 	return false;
 }

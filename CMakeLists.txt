@@ -49,6 +49,7 @@ add_library(harness SHARED
 	src/dll/job_replace.c
 	src/dll/job_teams.c
 	src/dll/job_players.c
+	src/dll/job_develop.c
 	src/dll/job_player.c
 	src/dll/job_run.c
 	src/dll/labels.c
@@ -66,6 +67,7 @@ add_library(harness SHARED
 	src/dll/stream.c
 	src/dll/tactic_flags.c
 	src/dll/trace.c
+	src/dll/freeze.c
 )
 set_target_properties(harness PROPERTIES PREFIX "" OUTPUT_NAME "fm24-harness-${HARNESS_PROTOCOL}")
 target_link_libraries(harness PRIVATE common)

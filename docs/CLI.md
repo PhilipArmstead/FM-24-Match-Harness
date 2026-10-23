@@ -24,6 +24,7 @@ Exporting or rebuilding needs the human manager's upcoming fixture.
 | `replace-home`, `replace-away` | Yes                                         | Rebuild one side with another team         |
 | `list-teams`                   | Yes                                         | Export team IDs and names                  |
 | `get-player`                   | Yes                                         | Export a player's database values          |
+| `develop`                      | Yes; **changes the game**                   | Simulate a player's training and growth    |
 | `inject-player`                | Only when given a player ID                 | Copy player values into a fixture          |
 | `probe`                        | Only to discover an omitted executable path | Inspect a game executable on disk          |
 
@@ -235,6 +236,45 @@ No flags.
 ```powershell
 .\fm24ctl.exe get-player 2000040347 torre-values.json
 ```
+
+## Simulate a player's development: `develop`
+
+```text
+fm24ctl develop <person unique ID> <months> <seeds> <output.csv>
+```
+
+Runs the game's own monthly training and development routine on a player,
+month after month, with each month starting from the previous month's result.
+It uses the player's current training and club, and ages them as the months
+pass while the game's date stays the same. Month 1 ends on the player's next
+development day (day `id % 28 + 1` of a month), with the whole weeks of
+training before it; later months have 4 or 5 weeks (52 a year). `months` is `1` to `600`. Seeds take the same forms as
+`run` (`42`, `1-100`, `1,5,10-20`, not `keep`); each seed is a separate
+simulation from the player's current values. No flags.
+
+**Save the game first, and reload it afterwards without saving.** The routine
+works on the game's real player and passes them to other parts of the game
+(history, news, contracts). After each seed and at the end, the tool puts
+back the player's ratings, current and potential ability, training progress,
+height, weight, reputation, personality and age, so every seed starts from
+them. Everything else the game changed stays, including state carried from one
+seed to the next (such as the player's development history). For example, a youth player sends one training
+report to the inbox for every simulated month of every seed, so 500 seeds
+mean 500 inbox items. If the game misbehaves after reloading, restart FM24.
+The game pauses while the simulation runs (about a second for 500 seeds of
+one month).
+
+```powershell
+.\fm24ctl.exe develop 2000147523 24 1-100 kellyman.csv
+```
+
+The CSV has one row per seed and month; month `0` is the starting state:
+`seed`, `month`, `current_ability`, `potential_ability`, `weight` (kg),
+`height` (cm), the
+11 training progress values (`progress_strength` … `progress_set_pieces`,
+`-100` to `50`), then the 69 ratings by name, on the game's 1–100 scale
+(divide by 5 for the 1–20 scale shown in the game). Players who are also
+staff, and players the game does not develop, are refused.
 
 ## Copy a player's values into a slot: `inject-player`
 

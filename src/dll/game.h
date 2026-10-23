@@ -39,6 +39,9 @@ enum GameFunction {
 	RVA_GAME_MATCH_DTOR = 0x1A90D30,
 	RVA_GAME_MATCH_POOL_FREE = 0x34F82E0,
 	RVA_TLS_ON_DEMAND_INIT = 0x54E8E38, // TlsCallback_0(0, DLL_THREAD_ATTACH)
+	// A player's monthly development: the weeks of training since PLAYER_TRAINING_WEEK, then
+	// attribute growth.
+	RVA_PLAYER_DEVELOP = 0x4F70400,
 };
 
 // Game data.
@@ -54,7 +57,8 @@ enum GameData {
 	// (MANAGER_HUMAN_IN_CONTROL, the human's line-up and tactic) only for a fixture whose home and
 	// away teams match one of these.
 	RVA_HUMAN_MATCHES_HOLDER = 0x6374488,
-	RVA_TLS_INDEX = 0x638EEC0, // fm.exe's _tls_index
+	RVA_TLS_INDEX = 0x638EEC0,        // fm.exe's _tls_index
+	RVA_TRAINING_MANAGER = 0x63651C8, // [p] + TRAINING_MANAGER_WEEK
 };
 
 // GAME_MATCH layout.
@@ -109,6 +113,13 @@ enum DatabaseLayout {
 	PLAYER_RATINGS = 0x208,            // PLAYER_RATING_COUNT u8: positions, then attributes
 	PLAYER_MORALE = 0x25F,             // u8
 	PLAYER_PREFERRED_POSITION = 0x266, // u8
+	// Training (knowledge-base/FM24 Training — Attribute Growth.md).
+	PLAYER_TRAINING_WEEK = 0x198,     // s32: TRAINING_MANAGER_WEEK when last trained, 0 never
+	PLAYER_TRAINING_PROGRESS = 0x1C3, // TRAINING_CATEGORY_COUNT s8, -100..50
+	PLAYER_POTENTIAL_ABILITY = 0x202, // u16
+	PLAYER_PERSON = 0x278,            // the person within a db::ACTUAL_PLAYER
+	PLAYER_RECORD_SIZE = 1000,        // db::ACTUAL_PLAYER (its pool's element size)
+	TRAINING_MANAGER_WEEK = 24,       // s32: training weeks so far
 	CONTRACT_TEAM = 0x10,
 	TEAM_UNIQUE_ID = 0x0C,
 	TEAM_CLUB = 0x30,
@@ -131,7 +142,7 @@ enum ThreadRngLayout {
 	TLS_PCG = 352,      // object: +8 state, +16 increment
 };
 
-enum { PLAYER_RATING_COUNT = 69, STAFF_ATTRIBUTE_COUNT = 52 };
+enum { PLAYER_RATING_COUNT = 69, STAFF_ATTRIBUTE_COUNT = 52, TRAINING_CATEGORY_COUNT = 11 };
 
 // Second argument of GAME_MATCH__init_from_fixture, as laid out on MatchBuilder_Create's stack.
 typedef struct InitArgs {
@@ -157,6 +168,8 @@ typedef void (*FixturePrepareFn)(uint8_t *fixture, void *scratch);
 typedef void (*MatchInitFn)(uint8_t *match, InitArgs *args, uint8_t *flags);
 typedef void *(*DataBufferCtorFn)(void *self);
 typedef void (*VoidFn)(void);
+// `lastDay`: the scheduler ran on day -1; `flag` is always 1 in the game's calls.
+typedef void (*PlayerDevelopFn)(uint8_t *player, bool lastDay, uint8_t flag);
 
 // Finds fm.exe in this process and checks it is the expected build; logs the reason if not.
 bool game_init(void);
