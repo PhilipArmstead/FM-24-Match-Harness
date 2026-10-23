@@ -42,6 +42,10 @@ enum GameFunction {
 	// A player's monthly development: the weeks of training since PLAYER_TRAINING_WEEK, then
 	// attribute growth.
 	RVA_PLAYER_DEVELOP = 0x4F70400,
+	// The daily scheduler's (sub_144F6FC80) two `call RVA_PLAYER_DEVELOP` instructions (E8 rel32):
+	// for every player due that day, and for the one person it is handed.
+	RVA_DEVELOP_CALL_DAY = 0x4F6FEC1,
+	RVA_DEVELOP_CALL_PERSON = 0x4F6FDD4,
 };
 
 // Game data.

@@ -119,6 +119,14 @@ TEST(parses_job_messages) {
 	ASSERT_BOOL_EQ(job.command == JOB_DEVELOP && job.personId == 2000147523, true);
 	ASSERT_BOOL_EQ(job.months == 24 && job.seedCount == 10, true);
 	job_free(&job);
+	char seedDevelopment[] = "command=seed_development\nperson=2000147523\nseed=0\n";
+	ASSERT_BOOL_EQ(job_parse(seedDevelopment, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_SEED_DEVELOPMENT && job.hasSeed && job.seed == 0, true);
+	job_free(&job);
+	char noSeed[] = "command=seed_development\nperson=2000147523\n";
+	ASSERT_BOOL_EQ(job_parse(noSeed, &job), false);
+	char noPerson[] = "command=seed_development\nseed=7\n";
+	ASSERT_BOOL_EQ(job_parse(noPerson, &job), false);
 	char noMonths[] = "command=develop\nperson=1\nseeds=1\noutput=C:/g.csv\n";
 	ASSERT_BOOL_EQ(job_parse(noMonths, &job), false);
 	char noSeeds[] = "command=develop\nperson=1\nmonths=1\noutput=C:/g.csv\n";

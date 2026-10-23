@@ -332,6 +332,30 @@ int commands_develop(int argc, wchar_t **argv) {
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
+int commands_seedDevelopment(int argc, wchar_t **argv) {
+	char person[16];
+	char seed[16];
+	// The DLL checks the seed's range.
+	bool valid = argc == 4 && parsePersonId(argv[2], person, sizeof person) && argv[3][0] != 0 &&
+							 wcsspn(argv[3], L"0123456789") == wcslen(argv[3]) &&
+							 paths_toUtf8(argv[3], seed, sizeof seed);
+	if (!valid) {
+		fprintf(stderr, "usage: fm24ctl seed-development <person unique ID> <seed>\n");
+		return EXIT_USAGE;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(job, sizeof job, "command=seed_development\nperson=%s\nseed=%s\n", person, seed);
+	char result[CLIENT_RESULT_LENGTH];
+	(void)snprintf(
+		result, sizeof result, "Cannot set the seed; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, sizeof result)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
 int commands_injectPlayer(int argc, wchar_t **argv) {
 	char result[CLIENT_RESULT_LENGTH];
 	return commands_injectPlayerWithResult(argc, argv, result, sizeof result);

@@ -25,6 +25,7 @@ Exporting or rebuilding needs the human manager's upcoming fixture.
 | `list-teams`                   | Yes                                         | Export team IDs and names                  |
 | `get-player`                   | Yes                                         | Export a player's database values          |
 | `develop`                      | Yes; **changes the game**                   | Simulate a player's training and growth    |
+| `seed-development`             | Yes; patches game code until it fires       | Fix the game's next development seed       |
 | `inject-player`                | Only when given a player ID                 | Copy player values into a fixture          |
 | `probe`                        | Only to discover an omitted executable path | Inspect a game executable on disk          |
 
@@ -258,9 +259,10 @@ works on the game's real player and passes them to other parts of the game
 back the player's ratings, current and potential ability, training progress,
 height, weight, reputation, personality and age, so every seed starts from
 them. Everything else the game changed stays, including state carried from one
-seed to the next (such as the player's development history). For example, a youth player sends one training
-report to the inbox for every simulated month of every seed, so 500 seeds
-mean 500 inbox items. If the game misbehaves after reloading, restart FM24.
+seed to the next (such as the player's development history). For example, a
+youth player sends one training report to the inbox for every simulated month
+of every seed, so 500 seeds mean 500 inbox items. If the game misbehaves after
+reloading, restart FM24.
 The game pauses while the simulation runs (about a second for 500 seeds of
 one month).
 
@@ -270,11 +272,34 @@ one month).
 
 The CSV has one row per seed and month; month `0` is the starting state:
 `seed`, `month`, `current_ability`, `potential_ability`, `weight` (kg),
-`height` (cm), the
-11 training progress values (`progress_strength` … `progress_set_pieces`,
-`-100` to `50`), then the 69 ratings by name, on the game's 1–100 scale
-(divide by 5 for the 1–20 scale shown in the game). Players who are also
-staff, and players the game does not develop, are refused.
+`height` (cm), the 11 training progress values (`progress_strength` …
+`progress_set_pieces`, `-100` to `50`), then the 69 ratings by name, on the
+game's 1–100 scale (divide by 5 for the 1–20 scale shown in the game). Players
+who are also staff, and players the game does not develop, are refused.
+
+## Seed the game's own development: `seed-development`
+
+```text
+fm24ctl seed-development <person unique ID> <seed>
+```
+
+Makes the game's own next development of that player draw its random numbers
+from `seed`, exactly as `develop` does for that seed. Advance past the
+player's development day, then compare their values (`get-player`) with
+`develop`'s month `1` row for the same seed, run from the same save. It
+checks how closely `develop` reproduces the game.
+
+```powershell
+.\fm24ctl.exe develop 2000128236 1 7 predicted.csv   # from a save; then reload it
+.\fm24ctl.exe seed-development 2000128236 7          # arm, then advance in the game
+.\fm24ctl.exe get-player 2000128236 actual.json
+```
+
+It changes game code: the daily scheduler's two calls of the development
+routine are redirected through a small hook until that player develops, then
+put back. Other players develop normally. Running it again before then
+replaces the player and seed. Reloading a save keeps the hook armed; it lasts
+until the player develops or FM24 exits.
 
 ## Copy a player's values into a slot: `inject-player`
 

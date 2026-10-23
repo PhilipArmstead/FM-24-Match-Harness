@@ -50,6 +50,7 @@ add_library(harness SHARED
 	src/dll/job_teams.c
 	src/dll/job_players.c
 	src/dll/job_develop.c
+	src/dll/job_seed.c
 	src/dll/job_player.c
 	src/dll/job_run.c
 	src/dll/labels.c

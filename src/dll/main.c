@@ -59,6 +59,7 @@ static void runJob(char *text) {
 		case JOB_LIST_PLAYERS: jobs_listPlayers(&job); break;
 		case JOB_GET_PLAYER: jobs_getPlayer(&job); break;
 		case JOB_DEVELOP: jobs_develop(&job); break;
+		case JOB_SEED_DEVELOPMENT: jobs_seedDevelopment(&job); break;
 	}
 	job_free(&job);
 }
