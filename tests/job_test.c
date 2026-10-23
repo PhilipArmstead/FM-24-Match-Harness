@@ -127,6 +127,14 @@ TEST(parses_job_messages) {
 	ASSERT_BOOL_EQ(job_parse(noSeed, &job), false);
 	char noPerson[] = "command=seed_development\nseed=7\n";
 	ASSERT_BOOL_EQ(job_parse(noPerson, &job), false);
+	char predicted[] = "command=seed_development\nperson=1\nseed=7\nseeds=1-20\noutput=C:/p.csv\n";
+	ASSERT_BOOL_EQ(job_parse(predicted, &job), true);
+	ASSERT_BOOL_EQ(job.seedCount == 20 && job.output[0] != 0, true);
+	job_free(&job);
+	char seedsWithoutOutput[] = "command=seed_development\nperson=1\nseed=7\nseeds=1-20\n";
+	ASSERT_BOOL_EQ(job_parse(seedsWithoutOutput, &job), false);
+	char outputWithoutSeeds[] = "command=seed_development\nperson=1\nseed=7\noutput=C:/p.csv\n";
+	ASSERT_BOOL_EQ(job_parse(outputWithoutSeeds, &job), false);
 	char noMonths[] = "command=develop\nperson=1\nseeds=1\noutput=C:/g.csv\n";
 	ASSERT_BOOL_EQ(job_parse(noMonths, &job), false);
 	char noSeeds[] = "command=develop\nperson=1\nmonths=1\noutput=C:/g.csv\n";

@@ -69,3 +69,13 @@ void jobs_listPlayers(const Job *job);
 void jobs_getPlayer(const Job *job);
 void jobs_develop(const Job *job);
 void jobs_seedDevelopment(const Job *job);
+
+// develop's simulation (job_develop.c) of one month for each seed, run on the calling thread with
+// the player's development due now (no training weeks or ageing first), written as develop's CSV.
+// The player's simulated values are put back afterwards. For seed_development's hook.
+bool develop_runHere(
+	uint8_t *player,
+	const uint32_t *seeds,
+	size_t seedCount,
+	const wchar_t *output
+);

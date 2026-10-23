@@ -309,7 +309,8 @@ static bool isComplete(const Job *job) {
 		case JOB_GET_PLAYER: return hasOutput && job->personId != 0;
 		case JOB_DEVELOP:
 			return hasOutput && job->personId != 0 && job->months != 0 && job->seedCount > 0;
-		case JOB_SEED_DEVELOPMENT: return job->personId != 0 && job->hasSeed;
+		case JOB_SEED_DEVELOPMENT: // optional seeds and output: a prediction made by the hook
+			return job->personId != 0 && job->hasSeed && (job->seedCount > 0) == hasOutput;
 	}
 	return false;
 }

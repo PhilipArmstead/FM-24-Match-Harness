@@ -280,7 +280,7 @@ who are also staff, and players the game does not develop, are refused.
 ## Seed the game's own development: `seed-development`
 
 ```text
-fm24ctl seed-development <person unique ID> <seed>
+fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]
 ```
 
 Makes the game's own next development of that player draw its random numbers
@@ -294,6 +294,13 @@ checks how closely `develop` reproduces the game.
 .\fm24ctl.exe seed-development 2000128236 7          # arm, then advance in the game
 .\fm24ctl.exe get-player 2000128236 actual.json
 ```
+
+With `<seeds>` and `<output.csv>`, the hook first runs `develop`'s simulation
+of that very development, one month for each of those seeds, on the game's
+own thread at the moment the game develops the player, and writes `develop`'s
+CSV. It then puts the player's simulated values back and lets the game's call
+run. This rules out differences of date, state or thread between `develop`
+and the game; the player's other side effects (see `develop`) still apply.
 
 It changes game code: the daily scheduler's two calls of the development
 routine are redirected through a small hook until that player develops, then

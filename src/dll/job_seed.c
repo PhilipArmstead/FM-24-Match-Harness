@@ -16,6 +16,7 @@
 #include "rng.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 
@@ -70,6 +71,10 @@ static uint8_t *stub;           // allocated once, near fm.exe, and kept
 static volatile LONG armed;     // 1 while the calls are redirected
 static volatile LONG armedUid;  // the player's person unique ID (as a LONG)
 static volatile LONG armedSeed; // the seed (as a LONG)
+// Optional: develop's simulation for these seeds, run by the hook first (develop_runHere).
+static uint32_t *predictSeeds;
+static size_t predictCount;
+static wchar_t predictOutput[HARNESS_PATH_LENGTH];
 
 static bool makeStub(void);
 static bool redirect(bool toStub);
@@ -96,6 +101,18 @@ void jobs_seedDevelopment(const Job *job) {
 		job_writeResult("error: cannot set up the hook; see harness.log");
 		return;
 	}
+	uint32_t *seeds = job->seedCount ? malloc(job->seedCount * sizeof *seeds) : NULL;
+	if (job->seedCount && !seeds) {
+		job_writeResult("error: out of memory");
+		return;
+	}
+	if (seeds) {
+		memcpy(seeds, job->seeds, job->seedCount * sizeof *seeds);
+	}
+	free(predictSeeds); // the hook only reads these when it fires, never while a job runs
+	predictSeeds = seeds;
+	predictCount = job->seedCount;
+	memcpy(predictOutput, job->output, sizeof predictOutput);
 	InterlockedExchange(&armedUid, (LONG)job->personId);
 	InterlockedExchange(&armedSeed, (LONG)job->seed);
 	if (!InterlockedCompareExchange(&armed, 1, 0) && !redirect(true)) {
@@ -179,6 +196,16 @@ static void onDevelop(uint8_t *player) {
 			!memory_readU32(player + personOffset + 8, PERSON_UNIQUE_ID, &uid) ||
 			uid != (uint32_t)armedUid || !InterlockedCompareExchange(&armed, 0, 1)) {
 		return;
+	}
+	if (predictCount) {
+		// develop's simulation of this very development, on this thread and at this moment; it
+		// puts the player's simulated values back before the game's own call runs.
+		bool predicted = develop_runHere(player, predictSeeds, predictCount, predictOutput);
+		log_message(
+			"seed_development: simulated %zu seeds here first%s",
+			predictCount,
+			predicted ? "" : " (failed)"
+		);
 	}
 	rng_seedThread((uint32_t)armedSeed); // as job_develop.c does before each seed
 	redirect(false);                     // the call that got here has already run

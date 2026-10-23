@@ -61,7 +61,9 @@ typedef struct Simulation {
 	uint8_t original[PLAYER_RECORD_SIZE]; // the player when the job started
 	int32_t week;                         // the training manager's week
 	unsigned firstDays;                   // days until the player's next development day
-	const Job *job;
+	const uint32_t *seeds;
+	size_t seedCount;
+	unsigned months;
 	FILE *csv;
 	bool written; // every row was written
 } Simulation;
@@ -107,7 +109,9 @@ void jobs_develop(const Job *job) {
 		job_writeResult("error: cannot write the output file");
 	} else {
 		sim->player = player;
-		sim->job = job;
+		sim->seeds = job->seeds;
+		sim->seedCount = job->seedCount;
+		sim->months = job->months;
 		log_message(
 			"develop: %s (%u), %zu seeds x %u months, next development in %u days",
 			name,
@@ -193,12 +197,44 @@ static bool daysToDevelopment(const uint8_t *person, unsigned *days) {
 	return true;
 }
 
-// Runs on freeze_run's worker thread while the game's own threads are paused.
+bool develop_runHere(
+	uint8_t *player,
+	const uint32_t *seeds,
+	size_t seedCount,
+	const wchar_t *output
+) {
+	Simulation *sim = calloc(1, sizeof *sim);
+	if (!sim) {
+		return false;
+	}
+	// firstDays stays 0: the development is due now.
+	sim->player = player;
+	sim->seeds = seeds;
+	sim->seedCount = seedCount;
+	sim->months = 1;
+	uint8_t *manager = NULL;
+	bool ok = memory_readPointer(game_address(RVA_TRAINING_MANAGER), 0, &manager) && manager &&
+						memory_read(manager + TRAINING_MANAGER_WEEK, &sim->week, sizeof sim->week) &&
+						memory_read(player, sim->original, sizeof sim->original) &&
+						(sim->csv = _wfopen(output, L"wb")) != NULL && writeHeader(sim->csv);
+	if (ok) {
+		simulateAll(sim);
+		ok = sim->written;
+	}
+	if (sim->csv) {
+		ok = fclose(sim->csv) == 0 && ok;
+	}
+	free(sim);
+	return ok;
+}
+
+// Runs on freeze_run's worker thread while the game's own threads are paused, or on the game's
+// thread from develop_runHere.
 static void simulateAll(void *context) {
 	Simulation *sim = context;
 	sim->written = true;
-	for (size_t i = 0; i < sim->job->seedCount && sim->written; ++i) {
-		sim->written = simulateSeed(sim, sim->job->seeds[i], sim->job->months);
+	for (size_t i = 0; i < sim->seedCount && sim->written; ++i) {
+		sim->written = simulateSeed(sim, sim->seeds[i], sim->months);
 	}
 	restoreValues(sim);
 }

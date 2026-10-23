@@ -335,16 +335,33 @@ int commands_develop(int argc, wchar_t **argv) {
 int commands_seedDevelopment(int argc, wchar_t **argv) {
 	char person[16];
 	char seed[16];
-	// The DLL checks the seed's range.
-	bool valid = argc == 4 && parsePersonId(argv[2], person, sizeof person) && argv[3][0] != 0 &&
-							 wcsspn(argv[3], L"0123456789") == wcslen(argv[3]) &&
-							 paths_toUtf8(argv[3], seed, sizeof seed);
+	char seeds[256] = "";
+	Path output = {0};
+	bool predict = argc == 6;
+	// The DLL checks the seed's range and the prediction seeds in full.
+	bool valid = (argc == 4 || predict) && parsePersonId(argv[2], person, sizeof person) &&
+							 argv[3][0] != 0 && wcsspn(argv[3], L"0123456789") == wcslen(argv[3]) &&
+							 paths_toUtf8(argv[3], seed, sizeof seed) &&
+							 (!predict || (isSeedList(argv[4]) && wcscmp(argv[4], L"keep") != 0 &&
+															paths_toUtf8(argv[4], seeds, sizeof seeds) &&
+															files_hasExtension(argv[5], L".csv")));
 	if (!valid) {
-		fprintf(stderr, "usage: fm24ctl seed-development <person unique ID> <seed>\n");
+		fprintf(
+			stderr, "usage: fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]\n"
+		);
 		return EXIT_USAGE;
 	}
+	if (predict && !absolutePath(argv[5], &output)) {
+		return EXIT_FAILED;
+	}
 	char job[JOB_LENGTH];
-	(void)snprintf(job, sizeof job, "command=seed_development\nperson=%s\nseed=%s\n", person, seed);
+	int length =
+		snprintf(job, sizeof job, "command=seed_development\nperson=%s\nseed=%s\n", person, seed);
+	if (predict && length > 0 && (size_t)length < sizeof job) {
+		(void)snprintf(
+			job + length, sizeof job - (size_t)length, "seeds=%s\noutput=%s\n", seeds, output.utf8
+		);
+	}
 	char result[CLIENT_RESULT_LENGTH];
 	(void)snprintf(
 		result, sizeof result, "Cannot set the seed; FM24 must be running and idle. See harness.log."
