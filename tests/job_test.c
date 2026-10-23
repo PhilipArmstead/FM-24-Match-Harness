@@ -123,6 +123,16 @@ TEST(parses_job_messages) {
 	ASSERT_BOOL_EQ(job_parse(seedDevelopment, &job), true);
 	ASSERT_BOOL_EQ(job.command == JOB_SEED_DEVELOPMENT && job.hasSeed && job.seed == 0, true);
 	job_free(&job);
+	char breakdown[] = "command=develop\nperson=1\nmonths=1\nseeds=1\noutput=C:/g.csv\n"
+										 "per_seed_breakdown=1\n";
+	ASSERT_BOOL_EQ(job_parse(breakdown, &job), true);
+	ASSERT_BOOL_EQ(job.perSeedBreakdown, true);
+	job_free(&job);
+	char averaged[] = "command=develop\nperson=1\nmonths=1\nseeds=1\noutput=C:/g.csv\n"
+										"per_seed_breakdown=0\n";
+	ASSERT_BOOL_EQ(job_parse(averaged, &job), true);
+	ASSERT_BOOL_EQ(job.perSeedBreakdown, false);
+	job_free(&job);
 	char withValues[] =
 		"command=develop\nperson=1\nmonths=1\nseeds=1\noutput=C:/g.csv\nvalues=height:b400\n";
 	ASSERT_BOOL_EQ(job_parse(withValues, &job), true);

@@ -19,8 +19,10 @@
 //   fm24ctl get-development <person unique ID> [output.json]
 //       a player's development inputs, as an editable "fm24-development/1" file
 //   fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>
-//       the player's monthly training and development, simulated in the game (reload afterwards);
-//       a development file's values are applied first and put back afterwards
+//       [--per-seed-breakdown]
+//       the player's monthly training and development, simulated in the game (reload afterwards),
+//       averaged over the seeds unless broken down; a development file's values are applied first
+//       and put back afterwards
 //   fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]
 //       the game's own next development of that player draws from `seed`, as develop's does;
 //       with seeds, develop's simulation of that development is run first, at the same moment
@@ -57,6 +59,7 @@ static const char usage[] =
 	"  fm24ctl get-player <person unique ID> <output.json>\n"
 	"  fm24ctl get-development <person unique ID> [output.json]\n"
 	"  fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>\n"
+	"      [--per-seed-breakdown]\n"
 	"  fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
 	"      <person unique ID|player.json> <output.json> [--allow-duplicate]\n"

@@ -217,6 +217,27 @@ static bool parseThreads(Job *job, const char *value) {
 	return true;
 }
 
+// The on/off keys ("1" is on): false if `key` is not one of them.
+static bool parseFlag(Job *job, const char *key, const char *value) {
+	const struct {
+		const char *key;
+		bool *flag;
+	} flags[] = {
+		{"full", &job->full},
+		{"keep_build", &job->keepBuild},
+		{"human_control", &job->humanControl},
+		{"detailed", &job->detailed},
+		{"per_seed_breakdown", &job->perSeedBreakdown},
+	};
+	for (size_t i = 0; i < sizeof flags / sizeof flags[0]; ++i) {
+		if (strcmp(key, flags[i].key) == 0) {
+			*flags[i].flag = strcmp(value, "1") == 0;
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool outputPath(Job *job, const char *key, const char *value) {
 	if (strcmp(key, "output") == 0) {
 		return widen(value, job->output, HARNESS_PATH_LENGTH);
@@ -275,20 +296,7 @@ static bool parseLine(Job *job, char *key, char *value) {
 	if (strcmp(key, "seed") == 0) {
 		return parseSeed(job, value);
 	}
-	if (strcmp(key, "full") == 0) {
-		job->full = strcmp(value, "1") == 0;
-		return true;
-	}
-	if (strcmp(key, "keep_build") == 0) {
-		job->keepBuild = strcmp(value, "1") == 0;
-		return true;
-	}
-	if (strcmp(key, "human_control") == 0) {
-		job->humanControl = strcmp(value, "1") == 0;
-		return true;
-	}
-	if (strcmp(key, "detailed") == 0) {
-		job->detailed = strcmp(value, "1") == 0;
+	if (parseFlag(job, key, value)) {
 		return true;
 	}
 	if (strcmp(key, "person") == 0) {

@@ -50,6 +50,7 @@ typedef struct Job {
 	char teams[2][JOB_TEAM_LENGTH]; // run, replace: input's home/away overrides ("": the fixture's)
 	uint32_t personId;              // get_player, develop: the player's unique ID (0: missing)
 	unsigned months;                // develop: months to simulate per seed
+	bool perSeedBreakdown;          // develop: one CSV row per seed and month, not averages
 	char *values; // develop: a development file's values, "name:hex,..." (development_file.h)
 } Job;
 

@@ -35,6 +35,8 @@ enum {
 	MONTHS_PER_YEAR = 12,
 	DAYS_PER_WEEK = 7,
 	DAY_MASK = 0x1FF,
+	// Values per CSV row after its first two columns: CA, PA, weight, height, progress, ratings.
+	ROW_VALUES = 4 + TRAINING_CATEGORY_COUNT + PLAYER_RATING_COUNT,
 	// u8 in the subobject at [[player+8]+8]: the scheduler skips development while 0x20 is set.
 	DEVELOPMENT_FLAGS = 0x142,
 	NO_DEVELOPMENT = 0x20,
@@ -67,6 +69,8 @@ typedef struct Simulation {
 	size_t seedCount;
 	unsigned months;
 	FILE *csv;
+	bool perSeed;                    // one row per seed and month, not averages
+	double *sums;                    // averages: (months + 1) x ROW_VALUES sums
 	bool written;                    // every row was written
 	const DevelopmentValues *values; // from a development file, or NULL
 	DevelopmentSnapshot before;      // the file's fields before `values` were applied
@@ -80,8 +84,9 @@ static bool daysToDevelopment(const uint8_t *person, unsigned *days);
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months);
 static void restoreValues(Simulation *sim);
 static void ageBy(uint8_t *person, unsigned days);
-static bool writeHeader(FILE *csv);
-static bool writeRow(FILE *csv, uint32_t seed, unsigned month, const uint8_t *player);
+static bool writeHeader(FILE *csv, bool perSeed);
+static bool recordRow(Simulation *sim, uint32_t seed, unsigned month);
+static bool writeAverages(Simulation *sim);
 
 // Finds a player the routine can develop; on failure writes the job result and returns false.
 static bool
@@ -173,6 +178,21 @@ void jobs_getDevelopment(const Job *job) {
 	}
 }
 
+// A zeroed Simulation, with room for the averages unless the job wants a row per seed.
+static Simulation *newSimulation(const Job *job) {
+	Simulation *sim = calloc(1, sizeof *sim);
+	if (!sim) {
+		return NULL;
+	}
+	sim->perSeed = job->perSeedBreakdown;
+	if (!sim->perSeed &&
+			!(sim->sums = calloc(((size_t)job->months + 1) * ROW_VALUES, sizeof *sim->sums))) {
+		free(sim);
+		return NULL;
+	}
+	return sim;
+}
+
 void jobs_develop(const Job *job) {
 	uint8_t *person = NULL;
 	uint8_t *player = NULL;
@@ -188,14 +208,14 @@ void jobs_develop(const Job *job) {
 		free(values);
 		return;
 	}
-	Simulation *sim = calloc(1, sizeof *sim);
+	Simulation *sim = newSimulation(job);
 	uint8_t *manager = NULL;
 	if (!sim || !memory_readPointer(game_address(RVA_TRAINING_MANAGER), 0, &manager) || !manager ||
 			!memory_read(manager + TRAINING_MANAGER_WEEK, &sim->week, sizeof sim->week) ||
 			!memory_read(player, sim->original, sizeof sim->original) ||
 			!daysToDevelopment(person, &sim->firstDays)) {
 		job_writeResult("error: cannot read the training manager, the date or the player");
-	} else if (!(sim->csv = _wfopen(job->output, L"wb")) || !writeHeader(sim->csv)) {
+	} else if (!(sim->csv = _wfopen(job->output, L"wb")) || !writeHeader(sim->csv, sim->perSeed)) {
 		job_writeResult("error: cannot write the output file");
 	} else {
 		sim->player = player;
@@ -236,6 +256,7 @@ void jobs_develop(const Job *job) {
 	if (sim && sim->csv) {
 		(void)fclose(sim->csv);
 	}
+	free(sim ? sim->sums : NULL);
 	free(sim);
 	free(values);
 }
@@ -305,11 +326,12 @@ bool develop_runHere(
 	sim->seeds = seeds;
 	sim->seedCount = seedCount;
 	sim->months = 1;
+	sim->perSeed = true; // for comparing single seeds with the game's
 	uint8_t *manager = NULL;
 	bool ok = memory_readPointer(game_address(RVA_TRAINING_MANAGER), 0, &manager) && manager &&
 						memory_read(manager + TRAINING_MANAGER_WEEK, &sim->week, sizeof sim->week) &&
 						memory_read(player, sim->original, sizeof sim->original) &&
-						(sim->csv = _wfopen(output, L"wb")) != NULL && writeHeader(sim->csv);
+						(sim->csv = _wfopen(output, L"wb")) != NULL && writeHeader(sim->csv, true);
 	if (ok) {
 		simulateAll(sim);
 		ok = sim->written;
@@ -339,13 +361,16 @@ static void simulateAll(void *context) {
 	if (sim->values) {
 		developmentFile_restore(sim->player, &sim->before);
 	}
+	if (sim->written && !sim->perSeed) {
+		sim->written = writeAverages(sim);
+	}
 }
 
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 	PlayerDevelopFn develop = (PlayerDevelopFn)game_function(RVA_PLAYER_DEVELOP);
 	restoreValues(sim);
 	rng_seedThread(seed); // the routine draws from this thread's PCG
-	if (!writeRow(sim->csv, seed, 0, sim->player)) {
+	if (!recordRow(sim, seed, 0)) {
 		return false;
 	}
 	for (unsigned month = 0; month < months; ++month) {
@@ -366,7 +391,7 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 		memcpy(sim->player + PLAYER_TRAINING_WEEK, &(int32_t){lastTrained ? lastTrained : -1}, 4);
 		ageBy(sim->player + PLAYER_PERSON, days);
 		develop(sim->player, false, 1);
-		if (!writeRow(sim->csv, seed, month + 1, sim->player)) {
+		if (!recordRow(sim, seed, month + 1)) {
 			return false;
 		}
 	}
@@ -421,8 +446,10 @@ static void ageBy(uint8_t *person, unsigned days) {
 	memcpy(date + 2, &year16, sizeof year16);
 }
 
-static bool writeHeader(FILE *csv) {
-	fputs("seed,month,current_ability,potential_ability,weight,height", csv);
+// Per-seed rows start "seed,month"; averaged rows "month,seeds" (how many seeds each averages).
+static bool writeHeader(FILE *csv, bool perSeed) {
+	fputs(perSeed ? "seed,month" : "month,seeds", csv);
+	fputs(",current_ability,potential_ability,weight,height", csv);
 	for (size_t i = 0; i < TRAINING_CATEGORY_COUNT; ++i) {
 		fprintf(csv, ",progress_%s", categoryNames[i]);
 	}
@@ -432,22 +459,50 @@ static bool writeHeader(FILE *csv) {
 	return fputc('\n', csv) != EOF;
 }
 
-static bool writeRow(FILE *csv, uint32_t seed, unsigned month, const uint8_t *player) {
-	fprintf(
-		csv,
-		"%u,%u,%u,%u,%u,%u",
-		seed,
-		month,
-		memory_loadU16(player + PLAYER_CURRENT_ABILITY),
-		memory_loadU16(player + PLAYER_POTENTIAL_ABILITY),
-		player[PLAYER_WEIGHT],
-		memory_loadU16(player + PLAYER_HEIGHT)
-	);
+// A row's values, in writeHeader's order after its first two columns.
+static void rowValues(const uint8_t *player, int out[ROW_VALUES]) {
+	size_t n = 0;
+	out[n++] = memory_loadU16(player + PLAYER_CURRENT_ABILITY);
+	out[n++] = memory_loadU16(player + PLAYER_POTENTIAL_ABILITY);
+	out[n++] = player[PLAYER_WEIGHT];
+	out[n++] = memory_loadU16(player + PLAYER_HEIGHT);
 	for (size_t i = 0; i < TRAINING_CATEGORY_COUNT; ++i) {
-		fprintf(csv, ",%d", (int8_t)player[PLAYER_TRAINING_PROGRESS + i]);
+		int progress = player[PLAYER_TRAINING_PROGRESS + i]; // stored as s8
+		out[n++] = progress > INT8_MAX ? progress - 256 : progress;
 	}
 	for (size_t i = 0; i < PLAYER_RATING_COUNT; ++i) {
-		fprintf(csv, ",%u", player[PLAYER_RATINGS + i]);
+		out[n++] = player[PLAYER_RATINGS + i];
 	}
-	return fputc('\n', csv) != EOF;
+}
+
+// Writes the player's values for this seed and month, or adds them to the month's sums.
+static bool recordRow(Simulation *sim, uint32_t seed, unsigned month) {
+	int values[ROW_VALUES];
+	rowValues(sim->player, values);
+	if (!sim->perSeed) {
+		for (size_t i = 0; i < ROW_VALUES; ++i) {
+			sim->sums[(size_t)month * ROW_VALUES + i] += values[i];
+		}
+		return true;
+	}
+	fprintf(sim->csv, "%u,%u", seed, month);
+	for (size_t i = 0; i < ROW_VALUES; ++i) {
+		fprintf(sim->csv, ",%d", values[i]);
+	}
+	return fputc('\n', sim->csv) != EOF;
+}
+
+// One row per month: every value averaged over the seeds.
+static bool writeAverages(Simulation *sim) {
+	for (unsigned month = 0; month <= sim->months; ++month) {
+		fprintf(sim->csv, "%u,%zu", month, sim->seedCount);
+		for (size_t i = 0; i < ROW_VALUES; ++i) {
+			double sum = sim->sums[(size_t)month * ROW_VALUES + i];
+			fprintf(sim->csv, ",%.3f", sum / (double)sim->seedCount);
+		}
+		if (fputc('\n', sim->csv) == EOF) {
+			return false;
+		}
+	}
+	return true;
 }

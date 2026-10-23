@@ -243,6 +243,7 @@ No flags.
 
 ```text
 fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>
+    [--per-seed-breakdown]
 ```
 
 Runs the game's own monthly training and development routine on a player,
@@ -253,7 +254,13 @@ development day (day `id % 28 + 1` of a month), with the whole weeks of
 training before it; later months have 4 or 5 weeks (52 a year). `months` is
 `1` to `600`. Seeds take the same forms as `run` (`42`, `1-100`,
 `1,5,10-20`, not `keep`); each seed is a separate simulation from the
-player's current values. No flags.
+player's current values.
+
+| Flag                   | Default | Meaning                                                              |
+|------------------------|---------|----------------------------------------------------------------------|
+| `--per-seed-breakdown` | Off     | Write one row per seed and month instead of the average of the seeds |
+
+The flag may appear anywhere after `develop`.
 
 Given a development file (see `get-development`) instead of an ID, it first
 sets the player's values to the file's, simulates from them, and afterwards
@@ -274,14 +281,24 @@ one month).
 
 ```powershell
 .\fm24ctl.exe develop 2000147523 24 1-100 kellyman.csv
+.\fm24ctl.exe develop 2000147523 24 1-100 kellyman-seeds.csv --per-seed-breakdown
 ```
 
-The CSV has one row per seed and month; month `0` is the starting state:
-`seed`, `month`, `current_ability`, `potential_ability`, `weight` (kg),
-`height` (cm), the 11 training progress values (`progress_strength` …
-`progress_set_pieces`, `-100` to `50`), then the 69 ratings by name, on the
-game's 1–100 scale (divide by 5 for the 1–20 scale shown in the game). Players
-who are also staff, and players the game does not develop, are refused.
+By default the CSV has one row per month, starting with month `0` (the
+starting state), with every value averaged over the seeds to three decimal
+places: `month`, `seeds` (how many seeds each row averages), then the player
+values below. With `--per-seed-breakdown` it has one row per seed and month
+instead, with whole values: `seed`, `month`, then the same player values.
+
+| Columns | Meaning |
+|---|---|
+| `current_ability`, `potential_ability` | CA and PA |
+| `weight`, `height` | kg, cm |
+| `progress_strength` … `progress_set_pieces` (11) | training progress, `-100` to `50` |
+| the 69 ratings by name | the game's 1–100 scale (divide by 5 for the 1–20 scale shown in the game); positions 1–20 |
+
+Players who are also staff, and players the game does not develop, are
+refused.
 
 ## Export a player's development inputs: `get-development`
 
@@ -339,15 +356,16 @@ player's development day, then compare their values (`get-player`) with
 checks how closely `develop` reproduces the game.
 
 ```powershell
-.\fm24ctl.exe develop 2000128236 1 7 predicted.csv   # from a save; then reload it
-.\fm24ctl.exe seed-development 2000128236 7          # arm, then advance in the game
+.\fm24ctl.exe develop 2000128236 1 7 predicted.csv --per-seed-breakdown   # from a save; then reload it
+.\fm24ctl.exe seed-development 2000128236 7                              # arm, then advance in the game
 .\fm24ctl.exe get-player 2000128236 actual.json
 ```
 
 With `<seeds>` and `<output.csv>`, the hook first runs `develop`'s simulation
 of that very development, one month for each of those seeds, on the game's
 own thread at the moment the game develops the player, and writes `develop`'s
-CSV. It then puts the player's simulated values back and lets the game's call
+CSV with one row per seed (as `--per-seed-breakdown`, so each seed can be
+compared). It then puts the player's simulated values back and lets the game's call
 run. This rules out differences of date, state or thread between `develop`
 and the game; the player's other side effects (see `develop`) still apply.
 

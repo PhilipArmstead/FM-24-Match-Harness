@@ -334,6 +334,21 @@ int commands_develop(int argc, wchar_t **argv) {
 	Path output;
 	char months[16];
 	char seeds[256];
+	// --per-seed-breakdown may come anywhere after the command; the rest are positional.
+	wchar_t *positional[6] = {0};
+	bool perSeed = false;
+	int count = 0;
+	for (int i = 0; i < argc; ++i) {
+		if (i >= 2 && wcscmp(argv[i], L"--per-seed-breakdown") == 0 && !perSeed) {
+			perSeed = true;
+		} else if (count < 6) {
+			positional[count++] = argv[i];
+		} else {
+			count = 7; // too many
+		}
+	}
+	argc = count;
+	argv = positional;
 	bool fromFile = argc == 6 && files_hasExtension(argv[2], L".json");
 	// The DLL checks the month count's range, the seeds and the file's values in full.
 	bool valid = argc == 6 && argv[3][0] != 0 && wcsspn(argv[3], L"0123456789") == wcslen(argv[3]) &&
@@ -344,7 +359,8 @@ int commands_develop(int argc, wchar_t **argv) {
 	if (!valid) {
 		fprintf(
 			stderr,
-			"usage: fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>\n"
+			"usage: fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>"
+			" [--per-seed-breakdown]\n"
 		);
 		return EXIT_USAGE;
 	}
@@ -361,11 +377,12 @@ int commands_develop(int argc, wchar_t **argv) {
 	int length = snprintf(
 		job,
 		sizeof job,
-		"command=develop\nperson=%s\nmonths=%s\nseeds=%s\noutput=%s\n",
+		"command=develop\nperson=%s\nmonths=%s\nseeds=%s\noutput=%s\nper_seed_breakdown=%d\n",
 		person,
 		months,
 		seeds,
-		output.utf8
+		output.utf8,
+		perSeed
 	);
 	if (fromFile && length > 0 && (size_t)length < sizeof job) {
 		(void)snprintf(
