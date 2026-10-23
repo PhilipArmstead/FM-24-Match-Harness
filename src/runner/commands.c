@@ -74,6 +74,17 @@ static bool parseFixtureOptions(int argc, wchar_t **argv, char *seed, size_t siz
 static bool parsePersonId(const wchar_t *text, char *out, size_t size);
 static bool parsePlayerBlock(const wchar_t *text, char *out, size_t size);
 static int fetchPlayer(const char *person, const Path *output, char *result, size_t resultSize);
+static bool developmentValues(
+	const char *json,
+	size_t length,
+	char *person,
+	size_t personSize,
+	ByteBuffer *values,
+	char *error,
+	size_t errorSize
+);
+static bool
+readDevelopmentFile(const wchar_t *path, char *person, size_t personSize, ByteBuffer *values);
 
 int commands_run(int argc, wchar_t **argv) {
 	return commands_runWithProgress(argc, argv, 0);
@@ -293,26 +304,54 @@ int commands_getPlayer(int argc, wchar_t **argv) {
 																				: EXIT_FAILED;
 }
 
+int commands_getDevelopment(int argc, wchar_t **argv) {
+	char person[16];
+	Path output;
+	if (argc != 4 || !parsePersonId(argv[2], person, sizeof person) ||
+			!files_hasExtension(argv[3], L".json")) {
+		fprintf(stderr, "usage: fm24ctl get-development <person unique ID> <output.json>\n");
+		return EXIT_USAGE;
+	}
+	if (!absolutePath(argv[3], &output)) {
+		return EXIT_FAILED;
+	}
+	char job[JOB_LENGTH];
+	(void)snprintf(
+		job, sizeof job, "command=get_development\nperson=%s\noutput=%s\n", person, output.utf8
+	);
+	return submitAndReport(job);
+}
+
 int commands_develop(int argc, wchar_t **argv) {
 	char person[16];
 	Path output;
 	char months[16];
 	char seeds[256];
-	// The DLL checks the month count's range and the seeds in full.
+	bool fromFile = argc == 6 && files_hasExtension(argv[2], L".json");
+	// The DLL checks the month count's range, the seeds and the file's values in full.
 	bool valid = argc == 6 && argv[3][0] != 0 && wcsspn(argv[3], L"0123456789") == wcslen(argv[3]) &&
 							 paths_toUtf8(argv[3], months, sizeof months) &&
-							 parsePersonId(argv[2], person, sizeof person) && isSeedList(argv[4]) &&
+							 (fromFile || parsePersonId(argv[2], person, sizeof person)) && isSeedList(argv[4]) &&
 							 wcscmp(argv[4], L"keep") != 0 && paths_toUtf8(argv[4], seeds, sizeof seeds) &&
 							 files_hasExtension(argv[5], L".csv");
 	if (!valid) {
-		fprintf(stderr, "usage: fm24ctl develop <person unique ID> <months> <seeds> <output.csv>\n");
+		fprintf(
+			stderr,
+			"usage: fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>\n"
+		);
 		return EXIT_USAGE;
 	}
+	ByteBuffer values = {0};
+	if (fromFile && !readDevelopmentFile(argv[2], person, sizeof person, &values)) {
+		buffer_free(&values);
+		return EXIT_FAILED;
+	}
 	if (!absolutePath(argv[5], &output)) {
+		buffer_free(&values);
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
-	(void)snprintf(
+	int length = snprintf(
 		job,
 		sizeof job,
 		"command=develop\nperson=%s\nmonths=%s\nseeds=%s\noutput=%s\n",
@@ -321,6 +360,12 @@ int commands_develop(int argc, wchar_t **argv) {
 		seeds,
 		output.utf8
 	);
+	if (fromFile && length > 0 && (size_t)length < sizeof job) {
+		(void)snprintf(
+			job + length, sizeof job - (size_t)length, "values=%s\n", buffer_string(&values)
+		);
+	}
+	buffer_free(&values);
 	char result[CLIENT_RESULT_LENGTH];
 	(void)snprintf(
 		result, sizeof result, "Cannot simulate; FM24 must be running and idle. See harness.log."
@@ -823,4 +868,85 @@ static int fetchPlayer(const char *person, const Path *output, char *result, siz
 	}
 	printf("%s\n", result);
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
+typedef struct DevelopmentReader {
+	uint32_t uniqueId;
+	bool hasUniqueId;
+	ByteBuffer *values; // "name:hex,..."
+	char error[160];
+} DevelopmentReader;
+
+static void readDevelopmentField(void *context, const ConfigField *field) {
+	static const char digits[] = "0123456789abcdef";
+	DevelopmentReader *reader = context;
+	if (reader->error[0]) {
+		return;
+	}
+	if (strcmp(field->name, "person_uid") == 0) {
+		if (field->kind != CONFIG_U32 || reader->hasUniqueId) {
+			(void)snprintf(reader->error, sizeof reader->error, "person_uid must be one u32");
+			return;
+		}
+		reader->uniqueId = (uint32_t)field->bytes[0] | (uint32_t)field->bytes[1] << 8 |
+											 (uint32_t)field->bytes[2] << 16 | (uint32_t)field->bytes[3] << 24;
+		reader->hasUniqueId = true;
+		return;
+	}
+	// The DLL looks the names up; they only need to be safe in a job line.
+	size_t length = strlen(field->name);
+	if (!length || strspn(field->name, "abcdefghijklmnopqrstuvwxyz0123456789_.") != length) {
+		(void)snprintf(
+			reader->error, sizeof reader->error, "field \"%s\": not a development field name", field->name
+		);
+		return;
+	}
+	bool ok = (!reader->values->length || buffer_append(reader->values, ",", 1)) &&
+						buffer_append(reader->values, field->name, length) &&
+						buffer_append(reader->values, ":", 1);
+	for (size_t i = 0; ok && i < field->length; ++i) {
+		char hex[2] = {digits[field->bytes[i] >> 4], digits[field->bytes[i] & 15]};
+		ok = buffer_append(reader->values, hex, sizeof hex);
+	}
+	if (!ok) {
+		(void)snprintf(reader->error, sizeof reader->error, "out of memory");
+	}
+}
+
+// An "fm24-development/1" file's values as the DLL's "values" line, and its person_uid as text.
+static bool developmentValues(
+	const char *json,
+	size_t length,
+	char *person,
+	size_t personSize,
+	ByteBuffer *values,
+	char *error,
+	size_t errorSize
+) {
+	DevelopmentReader reader = {.values = values};
+	ConfigVisitor visitor = {.context = &reader, .field = readDevelopmentField};
+	if (!matchConfig_visitFormat(json, length, "fm24-development/1", &visitor, error, errorSize)) {
+		return false;
+	}
+	if (reader.error[0] || !reader.hasUniqueId || reader.uniqueId == 0) {
+		(void)snprintf(error, errorSize, "%s", reader.error[0] ? reader.error : "missing person_uid");
+		return false;
+	}
+	(void)snprintf(person, personSize, "%" PRIu32, reader.uniqueId);
+	return true;
+}
+
+static bool
+readDevelopmentFile(const wchar_t *path, char *person, size_t personSize, ByteBuffer *values) {
+	ByteBuffer text = {0};
+	char error[256] = "";
+	bool ok = files_read(path, &text) &&
+						developmentValues(
+							buffer_string(&text), text.length, person, personSize, values, error, sizeof error
+						);
+	if (!ok) {
+		fprintf(stderr, "cannot read %ls: %s\n", path, error[0] ? error : "cannot open the file");
+	}
+	buffer_free(&text);
+	return ok;
 }

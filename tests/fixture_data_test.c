@@ -450,6 +450,34 @@ TEST(encodes_and_visits_config_fields) {
 	buffer_free(&visited.bytes);
 }
 
+TEST(encodes_signed_fields) {
+	static const char json[] = "{\"format\":\"fm24-match-config/1\",\"fields\":[{\"s8\":-61},"
+														 "{\"s8\":50},{\"s8\":-128},{\"s8\":-0},{\"s16\":-1},{\"s16\":32767}]}";
+	static const uint8_t expected[] = {0xC3, 0x32, 0x80, 0x00, 0xFF, 0xFF, 0xFF, 0x7F};
+	ByteBuffer bytes = {0};
+	char error[256] = "";
+	ASSERT_BOOL_EQ(
+		matchConfig_encode(json, sizeof json - 1, &bytes, NULL, error, sizeof error), true
+	);
+	ASSERT_BOOL_EQ(bytes.length == sizeof expected, true);
+	if (bytes.length == sizeof expected) {
+		ASSERT_INT_EQ(memcmp(bytes.data, expected, sizeof expected), 0);
+	}
+	buffer_free(&bytes);
+	static const char *const invalid[] = {"128", "-129", "1.5", "- 1", "-", "\"1\""};
+	for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		char text[128];
+		(void)snprintf(
+			text, sizeof text, "{\"format\":\"fm24-match-config/1\",\"fields\":[{\"s8\":%s}]}", invalid[i]
+		);
+		ByteBuffer rejected = {0};
+		ASSERT_BOOL_EQ(
+			matchConfig_encode(text, strlen(text), &rejected, NULL, error, sizeof error), false
+		);
+		buffer_free(&rejected);
+	}
+}
+
 TEST(validates_json_strings_and_skipped_values) {
 	static const char *const invalid[] = {
 		"\"\\u+041\"",
@@ -1313,6 +1341,7 @@ void registerFixtureDataTests(void) {
 	);
 	test_run("fixture data rejects invalid configs", test_rejects_invalid_configs);
 	test_run("fixture data encodes and visits config fields", test_encodes_and_visits_config_fields);
+	test_run("fixture data encodes s8/s16 fields and rejects bad ones", test_encodes_signed_fields);
 	test_run(
 		"JSON validates decoded and skipped strings", test_validates_json_strings_and_skipped_values
 	);

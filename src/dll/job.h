@@ -24,6 +24,7 @@ typedef enum JobCommand {
 	JOB_GET_PLAYER,       // write a player's database values for a match config player block
 	JOB_DEVELOP,          // simulate a player's monthly training and development, write a CSV
 	JOB_SEED_DEVELOPMENT, // make the game's own next development of a player use a seed
+	JOB_GET_DEVELOPMENT,  // write a player's development inputs ("fm24-development/1")
 } JobCommand;
 
 enum { JOB_TEAM_LENGTH = 256 };
@@ -48,6 +49,7 @@ typedef struct Job {
 	char teams[2][JOB_TEAM_LENGTH]; // run, replace: input's home/away overrides ("": the fixture's)
 	uint32_t personId;              // get_player, develop: the player's unique ID (0: missing)
 	unsigned months;                // develop: months to simulate per seed
+	char *values; // develop: a development file's values, "name:hex,..." (development_file.h)
 } Job;
 
 // Parses a job's key=value lines (modifying `text`); logs and returns false if it is malformed.
@@ -69,6 +71,7 @@ void jobs_listPlayers(const Job *job);
 void jobs_getPlayer(const Job *job);
 void jobs_develop(const Job *job);
 void jobs_seedDevelopment(const Job *job);
+void jobs_getDevelopment(const Job *job);
 
 // develop's simulation (job_develop.c) of one month for each seed, run on the calling thread with
 // the player's development due now (no training weeks or ageing first), written as develop's CSV.

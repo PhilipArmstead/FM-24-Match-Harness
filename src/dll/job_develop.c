@@ -15,6 +15,7 @@
 // threads paused (freeze.h): the routine uses global state they also use.
 
 #include "database.h"
+#include "development_file.h"
 #include "freeze.h"
 #include "game.h"
 #include "job.h"
@@ -65,7 +66,10 @@ typedef struct Simulation {
 	size_t seedCount;
 	unsigned months;
 	FILE *csv;
-	bool written; // every row was written
+	bool written;                    // every row was written
+	const DevelopmentValues *values; // from a development file, or NULL
+	DevelopmentSnapshot before;      // the file's fields before `values` were applied
+	DevelopmentSnapshot start;       // and as every seed starts
 } Simulation;
 
 static void simulateAll(void *context);
@@ -78,24 +82,58 @@ static void ageBy(uint8_t *person, unsigned days);
 static bool writeHeader(FILE *csv);
 static bool writeRow(FILE *csv, uint32_t seed, unsigned month, const uint8_t *player);
 
-void jobs_develop(const Job *job) {
+// Finds a player the routine can develop; on failure writes the job result and returns false.
+static bool
+findPlayer(uint32_t uniqueId, uint8_t **person, uint8_t **player, char *name, size_t size) {
 	PeopleIndex people;
 	if (!database_loadPeople(&people)) {
 		job_writeResult("error: cannot read the people list; is a save loaded?");
-		return;
+		return false;
 	}
-	uint8_t *person = database_findPerson(&people, job->personId);
-	uint8_t *player = person ? database_playerRecord(person) : NULL;
-	char name[PLAYER_NAME_LENGTH] = "";
-	if (person && !database_personName(person, name, sizeof name)) {
-		(void)snprintf(name, sizeof name, "(unnamed, UID %u)", job->personId);
+	*person = database_findPerson(&people, uniqueId);
+	*player = *person ? database_playerRecord(*person) : NULL;
+	name[0] = 0;
+	if (*person && !database_personName(*person, name, size)) {
+		(void)snprintf(name, size, "(unnamed, UID %u)", uniqueId);
 	}
 	database_freePeople(&people);
-	const char *error = !person   ? "no person with that unique ID"
-											: !player ? "that person is not a player"
-																: checkPlayer(person, player);
+	const char *error = !*person   ? "no person with that unique ID"
+											: !*player ? "that person is not a player"
+																 : checkPlayer(*person, *player);
 	if (error) {
-		job_writeResult("error: %s (%u)", error, job->personId);
+		job_writeResult("error: %s (%u)", error, uniqueId);
+	}
+	return error == NULL;
+}
+
+void jobs_getDevelopment(const Job *job) {
+	uint8_t *person = NULL;
+	uint8_t *player = NULL;
+	char name[PLAYER_NAME_LENGTH];
+	if (!findPlayer(job->personId, &person, &player, name, sizeof name)) {
+		return;
+	}
+	if (!developmentFile_write(job->output, player, job->personId, name)) {
+		job_writeResult("error: cannot write the output file");
+	} else {
+		log_message("get_development: %s (%u)", name, job->personId);
+		job_writeResult("ok: %s (%u)", name, job->personId);
+	}
+}
+
+void jobs_develop(const Job *job) {
+	uint8_t *person = NULL;
+	uint8_t *player = NULL;
+	char name[PLAYER_NAME_LENGTH];
+	if (!findPlayer(job->personId, &person, &player, name, sizeof name)) {
+		return;
+	}
+	char error[160] = "";
+	DevelopmentValues *values = job->values ? malloc(sizeof *values) : NULL;
+	if (job->values && (!values || !developmentFile_parse(job->values, values, error, sizeof error) ||
+											 !developmentFile_fits(player, values, error, sizeof error))) {
+		job_writeResult("error: %s", values ? error : "out of memory");
+		free(values);
 		return;
 	}
 	Simulation *sim = calloc(1, sizeof *sim);
@@ -112,13 +150,15 @@ void jobs_develop(const Job *job) {
 		sim->seeds = job->seeds;
 		sim->seedCount = job->seedCount;
 		sim->months = job->months;
+		sim->values = values;
 		log_message(
-			"develop: %s (%u), %zu seeds x %u months, next development in %u days",
+			"develop: %s (%u), %zu seeds x %u months, next development in %u days, %zu values set",
 			name,
 			job->personId,
 			job->seedCount,
 			job->months,
-			sim->firstDays
+			sim->firstDays,
+			values ? values->count : 0
 		);
 		FreezeResult frozen = freeze_run(simulateAll, sim);
 		bool written = fclose(sim->csv) == 0 && sim->written;
@@ -145,6 +185,7 @@ void jobs_develop(const Job *job) {
 		(void)fclose(sim->csv);
 	}
 	free(sim);
+	free(values);
 }
 
 // Why this player cannot be simulated, or NULL.
@@ -232,11 +273,20 @@ bool develop_runHere(
 // thread from develop_runHere.
 static void simulateAll(void *context) {
 	Simulation *sim = context;
+	if (sim->values) {
+		developmentFile_save(sim->player, &sim->before);
+		developmentFile_apply(sim->player, sim->values);
+		memcpy(sim->original, sim->player, sizeof sim->original); // every seed starts from these
+	}
+	developmentFile_save(sim->player, &sim->start);
 	sim->written = true;
 	for (size_t i = 0; i < sim->seedCount && sim->written; ++i) {
 		sim->written = simulateSeed(sim, sim->seeds[i], sim->months);
 	}
 	restoreValues(sim);
+	if (sim->values) {
+		developmentFile_restore(sim->player, &sim->before);
+	}
 }
 
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
@@ -298,6 +348,8 @@ static void restoreValues(Simulation *sim) {
 		size_t offset = restoredFields[i].offset;
 		memcpy(sim->player + offset, sim->original + offset, restoredFields[i].size);
 	}
+	// The development file's fields too, training happiness among them: the routine updates it.
+	developmentFile_restore(sim->player, &sim->start);
 }
 
 // Moves a date of birth (PERSON_DATE_OF_BIRTH: u16 day of year from 1 | other bits, u16 year)

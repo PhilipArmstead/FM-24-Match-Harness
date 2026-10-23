@@ -104,6 +104,12 @@ enum DatabaseLayout {
 	PERSON_PERSONALITY = 0x78,   // 7 u8 (1-20): adaptability, ambition, loyalty, pressure,
 															 // professionalism, sportsmanship, temperament
 	PERSON_TRAITS = 0xF0,        // u64, one bit per player trait
+	// PERSON_RELATIONSHIPS -> {vector<RELATIONSHIP_SIZE-byte record>, vector<8 bytes>}; a record has
+	// a u16 type at RELATIONSHIP_TYPE (knowledge-base training note, section 13).
+	PERSON_RELATIONSHIPS = 0x80,
+	RELATIONSHIP_SIZE = 16,
+	RELATIONSHIP_TYPE = 0x0A,
+	RELATIONSHIP_TRAINING_HAPPINESS = 0x4700, // its u8 value (0-100) is at +0x0C
 	NATION_UNIQUE_ID = 0x0C,
 	// Player record (database_playerRecord) members copied into a match (docs/FIXTURE.md).
 	PLAYER_WEIGHT = 0x14C,             // u8, kilograms
@@ -118,12 +124,13 @@ enum DatabaseLayout {
 	PLAYER_MORALE = 0x25F,             // u8
 	PLAYER_PREFERRED_POSITION = 0x266, // u8
 	// Training (knowledge-base/FM24 Training — Attribute Growth.md).
-	PLAYER_TRAINING_WEEK = 0x198,     // s32: TRAINING_MANAGER_WEEK when last trained, 0 never
-	PLAYER_TRAINING_PROGRESS = 0x1C3, // TRAINING_CATEGORY_COUNT s8, -100..50
-	PLAYER_POTENTIAL_ABILITY = 0x202, // u16
-	PLAYER_PERSON = 0x278,            // the person within a db::ACTUAL_PLAYER
-	PLAYER_RECORD_SIZE = 1000,        // db::ACTUAL_PLAYER (its pool's element size)
-	TRAINING_MANAGER_WEEK = 24,       // s32: training weeks so far
+	PLAYER_TRAINING_WEEK = 0x198,      // s32: TRAINING_MANAGER_WEEK when last trained, 0 never
+	PLAYER_TRAINING_INTENSITY = 0x1C2, // u8: 0/1 normal, 2 double, 254 half, 255 the team's
+	PLAYER_TRAINING_PROGRESS = 0x1C3,  // TRAINING_CATEGORY_COUNT s8, -100..50
+	PLAYER_POTENTIAL_ABILITY = 0x202,  // u16
+	PLAYER_PERSON = 0x278,             // the person within a db::ACTUAL_PLAYER
+	PLAYER_RECORD_SIZE = 1000,         // db::ACTUAL_PLAYER (its pool's element size)
+	TRAINING_MANAGER_WEEK = 24,        // s32: training weeks so far
 	CONTRACT_TEAM = 0x10,
 	TEAM_UNIQUE_ID = 0x0C,
 	TEAM_CLUB = 0x30,

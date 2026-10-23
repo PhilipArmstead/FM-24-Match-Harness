@@ -16,8 +16,11 @@
 //       the input rebuilt against another away team, keeping its other edits
 //   fm24ctl get-player <person unique ID> <output.json>
 //       a player's database values, as a config's player block has them
-//   fm24ctl develop <person unique ID> <months> <seeds> <output.csv>
-//       the player's monthly training and development, simulated in the game (reload afterwards)
+//   fm24ctl get-development <person unique ID> <output.json>
+//       a player's development inputs, as an editable "fm24-development/1" file
+//   fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>
+//       the player's monthly training and development, simulated in the game (reload afterwards);
+//       a development file's values are applied first and put back afterwards
 //   fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]
 //       the game's own next development of that player draws from `seed`, as develop's does;
 //       with seeds, develop's simulation of that development is run first, at the same moment
@@ -52,7 +55,8 @@ static const char usage[] =
 	"  fm24ctl list-teams <output.txt>\n"
 	"  fm24ctl list-players <output.txt>\n"
 	"  fm24ctl get-player <person unique ID> <output.json>\n"
-	"  fm24ctl develop <person unique ID> <months> <seeds> <output.csv>\n"
+	"  fm24ctl get-development <person unique ID> <output.json>\n"
+	"  fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>\n"
 	"  fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
 	"      <person unique ID|player.json> <output.json> [--allow-duplicate]\n"
@@ -97,6 +101,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"list-players", commands_listPlayers},
 		{L"get-player", commands_getPlayer},
 		{L"develop", commands_develop},
+		{L"get-development", commands_getDevelopment},
 		{L"seed-development", commands_seedDevelopment},
 		{L"inject-player", commands_injectPlayer},
 		{L"probe", commands_probe},

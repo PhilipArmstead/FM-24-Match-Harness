@@ -219,12 +219,41 @@ static size_t skipSpace(Encoder *encoder) {
 	return (size_t)(reader->position - reader->begin);
 }
 
+static size_t signedWidthOf(const char *key) {
+	return strcmp(key, "s8") == 0 ? 1 : strcmp(key, "s16") == 0 ? 2 : 0;
+}
+
+// A signed integer for "s8"/"s16", emitted in two's complement.
+static bool readSignedValue(Encoder *encoder, size_t width) {
+	JsonReader *reader = &encoder->reader;
+	skipSpace(encoder);
+	bool negative = reader->position < reader->end && *reader->position == '-';
+	if (negative) {
+		++reader->position;
+		if (reader->position == reader->end || *reader->position < '0' || *reader->position > '9') {
+			return failField(encoder, "expected a signed integer");
+		}
+	}
+	unsigned long long magnitude = 0;
+	bool isUnsigned = false;
+	if (!jsonReader_readNumber(reader, &magnitude, &isUnsigned)) {
+		return false;
+	}
+	unsigned long long limit = 1ULL << (8 * width - 1);
+	if (!isUnsigned || magnitude > (negative ? limit : limit - 1)) {
+		return failField(encoder, "expected a signed integer that fits its width");
+	}
+	unsigned long long mask = (1ULL << (8 * width)) - 1;
+	return emitUnsigned(encoder, (negative ? ~magnitude + 1 : magnitude) & mask, width);
+}
+
 // Reads the value of one member of a field object, recording the spans of the value and of a
 // "player" annotation.
 static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	size_t width = widthOf(key);
-	bool isValue =
-		width || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 || strcmp(key, "hex") == 0;
+	size_t signedWidth = signedWidthOf(key);
+	bool isValue = width || signedWidth || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 ||
+								 strcmp(key, "hex") == 0;
 	if (!isValue) {
 		if (encoder->visitor && strcmp(key, "name") == 0) {
 			return readText(encoder, &encoder->name);
@@ -244,6 +273,9 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	if (width) {
 		field->kind = (ConfigValueKind)width;
 		ok = readUnsignedValue(encoder, width);
+	} else if (signedWidth) {
+		field->kind = (ConfigValueKind)signedWidth;
+		ok = readSignedValue(encoder, signedWidth);
 	} else if (strcmp(key, "u8map") == 0) {
 		field->kind = CONFIG_RATINGS;
 		ok = readU8Map(encoder);
@@ -275,7 +307,7 @@ static bool readField(Encoder *encoder) {
 		ok = ok && (jsonReader_consume(reader, '}') || failField(encoder, "expected , or }"));
 	}
 	if (ok && field.values != 1) {
-		return failField(encoder, "needs exactly one of u8/u16/u32/u64/str/hex/u8map");
+		return failField(encoder, "needs exactly one of u8/u16/u32/u64/s8/s16/str/hex/u8map");
 	}
 	if (ok && encoder->visitor && encoder->visitor->field) {
 		ConfigField value = {

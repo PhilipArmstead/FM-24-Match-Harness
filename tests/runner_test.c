@@ -30,6 +30,7 @@ static bool submitJob(const char *job, unsigned timeout, char *result, size_t re
 #define commands_getPlayer runnerTest_getPlayer
 #define commands_develop runnerTest_develop
 #define commands_seedDevelopment runnerTest_seedDevelopment
+#define commands_getDevelopment runnerTest_getDevelopment
 #define commands_injectPlayer runnerTest_injectPlayer
 #define commands_injectPlayerWithResult runnerTest_injectPlayerWithResult
 #define commands_probe runnerTest_probe
@@ -136,6 +137,49 @@ TEST(parses_player_ids_and_blocks) {
 	ASSERT_BOOL_EQ(parsePlayerBlock(L"away.player[17]", text, sizeof text), true);
 	ASSERT_INT_EQ(strcmp(text, "away.player[17]"), 0);
 	ASSERT_BOOL_EQ(parsePlayerBlock(L"home.player[3]", text, 14), false);
+}
+
+TEST(reads_development_files_as_job_values) {
+	static const char file[] =
+		"{\"format\":\"fm24-development/1\",\"fields\":["
+		"{\"name\":\"person_uid\",\"player\":\"H. Rhoades\",\"u32\":2000128236},"
+		"{\"name\":\"current_ability\",\"u16\":53},"
+		"{\"name\":\"training_progress.strength\",\"s8\":-61},"
+		"{\"name\":\"ratings\",\"u8map\":{\"pos_gk\":1,\"pos_sw\":20}}]}";
+	char person[16] = "";
+	char error[256] = "";
+	ByteBuffer values = {0};
+	ASSERT_BOOL_EQ(
+		developmentValues(
+			file, sizeof file - 1, person, sizeof person, &values, error, sizeof error
+		),
+		true
+	);
+	ASSERT_INT_EQ(strcmp(person, "2000128236"), 0);
+	ASSERT_INT_EQ(
+		strcmp(
+			buffer_string(&values),
+			"current_ability:3500,training_progress.strength:c3,ratings:0114"
+		),
+		0
+	);
+	buffer_free(&values);
+	static const char *const invalid[] = {
+		"{\"format\":\"fm24-development/1\",\"fields\":[{\"name\":\"height\",\"u16\":180}]}",
+		("{\"format\":\"fm24-development/1\",\"fields\":[{\"name\":\"person_uid\",\"u32\":1},"
+		 "{\"name\":\"a,b\",\"u8\":1}]}"),
+		"{\"format\":\"fm24-player/1\",\"fields\":[{\"name\":\"person_uid\",\"u32\":1}]}",
+	};
+	for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		ByteBuffer rejected = {0};
+		ASSERT_BOOL_EQ(
+			developmentValues(
+				invalid[i], strlen(invalid[i]), person, sizeof person, &rejected, error, sizeof error
+			),
+			false
+		);
+		buffer_free(&rejected);
+	}
 }
 
 TEST(rejects_malformed_cli_numbers) {
@@ -379,6 +423,9 @@ void registerRunnerTests(void) {
 	);
 	test_run("runner rejects malformed CLI numbers", test_rejects_malformed_cli_numbers);
 	test_run("runner parses player IDs and blocks", test_parses_player_ids_and_blocks);
+	test_run(
+		"runner reads development files as job values", test_reads_development_files_as_job_values
+	);
 	test_run(
 		"runner rejects missing or incomplete results", test_rejects_missing_or_incomplete_results
 	);

@@ -41,6 +41,7 @@ target_compile_options(common PRIVATE ${warnings})
 add_library(harness SHARED
 	src/dll/config_writer.c
 	src/dll/database.c
+	src/dll/development_file.c
 	src/dll/fixture.c
 	src/dll/game.c
 	src/dll/job.c

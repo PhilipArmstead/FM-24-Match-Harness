@@ -25,6 +25,7 @@ Exporting or rebuilding needs the human manager's upcoming fixture.
 | `list-teams`                   | Yes                                         | Export team IDs and names                  |
 | `get-player`                   | Yes                                         | Export a player's database values          |
 | `develop`                      | Yes; **changes the game**                   | Simulate a player's training and growth    |
+| `get-development`              | Yes                                         | Export a player's development inputs       |
 | `seed-development`             | Yes; patches game code until it fires       | Fix the game's next development seed       |
 | `inject-player`                | Only when given a player ID                 | Copy player values into a fixture          |
 | `probe`                        | Only to discover an omitted executable path | Inspect a game executable on disk          |
@@ -241,7 +242,7 @@ No flags.
 ## Simulate a player's development: `develop`
 
 ```text
-fm24ctl develop <person unique ID> <months> <seeds> <output.csv>
+fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>
 ```
 
 Runs the game's own monthly training and development routine on a player,
@@ -249,9 +250,14 @@ month after month, with each month starting from the previous month's result.
 It uses the player's current training and club, and ages them as the months
 pass while the game's date stays the same. Month 1 ends on the player's next
 development day (day `id % 28 + 1` of a month), with the whole weeks of
-training before it; later months have 4 or 5 weeks (52 a year). `months` is `1` to `600`. Seeds take the same forms as
-`run` (`42`, `1-100`, `1,5,10-20`, not `keep`); each seed is a separate
-simulation from the player's current values. No flags.
+training before it; later months have 4 or 5 weeks (52 a year). `months` is
+`1` to `600`. Seeds take the same forms as `run` (`42`, `1-100`,
+`1,5,10-20`, not `keep`); each seed is a separate simulation from the
+player's current values. No flags.
+
+Given a development file (see `get-development`) instead of an ID, it first
+sets the player's values to the file's, simulates from them, and afterwards
+puts the player's own values back.
 
 **Save the game first, and reload it afterwards without saving.** The routine
 works on the game's real player and passes them to other parts of the game
@@ -276,6 +282,42 @@ The CSV has one row per seed and month; month `0` is the starting state:
 `progress_set_pieces`, `-100` to `50`), then the 69 ratings by name, on the
 game's 1–100 scale (divide by 5 for the 1–20 scale shown in the game). Players
 who are also staff, and players the game does not develop, are refused.
+
+## Export a player's development inputs: `get-development`
+
+```text
+fm24ctl get-development <person unique ID> <output.json>
+```
+
+Writes the values the development routine reads from a player as an
+editable `fm24-development/1` file, in the same field syntax as a fixture
+(change values only; don't add, remove or reorder fields or ratings). Remove
+a field to leave the player's own value alone. Nothing in the game is changed.
+
+```powershell
+.\fm24ctl.exe get-development 2000128236 rhoades.json
+# edit rhoades.json, then
+.\fm24ctl.exe develop rhoades.json 12 1-200 rhoades-edited.csv
+```
+
+| Field | Values |
+|---|---|
+| `person_uid` | the player (don't change) |
+| `current_ability`, `potential_ability` | 1–200 |
+| `ratings` | the 69 ratings by name: positions 1–20, attributes 1–100 |
+| `training_progress.<category>` (11) | `s8`, −100 to 50 |
+| `training_intensity` | 0 or 1 normal, 2 double, 254 half, 255 the team's workload |
+| `condition`, `sharpness` | 0–10000 |
+| `fatigue` | `s16`; 0 is fresh |
+| `morale` | 0–255 |
+| `height`, `weight` | cm, kg |
+| `personality.<trait>` (8) | 1–20 |
+| `date_of_birth.day`, `date_of_birth.year` | day of the year from 1, and the year |
+| `training_happiness` | 0–100 (only if the player has a training happiness record) |
+| `training_happiness.unknown_08` | changes at the weekly training review; meaning unknown |
+
+The training schedule is not in the file yet: the player trains on their
+club's schedule.
 
 ## Seed the game's own development: `seed-development`
 

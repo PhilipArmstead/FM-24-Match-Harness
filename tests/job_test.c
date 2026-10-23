@@ -123,6 +123,18 @@ TEST(parses_job_messages) {
 	ASSERT_BOOL_EQ(job_parse(seedDevelopment, &job), true);
 	ASSERT_BOOL_EQ(job.command == JOB_SEED_DEVELOPMENT && job.hasSeed && job.seed == 0, true);
 	job_free(&job);
+	char withValues[] =
+		"command=develop\nperson=1\nmonths=1\nseeds=1\noutput=C:/g.csv\nvalues=height:b400\n";
+	ASSERT_BOOL_EQ(job_parse(withValues, &job), true);
+	ASSERT_BOOL_EQ(job.values != NULL && strcmp(job.values, "height:b400") == 0, true);
+	job_free(&job);
+	ASSERT_BOOL_EQ(job.values == NULL, true);
+	char getDevelopment[] = "command=get_development\nperson=1\noutput=C:/d.json\n";
+	ASSERT_BOOL_EQ(job_parse(getDevelopment, &job), true);
+	ASSERT_BOOL_EQ(job.command == JOB_GET_DEVELOPMENT, true);
+	job_free(&job);
+	char getDevelopmentNoOutput[] = "command=get_development\nperson=1\n";
+	ASSERT_BOOL_EQ(job_parse(getDevelopmentNoOutput, &job), false);
 	char noSeed[] = "command=seed_development\nperson=2000147523\n";
 	ASSERT_BOOL_EQ(job_parse(noSeed, &job), false);
 	char noPerson[] = "command=seed_development\nseed=7\n";

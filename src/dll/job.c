@@ -56,6 +56,7 @@ bool job_parse(char *text, Job *job) {
 
 void job_free(Job *job) {
 	free(job->seeds);
+	free(job->values);
 	*job = (Job){0};
 }
 
@@ -169,6 +170,7 @@ static bool parseCommand(Job *job, const char *value) {
 		{"get_player", JOB_GET_PLAYER},
 		{"develop", JOB_DEVELOP},
 		{"seed_development", JOB_SEED_DEVELOPMENT},
+		{"get_development", JOB_GET_DEVELOPMENT},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -212,6 +214,18 @@ static bool parseThreads(Job *job, const char *value) {
 		return false;
 	}
 	job->threads = (unsigned)threads;
+	return true;
+}
+
+// A development file's values; development_file.c checks their content.
+static bool copyValues(Job *job, const char *value) {
+	free(job->values);
+	size_t length = strlen(value);
+	job->values = malloc(length + 1);
+	if (!job->values) {
+		return false;
+	}
+	memcpy(job->values, value, length + 1);
 	return true;
 }
 
@@ -276,6 +290,9 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->personId = (uint32_t)person;
 		return true;
 	}
+	if (strcmp(key, "values") == 0) {
+		return copyValues(job, value);
+	}
 	if (strcmp(key, "months") == 0) {
 		return parseMonths(job, value);
 	}
@@ -311,6 +328,7 @@ static bool isComplete(const Job *job) {
 			return hasOutput && job->personId != 0 && job->months != 0 && job->seedCount > 0;
 		case JOB_SEED_DEVELOPMENT: // optional seeds and output: a prediction made by the hook
 			return job->personId != 0 && job->hasSeed && (job->seedCount > 0) == hasOutput;
+		case JOB_GET_DEVELOPMENT: return hasOutput && job->personId != 0;
 	}
 	return false;
 }
