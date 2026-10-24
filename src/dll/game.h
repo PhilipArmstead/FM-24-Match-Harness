@@ -52,6 +52,8 @@ enum GameFunction {
 	RVA_TRAINING_TEAM = 0x38C7810,
 	RVA_WEEK_SCHEDULE = 0x38FE1D0,
 	RVA_WEEK_SCHEDULE_CALL = 0x38F2BBF,
+	// The player's INDIVIDUAL_TRAINING_INFO, allocated with no focus if missing (sub_142906AB0).
+	RVA_FOCUS_RECORD = 0x2906AB0,
 };
 
 // Game data.
@@ -130,6 +132,9 @@ enum DatabaseLayout {
 	PLAYER_MORALE = 0x25F,             // u8
 	PLAYER_PREFERRED_POSITION = 0x266, // u8
 	// Training (knowledge-base/FM24 Training — Attribute Growth.md).
+	// INDIVIDUAL_TRAINING_INFO *, NULL until the first daily training after loading a save.
+	PLAYER_FOCUS_RECORD = 0x170,
+	FOCUS_ID = 6,                      // u8 in it: the additional focus, 255 none
 	PLAYER_TRAINING_WEEK = 0x198,      // s32: TRAINING_MANAGER_WEEK when last trained, 0 never
 	PLAYER_TRAINING_INTENSITY = 0x1C2, // u8: 0/1 normal, 2 double, 254 half, 255 the team's
 	PLAYER_TRAINING_PROGRESS = 0x1C3,  // TRAINING_CATEGORY_COUNT s8, -100..50
@@ -211,6 +216,7 @@ typedef void (*VoidFn)(void);
 // `lastDay`: the scheduler ran on day -1; `flag` is always 1 in the game's calls.
 typedef void (*PlayerDevelopFn)(uint8_t *player, bool lastDay, uint8_t flag);
 typedef uint8_t *(*TrainingTeamFn)(uint8_t *manager, uint8_t *player);
+typedef uint8_t *(*FocusRecordFn)(uint8_t **record);
 // A schedule: SCHEDULE_DAYS records of SCHEDULE_DAY_SIZE bytes, each holding SCHEDULE_SLOTS u16
 // session IDs from SCHEDULE_SESSIONS_AT (the training_sessions.jsb IDs; 11 is Team Rest).
 typedef uint8_t *(*WeekScheduleFn)(uint8_t *manager, uint8_t *team, const uint32_t *weekStart);

@@ -20,6 +20,7 @@ typedef enum Base {
 	ON_HAPPINESS,       // offset in the training happiness relationship record
 	ON_TEAM_TRAINING,   // offset in the training team's TEAM_TRAINING_INFO
 	ON_CLUB_FACILITIES, // offset in the training team's club's facilities
+	ON_FOCUS,           // offset in the player's INDIVIDUAL_TRAINING_INFO, created when applied
 } Base;
 
 // KIND_RATINGS and KIND_CATEGORIES are u8 maps: 69 ratings, or one value per training category.
@@ -167,6 +168,17 @@ static const Field fields[] = {
 		0,
 		false,
 		"0 or 1 normal, 2 double, 254 half, 255 the team's workload"},
+	// The monthly routine boosts the focus's attributes for IDs 5 and up; 0-4 are the injury
+	// recovery focuses (knowledge-base section 15).
+	{"training_focus",
+		KIND_U8,
+		ON_FOCUS,
+		FOCUS_ID,
+		0,
+		255,
+		0,
+		false,
+		"additional focus: 255 none, 9 quickness, 12 endurance, 15 shooting ... (IDs in docs/CLI.md)"},
 	{"condition", KIND_U16, ON_PLAYER, PLAYER_CONDITION, 0, 10000, 0, true, "0-10000"},
 	{"fatigue", KIND_S16, ON_PLAYER, PLAYER_FATIGUE, -32768, 32767, 0, true, "0 is fresh"},
 	{"sharpness", KIND_U16, ON_PLAYER, PLAYER_SHARPNESS, 0, 10000, 0, true, "0-10000"},
@@ -467,6 +479,12 @@ static uint8_t *locate(uint8_t *player, const Field *field) {
 							 ? facilities + field->offset
 							 : NULL;
 		}
+		case ON_FOCUS: {
+			uint8_t *record = NULL;
+			return memory_readPointer(player, PLAYER_FOCUS_RECORD, &record) && record
+							 ? record + field->offset
+							 : NULL;
+		}
 	}
 	return NULL;
 }
@@ -731,7 +749,7 @@ bool developmentFile_fits(
 ) {
 	for (size_t i = 0; i < values->count; ++i) {
 		const Field *field = &fields[values->field[i]];
-		if (!locate(player, field)) {
+		if (field->base != ON_FOCUS && !locate(player, field)) { // apply creates a focus record
 			(void)snprintf(error, errorSize, "the player has no %s record", field->name);
 			return false;
 		}
@@ -757,6 +775,10 @@ void developmentFile_restore(uint8_t *player, const DevelopmentSnapshot *snapsho
 		uint8_t *at = locate(player, &fields[i]);
 		if (at && snapshot->present[i]) {
 			memcpy(at, snapshot->bytes + used, sizeOf(&fields[i]));
+		} else if (at && fields[i].base == ON_FOCUS) {
+			// shortcut: drops the focus record apply created, leaking its 10 pool bytes; free it
+			// through the pool if records ever pile up.
+			memcpy(player + PLAYER_FOCUS_RECORD, &(void *){NULL}, sizeof(void *));
 		}
 		used += sizeOf(&fields[i]);
 	}
@@ -765,6 +787,9 @@ void developmentFile_restore(uint8_t *player, const DevelopmentSnapshot *snapsho
 void developmentFile_apply(uint8_t *player, const DevelopmentValues *values) {
 	for (size_t i = 0; i < values->count; ++i) {
 		const Field *field = &fields[values->field[i]];
+		if (field->base == ON_FOCUS) {
+			((FocusRecordFn)game_function(RVA_FOCUS_RECORD))((uint8_t **)(player + PLAYER_FOCUS_RECORD));
+		}
 		uint8_t *at = locate(player, field);
 		const uint8_t *value = values->bytes + values->offset[i];
 		if (!at) {

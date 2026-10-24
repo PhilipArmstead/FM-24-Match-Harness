@@ -338,6 +338,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `ratings` | the 69 ratings by name: positions 1–20, attributes 1–100 |
 | `training_progress.<category>` (11) | `s8`, −100 to 50 |
 | `training_intensity` | 0 or 1 normal, 2 double, 254 half, 255 the team's workload |
+| `training_focus` | the additional focus by ID (below), 255 none |
 | `condition`, `sharpness` | 0–10000 |
 | `fatigue` | `s16`; 0 is fresh |
 | `morale` | 0–255 |
@@ -379,6 +380,32 @@ unknown name is an error. A number is taken as a session ID.
 }}
 ```
 
+`training_focus` is the player's additional focus. Right after loading a
+save the game hasn't set it up yet (it does at the first training day), so
+`get-development` leaves the field out; add it yourself and `develop` gives
+the player the focus for the run. Names marked * were confirmed in the
+game; the others are inferred from the attributes.
+
+| ID | Focus | Attributes |
+|---|---|---|
+| 0–4 | injury recovery (Quickness, Agility and Balance, Strength, Stamina, Physical) | only offered after an injury; no effect in `develop` |
+| 5, 6, 7 | Free Kicks, Corners, Penalty Taking | each + Technique |
+| 8 | Long Throws | Long Throws |
+| 9 | Quickness* | Pace, Acceleration |
+| 10 | Agility and Balance | Agility, Balance |
+| 11 | Strength | Strength, Jumping Reach (+ Aerial Reach for goalkeepers) |
+| 12 | Endurance* | Stamina, Work Rate |
+| 13 | Defensive Positioning | Marking, Positioning, Decisions |
+| 14 | Attacking Movement | Off The Ball, Anticipation, Decisions |
+| 15 | Shooting* | Finishing, Long Shots, Technique |
+| 16 | Passing | Vision, Passing, Technique |
+| 17 | Decisions | Composure, Decisions |
+| 18 | Crossing | Crossing, Technique |
+| 19 | Ball Control | First Touch, Dribbling, Technique |
+| 20 | Heading | Heading, Bravery |
+| 21–25 | Goalkeeping | Shot Stopping, Positioning, Handling, One on Ones, Distribution |
+| 26 | Playmaking | First Touch, Passing, Vision |
+
 `coaching`, `coach_workload` and `training_facilities` belong to the
 player's team and club, not the player: `develop` sets them for the run and
 puts them back afterwards. The game works `coaching` out from the coaches'
@@ -389,8 +416,8 @@ schedules (see the knowledge base, section 18); `develop` doesn't, so
 without a coaching record (it is made when the game first rates the team's
 coaches) don't export these two, and a file with them is refused.
 
-Not in the file yet: rest (the club's rest list), the additional focus and
-position/role/duty training.
+Not in the file yet: rest (the club's rest list) and position/role/duty
+training.
 
 ## Seed the game's own development: `seed-development`
 
