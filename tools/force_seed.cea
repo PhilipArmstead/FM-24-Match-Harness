@@ -1,0 +1,122 @@
+{ Cheat Engine auto-assemble: make the game build a match with a chosen seed.
+
+  Hooks MatchBuilder_Create just before fixture_prepare_teams (EDI = the clock seed,
+  R15 = the fixture). It replaces the seed and seeds this thread's PCG32 the way the
+  harness's rng_seedThread does (src/dll/rng.c). Both are needed: the pre-match draws
+  come from the thread's PCG, not from the seed passed to init_from_fixture.
+
+  Set forceSeed and forceHomeTeamId (the home team's unique ID from
+  fm24ctl list-teams; 0 = every build, AI fixtures included) before kick-off.
+  It matches the ID, not a pointer: fixtures are reallocated and loading a save
+  moves the teams. forceHits counts the builds that were forced.
+
+  A second hook reseeds the PCG again when the human's match is played
+  (sub_140245820, the instant-result loop; forcePlays counts them). That loop makes the
+  AI's pre-match and in-match decisions outside GAME_MATCH__Run, from the playing
+  thread's PCG, so with only the build forced the result diverged between replays.
+  It matches the match's own seed, which only a forced build has. }
+
+[ENABLE]
+alloc(newmem,$200,"fm.exe"+34F7EC6)
+alloc(vars,$20,"fm.exe"+34F7EC6) // its own block: code can never run into the variables
+label(instantPlay)
+label(apply)
+label(skip)
+label(return)
+label(forceSeed)
+label(forceHomeTeamId)
+label(forceHits)
+label(apply2)
+label(skip2)
+label(return2)
+label(forcePlays)
+registersymbol(forceSeed)
+registersymbol(forceHomeTeamId)
+registersymbol(forceHits)
+registersymbol(forcePlays)
+
+newmem:
+  // rax, rcx and rdx are overwritten before the original code reads them again
+  mov eax,[forceHomeTeamId]
+  test eax,eax
+  jz apply
+  mov rcx,[r15+8]   // fixture's home team
+  cmp eax,[rcx+0C]  // TEAM_UNIQUE_ID
+  jne skip
+apply:
+  mov edi,[forceSeed]
+  mov ecx,["fm.exe"+638EEC0] // TlsIndex
+  mov rax,gs:[58]
+  mov rcx,[rax+rcx*8]
+  mov eax,edi
+  mov rdx,DA3E39CB94B95BDB
+  add rax,rdx
+  mov rdx,5851F42D4C957F2D
+  imul rax,rdx
+  mov rdx,DA3E39CB94B95BDB
+  add rax,rdx
+  mov [rcx+168],rax // TLS_PCG + 8: state
+  mov [rcx+170],rdx // TLS_PCG + 16: increment
+  inc dword ptr [forceHits]
+skip:
+  db 66 0F 57 C0 66 0F 29 45 A0 // the overwritten xorpd xmm0,xmm0; movapd [rbp-60],xmm0
+  jmp return
+
+// sub_140245820(player): rcx = player, player+40 = the match. Only rax, r10, r11 are touched.
+instantPlay:
+  mov rax,[rcx+40]
+  test rax,rax
+  jz skip2
+  mov r10d,[forceSeed]
+  cmp r10d,[rax+20] // MATCH_SEED
+  jne skip2
+apply2:
+  mov r10d,["fm.exe"+638EEC0] // TlsIndex
+  mov rax,gs:[58]
+  mov r10,[rax+r10*8]
+  mov eax,[forceSeed]
+  mov r11,DA3E39CB94B95BDB
+  add rax,r11
+  mov r11,5851F42D4C957F2D
+  imul rax,r11
+  mov r11,DA3E39CB94B95BDB
+  add rax,r11
+  mov [r10+168],rax
+  mov [r10+170],r11
+  inc dword ptr [forcePlays]
+skip2:
+  db 41 57 41 56 41 55 // the overwritten push r15; push r14; push r13
+  jmp return2
+
+vars:
+forceSeed:
+  dd 0
+forceHomeTeamId:
+  dd 0
+forceHits:
+  dd 0
+forcePlays:
+  dd 0
+
+"fm.exe"+34F7EC6:
+  jmp newmem
+  nop 4
+return:
+
+"fm.exe"+245820:
+  jmp instantPlay
+  nop
+return2:
+
+[DISABLE]
+"fm.exe"+34F7EC6:
+  db 66 0F 57 C0 66 0F 29 45 A0
+"fm.exe"+245820:
+  db 41 57 41 56 41 55
+
+unregistersymbol(forceSeed)
+unregistersymbol(forceHomeTeamId)
+unregistersymbol(forceHits)
+unregistersymbol(forcePlays)
+dealloc(newmem)
+dealloc(vars)
