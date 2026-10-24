@@ -7,13 +7,15 @@
 // apply always agree (knowledge-base/FM24 Training — Attribute Growth.md, section 14).
 #pragma once
 
+#include "game.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <wchar.h>
 
 
-enum { DEVELOPMENT_FIELD_LIMIT = 64, DEVELOPMENT_SNAPSHOT_SIZE = 256 };
+enum { DEVELOPMENT_FIELD_LIMIT = 64, DEVELOPMENT_SNAPSHOT_SIZE = 256, DEVELOPMENT_WEEK_LIMIT = 52 };
 
 // Values to apply, as `fm24ctl develop` sends them: "name:hex,name:hex" (each a field's encoded
 // bytes, in the file's order).
@@ -22,20 +24,25 @@ typedef struct DevelopmentValues {
 	size_t field[DEVELOPMENT_FIELD_LIMIT];    // index into the table
 	uint8_t bytes[DEVELOPMENT_SNAPSHOT_SIZE]; // the values, back to back
 	size_t offset[DEVELOPMENT_FIELD_LIMIT];   // each value's start in `bytes`
+	// "schedule.week1".."schedule.weekN": session IDs day by day, repeated for every week trained.
+	size_t scheduleWeeks;
+	uint16_t schedule[DEVELOPMENT_WEEK_LIMIT][SCHEDULE_SESSIONS];
 } DevelopmentValues;
 
 // Every table field's current bytes, to put back later.
 typedef struct DevelopmentSnapshot {
-	bool hasHappiness; // the player had a training happiness record
+	bool present[DEVELOPMENT_FIELD_LIMIT]; // the field was there (e.g. a training happiness record)
 	uint8_t bytes[DEVELOPMENT_SNAPSHOT_SIZE];
 } DevelopmentSnapshot;
 
-// Writes the player's fields (`name` annotates person_uid). Fails if the file cannot be written.
+// Writes the player's fields (`name` annotates person_uid) and `schedule` as schedule.week1 unless
+// it is NULL. Fails if the file cannot be written.
 bool developmentFile_write(
 	const wchar_t *path,
 	uint8_t *player,
 	uint32_t uniqueId,
-	const char *name
+	const char *name,
+	const uint16_t *schedule
 );
 
 // Parses and checks `text` (names, sizes and limits). False with a reason in `error`.

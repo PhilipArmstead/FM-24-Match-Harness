@@ -311,6 +311,13 @@ editable `fm24-development/1` file, in the same field syntax as a fixture
 (change values only; don't add, remove or reorder fields or ratings). Remove
 a field to leave the player's own value alone. Nothing in the game is changed.
 
+A `//` comment above each field gives its range or meaning (the table below
+has them all). Add your own `//` comments anywhere between values: `develop`
+skips them, as do all of fm24ctl's JSON inputs. Fields the game computes as it
+plays (training progress, condition, morale, the development counters and
+flags) come last, under `// here be dragons`: leave them alone to simulate
+training.
+
 Without an output file, it writes to the current directory, named after the
 player's common name, or else forename and surname, in lowercase ASCII
 letters joined by hyphens: accents are dropped (`Álex Moreno` →
@@ -339,9 +346,51 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `date_of_birth.day`, `date_of_birth.year` | day of the year from 1, and the year |
 | `training_happiness` | 0–100 (only if the player has a training happiness record) |
 | `training_happiness.unknown_08` | changes at the weekly training review; meaning unknown |
+| `last_development.gains`, `last_development.other_gains` | `s16`; rating points from the last development |
+| `weak_foot_progress` | 0–65535; the weaker foot gains 1 above 10 × its rating + 500 |
+| `development_period.*` (4) | a total and count moved to `last_*` each period; meaning unknown |
+| `rating_progress.important_matches`, `rating_progress.determination` | 0–65535; the rating gains 1 at a threshold |
+| `personality_progress.pressure`, `personality_progress.professionalism` | 0–65535; the trait gains 1 at a threshold |
+| `played_level`, `played_level.appearances` | best club reputation ÷ 10 with 11+ appearances in a season; appearances there, 0–120 |
+| `development_flags` | `0x40` late developer, `0x200` late growth due, `0x100` late growth had |
+| `training_rating` | 0–20 |
+| `ability_carry` | `hex`: the 4 bytes of a float, the CA growth carried to the next development |
+| `coaching` | the team's coaching rating per category (11), 0–100: best coach + training facilities − 10 |
+| `coach_workload` | the team's coach workload per category (11), 0–100; progress builds `(100 − workload)%` as fast |
+| `training_facilities` | the club's training facilities, 1–20 |
+| `schedule.week1` … `schedule.weekN` | `sessions`: 21 training sessions, `day1.slot1` to `day7.slot3`; up to 52 weeks |
 
-The training schedule is not in the file yet: the player trains on their
-club's schedule.
+`get-development` writes the schedule the player's team trains on this week
+as `schedule.week1`. `develop` trains every simulated week on the file's
+weeks in turn (week 1, 2, … N, then 1 again, restarting for each seed),
+instead of the club's own schedules. Remove every `schedule.week` field to
+keep the club's schedules. Add `schedule.week2` and so on (numbered in order)
+for a rotation. Sessions are named as in the game's `training_sessions.jsb`
+(case doesn't matter), e.g. `"Team Physical"`, `"Team Rest"`,
+`"Match Prep Match Practice"`, `"Unit Technical Chance Conversion"`. The
+game's short aliases work too (`"Match Practice"`, `"Team Bonding"`). An
+unknown name is an error. A number is taken as a session ID.
+
+```json
+{"name": "schedule.week1", "sessions": {
+  "day1.slot1": "Team Physical", "day1.slot2": "Team Outfield", "day1.slot3": "Team Rest",
+  ...
+  "day7.slot1": "Team Rest", "day7.slot2": "Team Rest", "day7.slot3": "Team Rest"
+}}
+```
+
+`coaching`, `coach_workload` and `training_facilities` belong to the
+player's team and club, not the player: `develop` sets them for the run and
+puts them back afterwards. The game works `coaching` out from the coaches'
+attributes and assignments, the training facilities and the squad's
+schedules (see the knowledge base, section 18); `develop` doesn't, so
+`coaching` already includes the facilities at export. If you change
+`training_facilities`, change `coaching` by the same amount to match. Teams
+without a coaching record (it is made when the game first rates the team's
+coaches) don't export these two, and a file with them is refused.
+
+Not in the file yet: rest (the club's rest list), the additional focus and
+position/role/duty training.
 
 ## Seed the game's own development: `seed-development`
 

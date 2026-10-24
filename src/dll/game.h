@@ -46,6 +46,12 @@ enum GameFunction {
 	// for every player due that day, and for the one person it is handed.
 	RVA_DEVELOP_CALL_DAY = 0x4F6FEC1,
 	RVA_DEVELOP_CALL_PERSON = 0x4F6FDD4,
+	// Weekly training's schedule: the team a player trains with, then its schedule for the week
+	// starting at a date. The weekly routine (sub_1438F1890) looks it up once per week trained,
+	// with the `call RVA_WEEK_SCHEDULE` (E8 rel32) at RVA_WEEK_SCHEDULE_CALL.
+	RVA_TRAINING_TEAM = 0x38C7810,
+	RVA_WEEK_SCHEDULE = 0x38FE1D0,
+	RVA_WEEK_SCHEDULE_CALL = 0x38F2BBF,
 };
 
 // Game data.
@@ -127,10 +133,20 @@ enum DatabaseLayout {
 	PLAYER_TRAINING_WEEK = 0x198,      // s32: TRAINING_MANAGER_WEEK when last trained, 0 never
 	PLAYER_TRAINING_INTENSITY = 0x1C2, // u8: 0/1 normal, 2 double, 254 half, 255 the team's
 	PLAYER_TRAINING_PROGRESS = 0x1C3,  // TRAINING_CATEGORY_COUNT s8, -100..50
-	PLAYER_POTENTIAL_ABILITY = 0x202,  // u16
-	PLAYER_PERSON = 0x278,             // the person within a db::ACTUAL_PLAYER
-	PLAYER_RECORD_SIZE = 1000,         // db::ACTUAL_PLAYER (its pool's element size)
-	TRAINING_MANAGER_WEEK = 24,        // s32: training weeks so far
+	PLAYER_DEVELOPMENT_GAINS = 0x1A8,  // 2 s16: rating points from the last development's two paths
+	PLAYER_WEAK_FOOT_PROGRESS = 0x1AC, // u16: weaker foot +1 above 10 * weaker + 500
+	PLAYER_DEVELOPMENT_PERIOD =
+		0x1AE, // u16 total, s16 last total, then u8 last count at +0x1BA, count +0x1BB
+	PLAYER_RATING_PROGRESS = 0x1B2,      // 2 u16: Important Matches, Determination +1 accumulators
+	PLAYER_PERSONALITY_PROGRESS = 0x1B6, // 2 u16: Pressure, Professionalism +1 accumulators
+	PLAYER_PLAYED_LEVEL = 0x1BC, // u8 best club reputation / 10 with 11+ apps, u8 apps there (0-120)
+	PLAYER_DEVELOPMENT_FLAGS = 0x1BE, // u16: 0x40 late developer, 0x200 late growth due, 0x100 had it
+	PLAYER_TRAINING_RATING = 0x1C0,   // u8, 1-20
+	PLAYER_ABILITY_CARRY = 0x1E8,     // f32: CA growth carried to the next development
+	PLAYER_POTENTIAL_ABILITY = 0x202, // u16
+	PLAYER_PERSON = 0x278,            // the person within a db::ACTUAL_PLAYER
+	PLAYER_RECORD_SIZE = 1000,        // db::ACTUAL_PLAYER (its pool's element size)
+	TRAINING_MANAGER_WEEK = 24,       // s32: training weeks so far
 	CONTRACT_TEAM = 0x10,
 	TEAM_UNIQUE_ID = 0x0C,
 	TEAM_CLUB = 0x30,
@@ -138,8 +154,14 @@ enum DatabaseLayout {
 	// TEAM_IN_GAME_DATA: the team's next match (competition +0x28, the team, its opponent, the date
 	// +0x40).
 	NEXT_MATCH_OPPONENT = 0x38,
-	CLUB_TEAMS = 0x18,      // vector<TEAM *> {start, end}: the first team, then B, youth etc.
-	CLUB_NAME_SHORT = 0xC8, // singly indirect string
+	// TEAM_IN_GAME_DATA: TEAM_TRAINING_INFO *, 22 u8: each category's coaching rating (0-100, best
+	// coach + training facilities - 10), then each one's coach workload (0-100). Set by
+	// sub_144F42720, read by the weekly training (knowledge-base section 18).
+	TEAM_TRAINING_INFO = 0xD0,
+	CLUB_TEAMS = 0x18,           // vector<TEAM *> {start, end}: the first team, then B, youth etc.
+	CLUB_NAME_SHORT = 0xC8,      // singly indirect string
+	CLUB_FACILITIES = 0x100,     // pointer
+	FACILITIES_TRAINING = 0x120, // u8 1-20, the club's own (sub_142215070 may use an affiliate's)
 	FIXTURE_HOME = 0x08,
 	FIXTURE_AWAY = 0x10,
 	FIXTURE_DATE = 0x4C, // u16 day | time << 9, u16 year
@@ -154,6 +176,13 @@ enum ThreadRngLayout {
 };
 
 enum { PLAYER_RATING_COUNT = 69, STAFF_ATTRIBUTE_COUNT = 52, TRAINING_CATEGORY_COUNT = 11 };
+enum {
+	SCHEDULE_DAYS = 7,
+	SCHEDULE_SLOTS = 3,
+	SCHEDULE_SESSIONS = SCHEDULE_DAYS * SCHEDULE_SLOTS,
+	SCHEDULE_DAY_SIZE = 10,
+	SCHEDULE_SESSIONS_AT = 4,
+};
 
 // Second argument of GAME_MATCH__init_from_fixture, as laid out on MatchBuilder_Create's stack.
 typedef struct InitArgs {
@@ -181,6 +210,10 @@ typedef void *(*DataBufferCtorFn)(void *self);
 typedef void (*VoidFn)(void);
 // `lastDay`: the scheduler ran on day -1; `flag` is always 1 in the game's calls.
 typedef void (*PlayerDevelopFn)(uint8_t *player, bool lastDay, uint8_t flag);
+typedef uint8_t *(*TrainingTeamFn)(uint8_t *manager, uint8_t *player);
+// A schedule: SCHEDULE_DAYS records of SCHEDULE_DAY_SIZE bytes, each holding SCHEDULE_SLOTS u16
+// session IDs from SCHEDULE_SESSIONS_AT (the training_sessions.jsb IDs; 11 is Team Rest).
+typedef uint8_t *(*WeekScheduleFn)(uint8_t *manager, uint8_t *team, const uint32_t *weekStart);
 
 // Finds fm.exe in this process and checks it is the expected build; logs the reason if not.
 bool game_init(void);
@@ -206,3 +239,7 @@ uint32_t game_rva(const void *address);
 // Runs the calling thread's thread_local constructors in fm.exe if the game has not done so yet
 // (every thread that calls into the engine needs them); returns the thread's TLS block.
 uint8_t *game_initThread(void);
+
+// `size` bytes of executable memory below fm.exe, within rel32 reach of its code (for redirected
+// calls), or NULL. Kept for the life of the process.
+uint8_t *game_allocateNear(size_t size);

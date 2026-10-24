@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// A minimal streaming JSON reader: enough to walk a match config, but it accepts any valid JSON.
+// A minimal streaming JSON reader: enough to walk a match config, but it accepts any valid JSON,
+// plus `//` line comments wherever whitespace may go.
 #pragma once
 
 #include "buffer.h"
@@ -21,6 +22,9 @@ void jsonReader_init(JsonReader *reader, const char *text, size_t length);
 
 // Records an error (the first one wins) and returns false.
 bool jsonReader_fail(JsonReader *reader, const char *message);
+
+// Skips whitespace and `//` comments.
+void jsonReader_skipWhitespace(JsonReader *reader);
 
 // Skips whitespace, then consumes `c` if it is next.
 bool jsonReader_consume(JsonReader *reader, char c);

@@ -23,6 +23,7 @@
 #include "log.h"
 #include "memory.h"
 #include "rng.h"
+#include "schedule.h"
 #include "slug.h"
 
 #include <stdio.h>
@@ -46,20 +47,6 @@ enum {
 static const char developPrologue[] =
 	"\x55\x41\x57\x41\x56\x41\x55\x41\x54\x56\x57\x53\x48\x81\xEC\xF8";
 
-static const char *const categoryNames[TRAINING_CATEGORY_COUNT] = {
-	"strength",
-	"quickness",
-	"gk_shot_stopping",
-	"gk_handling",
-	"defending",
-	"tackling",
-	"tactics",
-	"ball_control",
-	"attacking",
-	"shooting",
-	"set_pieces",
-};
-
 typedef struct Simulation {
 	uint8_t *player;                      // the game's player, developed in place
 	uint8_t original[PLAYER_RECORD_SIZE]; // the player when the job started
@@ -75,9 +62,17 @@ typedef struct Simulation {
 	const DevelopmentValues *values; // from a development file, or NULL
 	DevelopmentSnapshot before;      // the file's fields before `values` were applied
 	DevelopmentSnapshot start;       // and as every seed starts
+	const char *failure;             // why the simulation did not run, or NULL
 } Simulation;
 
+typedef struct CurrentSchedule {
+	uint8_t *player;
+	bool found;
+	uint16_t sessions[SCHEDULE_SESSIONS];
+} CurrentSchedule;
+
 static void simulateAll(void *context);
+static void readSchedule(void *context);
 
 static const char *checkPlayer(const uint8_t *person, const uint8_t *player);
 static bool daysToDevelopment(const uint8_t *person, unsigned *days);
@@ -167,15 +162,26 @@ void jobs_getDevelopment(const Job *job) {
 		}
 		output = path;
 	}
-	if (!developmentFile_write(output, player, job->personId, name)) {
+	CurrentSchedule current = {.player = player};
+	bool hasSchedule = freeze_run(readSchedule, &current) == FREEZE_OK && current.found;
+	const char *note = hasSchedule ? "" : " (no training schedule found: not written)";
+	if (!developmentFile_write(
+				output, player, job->personId, name, hasSchedule ? current.sessions : NULL
+			)) {
 		job_writeResult("error: cannot write the output file");
 	} else if (fileName[0]) {
-		log_message("get_development: %s (%u) -> %s", name, job->personId, fileName);
-		job_writeResult("ok: %s (%u), wrote %s", name, job->personId, fileName);
+		log_message("get_development: %s (%u) -> %s%s", name, job->personId, fileName, note);
+		job_writeResult("ok: %s (%u), wrote %s%s", name, job->personId, fileName, note);
 	} else {
-		log_message("get_development: %s (%u)", name, job->personId);
-		job_writeResult("ok: %s (%u)", name, job->personId);
+		log_message("get_development: %s (%u)%s", name, job->personId, note);
+		job_writeResult("ok: %s (%u)%s", name, job->personId, note);
 	}
+}
+
+// Runs on freeze_run's worker thread: the lookup may create the week's schedule.
+static void readSchedule(void *context) {
+	CurrentSchedule *current = context;
+	current->found = schedule_readCurrent(current->player, current->sessions);
 }
 
 // A zeroed Simulation, with room for the averages unless the job wants a row per seed.
@@ -241,6 +247,8 @@ void jobs_develop(const Job *job) {
 			job_writeResult(
 				"error: the simulation outlasted the watchdog; restart FM24. See harness.log"
 			);
+		} else if (sim->failure) {
+			job_writeResult("error: %s", sim->failure);
 		} else if (!written) {
 			job_writeResult("error: cannot write the output file");
 		} else {
@@ -353,9 +361,18 @@ static void simulateAll(void *context) {
 		memcpy(sim->original, sim->player, sizeof sim->original); // every seed starts from these
 	}
 	developmentFile_save(sim->player, &sim->start);
-	sim->written = true;
+	size_t weeks = sim->values ? sim->values->scheduleWeeks : 0;
+	if (weeks && !schedule_override(sim->values->schedule, weeks)) {
+		sim->failure = "cannot replace the training schedule; see harness.log";
+		sim->written = false;
+	} else {
+		sim->written = true;
+	}
 	for (size_t i = 0; i < sim->seedCount && sim->written; ++i) {
 		sim->written = simulateSeed(sim, sim->seeds[i], sim->months);
+	}
+	if (weeks) {
+		schedule_override(NULL, 0);
 	}
 	restoreValues(sim);
 	if (sim->values) {
@@ -369,6 +386,7 @@ static void simulateAll(void *context) {
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 	PlayerDevelopFn develop = (PlayerDevelopFn)game_function(RVA_PLAYER_DEVELOP);
 	restoreValues(sim);
+	schedule_restart();   // a file's schedule starts from its first week for every seed
 	rng_seedThread(seed); // the routine draws from this thread's PCG
 	if (!recordRow(sim, seed, 0)) {
 		return false;
@@ -451,7 +469,7 @@ static bool writeHeader(FILE *csv, bool perSeed) {
 	fputs(perSeed ? "seed,month" : "month,seeds", csv);
 	fputs(",current_ability,potential_ability,weight,height", csv);
 	for (size_t i = 0; i < TRAINING_CATEGORY_COUNT; ++i) {
-		fprintf(csv, ",progress_%s", categoryNames[i]);
+		fprintf(csv, ",progress_%s", labels_categoryName(i));
 	}
 	for (size_t i = 0; i < PLAYER_RATING_COUNT; ++i) {
 		fprintf(csv, ",%s", labels_ratingName(i));

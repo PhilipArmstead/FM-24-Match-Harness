@@ -25,9 +25,7 @@ enum {
 	CALL_LENGTH = 5, // E8 rel32
 	CALL_OPCODE = 0xE8,
 	STUB_SIZE = 4096,
-	ALLOCATION_STEP = 0x10000,
-	NEAR_RANGE = 0x70000000, // how far below fm.exe to look for the stub: well within rel32's reach
-	STUB_HOOK_SLOT = 28,     // offsets in stubCode of its two absolute targets
+	STUB_HOOK_SLOT = 28, // offsets in stubCode of its two absolute targets
 	STUB_ROUTINE_SLOT = 36,
 };
 
@@ -131,28 +129,20 @@ void jobs_seedDevelopment(const Job *job) {
 	);
 }
 
-// The stub goes within rel32 reach of the call sites: below fm.exe, where nothing else is mapped.
+// The stub goes within rel32 reach of the call sites.
 static bool makeStub(void) {
-	uintptr_t base = game_base();
-	for (uintptr_t address = (base - ALLOCATION_STEP) & ~(uintptr_t)(ALLOCATION_STEP - 1);
-		address > base - NEAR_RANGE;
-		address -= ALLOCATION_STEP) {
-		void *at = NULL;
-		memcpy(&at, &address, sizeof at);
-		uint8_t *memory = VirtualAlloc(at, STUB_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-		if (memory) {
-			void (*hook)(uint8_t *) = onDevelop;
-			void *routine = game_address(RVA_PLAYER_DEVELOP);
-			memcpy(memory, stubCode, sizeof stubCode);
-			memcpy(memory + STUB_HOOK_SLOT, &hook, sizeof hook);
-			memcpy(memory + STUB_ROUTINE_SLOT, &routine, sizeof routine);
-			FlushInstructionCache(GetCurrentProcess(), memory, STUB_SIZE);
-			stub = memory;
-			return true;
-		}
+	uint8_t *memory = game_allocateNear(STUB_SIZE);
+	if (!memory) {
+		return false;
 	}
-	log_message("seed_development: no free page within reach of fm.exe");
-	return false;
+	void (*hook)(uint8_t *) = onDevelop;
+	void *routine = game_address(RVA_PLAYER_DEVELOP);
+	memcpy(memory, stubCode, sizeof stubCode);
+	memcpy(memory + STUB_HOOK_SLOT, &hook, sizeof hook);
+	memcpy(memory + STUB_ROUTINE_SLOT, &routine, sizeof routine);
+	FlushInstructionCache(GetCurrentProcess(), memory, STUB_SIZE);
+	stub = memory;
+	return true;
 }
 
 // Points both calls at the stub, or back at the routine. Each must be a call of either one.

@@ -128,6 +128,21 @@ static const char *const ratingNames[69] = {
 	"concentration",
 };
 
+// The 11 training categories (knowledge-base/FM24 Training — Attribute Growth.md, section 3).
+static const char *const trainingCategoryNames[TRAINING_CATEGORY_COUNT] = {
+	"strength",
+	"quickness",
+	"gk_shot_stopping",
+	"gk_handling",
+	"defending",
+	"tackling",
+	"tactics",
+	"ball_control",
+	"attacking",
+	"shooting",
+	"set_pieces",
+};
+
 // MATCH_STAFF+0x60, byte by byte, matched against four staff members' FMRTE profiles
 // (docs/FIXTURE.md#staff-attributes). The named bytes 0-26 are on the 1-20 scale, 27-51 on 1-100.
 static const char *const staffAttributeNames[STAFF_ATTRIBUTE_COUNT] = {
@@ -459,6 +474,10 @@ static void labelRecord(Walk *walk, size_t i);
 
 const char *labels_ratingName(size_t index) {
 	return index < sizeof ratingNames / sizeof ratingNames[0] ? ratingNames[index] : "?";
+}
+
+const char *labels_categoryName(size_t index) {
+	return index < TRAINING_CATEGORY_COUNT ? trainingCategoryNames[index] : "?";
 }
 
 const char *labels_staffAttributeName(size_t index) {

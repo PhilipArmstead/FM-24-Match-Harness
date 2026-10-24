@@ -14,6 +14,8 @@ enum {
 	TEB_TLS_POINTER = 0x58,  // TEB.ThreadLocalStoragePointer
 	JMP_REL32 = 0xE9,
 	JMP_REL32_LENGTH = 5,
+	ALLOCATION_STEP = 0x10000,
+	NEAR_RANGE = 0x70000000, // how far below fm.exe to look: well within rel32's reach
 };
 
 typedef struct Signature {
@@ -170,6 +172,23 @@ uint8_t *game_initThread(void) {
 		((VoidFn)game_function(RVA_TLS_ON_DEMAND_INIT))();
 	}
 	return tls;
+}
+
+// Below fm.exe, where nothing else is mapped.
+uint8_t *game_allocateNear(size_t size) {
+	uintptr_t start = (uintptr_t)base;
+	for (uintptr_t address = (start - ALLOCATION_STEP) & ~(uintptr_t)(ALLOCATION_STEP - 1);
+		address > start - NEAR_RANGE;
+		address -= ALLOCATION_STEP) {
+		void *at = NULL;
+		memcpy(&at, &address, sizeof at);
+		uint8_t *memory = VirtualAlloc(at, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+		if (memory) {
+			return memory;
+		}
+	}
+	log_message("game: no free page within reach of fm.exe");
+	return NULL;
 }
 
 static bool checkTimestamp(void) {

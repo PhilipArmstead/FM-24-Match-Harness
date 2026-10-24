@@ -4,6 +4,7 @@
 #include "match_config.h"
 
 #include "json_reader.h"
+#include "session_names.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -39,6 +40,7 @@ static bool emitHex(Encoder *encoder, uint8_t *hex, size_t length);
 static bool readText(Encoder *encoder, ByteBuffer *out);
 static bool readUnsignedValue(Encoder *encoder, size_t width);
 static bool readU8Map(Encoder *encoder);
+static bool readSessions(Encoder *encoder);
 static bool readStringValue(Encoder *encoder, bool isHex);
 static size_t widthOf(const char *key);
 static size_t skipSpace(Encoder *encoder);
@@ -183,6 +185,45 @@ static bool readU8Map(Encoder *encoder) {
 	return jsonReader_consume(reader, '}') || failField(encoder, "expected , or } in u8map");
 }
 
+// A "sessions" object's values in order as u16 session IDs: training session names (or IDs, for
+// sessions without one). Its keys only label them.
+static bool readSessions(Encoder *encoder) {
+	JsonReader *reader = &encoder->reader;
+	if (!jsonReader_consume(reader, '{')) {
+		return failField(encoder, "sessions must be an object");
+	}
+	if (jsonReader_consume(reader, '}')) {
+		return true;
+	}
+	do {
+		if (!jsonReader_readString(reader, NULL) || !jsonReader_consume(reader, ':')) {
+			return failField(encoder, "bad sessions entry");
+		}
+		skipSpace(encoder);
+		if (reader->position == reader->end || *reader->position != '"') {
+			if (!readUnsignedValue(encoder, 2)) {
+				return false;
+			}
+			continue;
+		}
+		if (!jsonReader_readString(reader, &encoder->scratch)) {
+			return false;
+		}
+		uint16_t id = 0;
+		if (!session_id(buffer_string(&encoder->scratch), &id)) {
+			char message[120];
+			(void)snprintf(
+				message, sizeof message, "unknown training session \"%s\"", buffer_string(&encoder->scratch)
+			);
+			return failField(encoder, message);
+		}
+		if (!emitUnsigned(encoder, id, 2)) {
+			return false;
+		}
+	} while (jsonReader_consume(reader, ','));
+	return jsonReader_consume(reader, '}') || failField(encoder, "expected , or } in sessions");
+}
+
 static bool readStringValue(Encoder *encoder, bool isHex) {
 	if (!jsonReader_readString(&encoder->reader, &encoder->scratch)) {
 		return false;
@@ -211,11 +252,7 @@ static size_t widthOf(const char *key) {
 // Skips whitespace before a token; returns the token's offset in the JSON.
 static size_t skipSpace(Encoder *encoder) {
 	JsonReader *reader = &encoder->reader;
-	while (
-		reader->position < reader->end && (*reader->position == ' ' || *reader->position == '\t' ||
-																				*reader->position == '\r' || *reader->position == '\n')) {
-		++reader->position;
-	}
+	jsonReader_skipWhitespace(reader);
 	return (size_t)(reader->position - reader->begin);
 }
 
@@ -252,8 +289,8 @@ static bool readSignedValue(Encoder *encoder, size_t width) {
 static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	size_t width = widthOf(key);
 	size_t signedWidth = signedWidthOf(key);
-	bool isValue = width || signedWidth || strcmp(key, "u8map") == 0 || strcmp(key, "str") == 0 ||
-								 strcmp(key, "hex") == 0;
+	bool isValue = width || signedWidth || strcmp(key, "u8map") == 0 ||
+								 strcmp(key, "sessions") == 0 || strcmp(key, "str") == 0 || strcmp(key, "hex") == 0;
 	if (!isValue) {
 		if (encoder->visitor && strcmp(key, "name") == 0) {
 			return readText(encoder, &encoder->name);
@@ -279,6 +316,9 @@ static bool readMember(Encoder *encoder, const char *key, FieldState *field) {
 	} else if (strcmp(key, "u8map") == 0) {
 		field->kind = CONFIG_RATINGS;
 		ok = readU8Map(encoder);
+	} else if (strcmp(key, "sessions") == 0) {
+		field->kind = CONFIG_SESSIONS;
+		ok = readSessions(encoder);
 	} else {
 		field->kind = strcmp(key, "str") == 0 ? CONFIG_STRING : CONFIG_HEX;
 		ok = readStringValue(encoder, strcmp(key, "hex") == 0);
@@ -307,7 +347,7 @@ static bool readField(Encoder *encoder) {
 		ok = ok && (jsonReader_consume(reader, '}') || failField(encoder, "expected , or }"));
 	}
 	if (ok && field.values != 1) {
-		return failField(encoder, "needs exactly one of u8/u16/u32/u64/s8/s16/str/hex/u8map");
+		return failField(encoder, "needs exactly one of u8/u16/u32/u64/s8/s16/str/hex/u8map/sessions");
 	}
 	if (ok && encoder->visitor && encoder->visitor->field) {
 		ConfigField value = {
@@ -396,10 +436,7 @@ static bool readTopLevel(Encoder *encoder, bool *formatOk, bool *haveFields) {
 	}
 	buffer_free(&key);
 	if (ok) {
-		while (
-			reader->position < reader->end && strchr(" \t\r\n", *reader->position) && *reader->position) {
-			++reader->position;
-		}
+		jsonReader_skipWhitespace(reader);
 		ok = reader->position == reader->end || jsonReader_fail(reader, "trailing data");
 	}
 	return ok;

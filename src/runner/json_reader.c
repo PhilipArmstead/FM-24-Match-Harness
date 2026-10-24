@@ -10,7 +10,6 @@
 
 enum { MAX_DEPTH = 64 };
 
-static void skipWhitespace(JsonReader *reader);
 static bool appendUtf8(ByteBuffer *out, unsigned long codePoint);
 static bool readHex4(JsonReader *reader, unsigned long *value);
 static bool readUnicodeEscape(JsonReader *reader, ByteBuffer *out);
@@ -41,7 +40,7 @@ bool jsonReader_fail(JsonReader *reader, const char *message) {
 }
 
 bool jsonReader_consume(JsonReader *reader, char c) {
-	skipWhitespace(reader);
+	jsonReader_skipWhitespace(reader);
 	if (reader->position < reader->end && *reader->position == c) {
 		++reader->position;
 		return true;
@@ -121,7 +120,7 @@ static bool readDigits(JsonReader *reader) {
 }
 
 bool jsonReader_readNumber(JsonReader *reader, unsigned long long *value, bool *isUnsigned) {
-	skipWhitespace(reader);
+	jsonReader_skipWhitespace(reader);
 	const char *start = reader->position;
 	bool negative = reader->position < reader->end && *reader->position == '-';
 	if (negative) {
@@ -191,10 +190,19 @@ bool jsonReader_skipValue(JsonReader *reader) {
 	return skipNested(reader, 0);
 }
 
-static void skipWhitespace(JsonReader *reader) {
-	while (
-		reader->position < reader->end && strchr(" \t\r\n", *reader->position) && *reader->position) {
-		++reader->position;
+// Whitespace and `//` line comments (development files explain their fields in them).
+void jsonReader_skipWhitespace(JsonReader *reader) {
+	for (;;) {
+		while (
+			reader->position < reader->end && strchr(" \t\r\n", *reader->position) && *reader->position) {
+			++reader->position;
+		}
+		if (reader->end - reader->position < 2 || memcmp(reader->position, "//", 2) != 0) {
+			return;
+		}
+		while (reader->position < reader->end && *reader->position != '\n') {
+			++reader->position;
+		}
 	}
 }
 
@@ -312,7 +320,7 @@ static bool skipNested(JsonReader *reader, int depth) {
 	if (depth > MAX_DEPTH) {
 		return jsonReader_fail(reader, "nested too deeply");
 	}
-	skipWhitespace(reader);
+	jsonReader_skipWhitespace(reader);
 	if (reader->position >= reader->end) {
 		return jsonReader_fail(reader, "unexpected end");
 	}

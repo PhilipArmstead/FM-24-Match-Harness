@@ -47,5 +47,8 @@ const char *labels_flagName(const FieldLabel *label, unsigned bit);
 // The names of a ratings field's 69 values: 15 positions, then 54 attributes (database order).
 const char *labels_ratingName(size_t index);
 
+// The names of the 11 training categories, in the game's order (strength ... set_pieces).
+const char *labels_categoryName(size_t index);
+
 // The names of a staff attributes field's 52 bytes: 0-26 on the 1-20 scale, 27-51 on 1-100.
 const char *labels_staffAttributeName(size_t index);

@@ -29,6 +29,7 @@ typedef enum ConfigValueKind {
 	CONFIG_STRING,
 	CONFIG_HEX,
 	CONFIG_RATINGS,
+	CONFIG_SESSIONS, // u16 training session IDs in order, from names (development schedules)
 } ConfigValueKind;
 
 typedef struct ConfigField {

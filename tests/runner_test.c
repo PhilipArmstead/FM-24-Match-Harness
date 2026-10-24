@@ -141,11 +141,13 @@ TEST(parses_player_ids_and_blocks) {
 
 TEST(reads_development_files_as_job_values) {
 	static const char file[] =
-		"{\"format\":\"fm24-development/1\",\"fields\":["
-		"{\"name\":\"person_uid\",\"player\":\"H. Rhoades\",\"u32\":2000128236},"
-		"{\"name\":\"current_ability\",\"u16\":53},"
+		"{ // a comment\n\"format\":\"fm24-development/1\",\"fields\":[ // after [\n"
+		"{\"name\":\"person_uid\",\"player\":\"H. // Rhoades\",\"u32\":2000128236},\n"
+		"  // 1-200\n  // two lines\n"
+		"{\"name\":\"current_ability\",\"u16\":53} // before a comma\n,"
 		"{\"name\":\"training_progress.strength\",\"s8\":-61},"
-		"{\"name\":\"ratings\",\"u8map\":{\"pos_gk\":1,\"pos_sw\":20}}]}";
+		"{\"name\":\"ratings\",\"u8map\":{\"pos_gk\":1,\"pos_sw\":20}},"
+		"{\"name\":\"schedule.week1\",\"sessions\":{\"day1.slot1\":\"Team Rest\",\"day1.slot2\":\"team bonding\",\"day1.slot3\":12}}\n// before ]\n]} // at the end";
 	char person[16] = "";
 	char error[256] = "";
 	ByteBuffer values = {0};
@@ -159,16 +161,20 @@ TEST(reads_development_files_as_job_values) {
 	ASSERT_INT_EQ(
 		strcmp(
 			buffer_string(&values),
-			"current_ability:3500,training_progress.strength:c3,ratings:0114"
+			"current_ability:3500,training_progress.strength:c3,ratings:0114,schedule.week1:0b0091010c00"
 		),
 		0
 	);
 	buffer_free(&values);
 	static const char *const invalid[] = {
 		"{\"format\":\"fm24-development/1\",\"fields\":[{\"name\":\"height\",\"u16\":180}]}",
+		("{\"format\":\"fm24-development/1\",\"fields\":[{\"name\":\"person_uid\",\"u32\":1} / not a "
+		 "comment\n]}"),
 		("{\"format\":\"fm24-development/1\",\"fields\":[{\"name\":\"person_uid\",\"u32\":1},"
 		 "{\"name\":\"a,b\",\"u8\":1}]}"),
 		"{\"format\":\"fm24-player/1\",\"fields\":[{\"name\":\"person_uid\",\"u32\":1}]}",
+		("{\"format\":\"fm24-development/1\",\"fields\":[{\"name\":\"person_uid\",\"u32\":1},"
+		 "{\"name\":\"schedule.week1\",\"sessions\":{\"day1.slot1\":\"Team Nap\"}}]}"),
 	};
 	for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
 		ByteBuffer rejected = {0};
