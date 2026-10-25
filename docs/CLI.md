@@ -248,8 +248,10 @@ fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv
 
 Runs the game's own monthly training and development routine on a player,
 month after month, with each month starting from the previous month's result.
-It uses the player's current training and club, and ages them as the months
-pass while the game's date stays the same. Month 1 ends on the player's next
+It uses the player's current training and club. While each month runs, the
+game's date moves on to that month's development day (and back afterwards),
+so the player ages and trains on the weeks being predicted, with the club's
+rest days and season dates for those weeks. Month 1 ends on the player's next
 development day (day `id % 28 + 1` of a month), with the whole weeks of
 training before it; later months have 4 or 5 weeks (52 a year). `months` is
 `1` to `600`. Seeds take the same forms as `run` (`42`, `1-100`,
@@ -311,6 +313,8 @@ editable `fm24-development/1` file, in the same field syntax as a fixture
 (change values only; don't add, remove or reorder fields or ratings). Remove
 a field to leave the player's own value alone. Nothing in the game is changed.
 
+The header comments give the game date of the export (as a day of the year)
+and the day of the month the player develops on.
 A `//` comment above each field gives its range or meaning (the table below
 has them all). Add your own `//` comments anywhere between values: `develop`
 skips them, as do all of fm24ctl's JSON inputs. Fields the game computes as it

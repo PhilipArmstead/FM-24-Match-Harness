@@ -4,8 +4,8 @@
 // Job "develop": a player's training and development simulated month by month with the game's own
 // routine (RVA_PLAYER_DEVELOP), each month's result being the next month's input. The output CSV
 // has one row per seed and month, month 0 being the starting values. Months alternate 4 and 5
-// training weeks (52 a year) and the player's date of birth moves back by as many days, so they
-// age while the game's date stays put.
+// training weeks (52 a year), and the game's date moves on to each month's development day while
+// the routine runs (then back), so the player ages and trains the weeks being predicted.
 //
 // This changes the game: the routine runs on the game's own player (a copy is not enough, it
 // reaches the player through the game's lists; knowledge-base/FM24 Training — Attribute
@@ -52,6 +52,7 @@ typedef struct Simulation {
 	uint8_t original[PLAYER_RECORD_SIZE]; // the player when the job started
 	int32_t week;                         // the training manager's week
 	unsigned firstDays;                   // days until the player's next development day
+	uint8_t startDate[4];                 // the game's date (RVA_CURRENT_DATE), put back after
 	const uint32_t *seeds;
 	size_t seedCount;
 	unsigned months;
@@ -78,7 +79,7 @@ static const char *checkPlayer(const uint8_t *person, const uint8_t *player);
 static bool daysToDevelopment(const uint8_t *person, unsigned *days);
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months);
 static void restoreValues(Simulation *sim);
-static void ageBy(uint8_t *person, unsigned days);
+static void addDays(uint8_t *date, int days);
 static bool writeHeader(FILE *csv, bool perSeed);
 static bool recordRow(Simulation *sim, uint32_t seed, unsigned month);
 static bool writeAverages(Simulation *sim);
@@ -165,6 +166,7 @@ void jobs_getDevelopment(const Job *job) {
 	CurrentSchedule current = {.player = player};
 	bool hasSchedule = freeze_run(readSchedule, &current) == FREEZE_OK && current.found;
 	const char *note = hasSchedule ? "" : " (no training schedule found: not written)";
+	log_message("get_development: player record at %p", (void *)player); // for memory tools
 	if (!developmentFile_write(
 				output, player, job->personId, name, hasSchedule ? current.sessions : NULL
 			)) {
@@ -275,7 +277,8 @@ static const char *checkPlayer(const uint8_t *person, const uint8_t *player) {
 		return "this game build's development routine is not the one the harness knows";
 	}
 	// shortcut: db::ACTUAL_PLAYER only; a player who is also staff is a bigger object with the
-	// person elsewhere, so the date of birth would be missed. Support it once its layout is known.
+	// person elsewhere, so the file's person fields would be missed. Support it once its layout is
+	// known.
 	if (person != player + PLAYER_PERSON) {
 		return "players who are also staff are not supported";
 	}
@@ -301,7 +304,7 @@ static bool daysToDevelopment(const uint8_t *person, unsigned *days) {
 	uint16_t field = 0;
 	uint16_t year = 0;
 	const uint8_t *date = game_address(RVA_CURRENT_DATE);
-	if (!memory_readU32(person, 8, &id) || !memory_readU16(date, 0, &field) ||
+	if (!memory_readU32(person, PERSON_ROW_ID, &id) || !memory_readU16(date, 0, &field) ||
 			!memory_readU16(date, 2, &year)) {
 		return false;
 	}
@@ -355,6 +358,7 @@ bool develop_runHere(
 // thread from develop_runHere.
 static void simulateAll(void *context) {
 	Simulation *sim = context;
+	memcpy(sim->startDate, game_address(RVA_CURRENT_DATE), sizeof sim->startDate);
 	if (sim->values) {
 		developmentFile_save(sim->player, &sim->before);
 		developmentFile_apply(sim->player, sim->values);
@@ -374,6 +378,7 @@ static void simulateAll(void *context) {
 	if (weeks) {
 		schedule_override(NULL, 0);
 	}
+	memcpy(game_address(RVA_CURRENT_DATE), sim->startDate, sizeof sim->startDate);
 	restoreValues(sim);
 	if (sim->values) {
 		developmentFile_restore(sim->player, &sim->before);
@@ -386,6 +391,7 @@ static void simulateAll(void *context) {
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 	PlayerDevelopFn develop = (PlayerDevelopFn)game_function(RVA_PLAYER_DEVELOP);
 	restoreValues(sim);
+	memcpy(game_address(RVA_CURRENT_DATE), sim->startDate, sizeof sim->startDate);
 	schedule_restart();   // a file's schedule starts from its first week for every seed
 	rng_seedThread(seed); // the routine draws from this thread's PCG
 	if (!recordRow(sim, seed, 0)) {
@@ -407,7 +413,9 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 		// shortcut: 0 means "never trained" to the game, so in the save's week 4 or 5 a month
 		// gets one extra week. Harmless after that.
 		memcpy(sim->player + PLAYER_TRAINING_WEEK, &(int32_t){lastTrained ? lastTrained : -1}, 4);
-		ageBy(sim->player + PLAYER_PERSON, days);
+		// The routine dates the weeks it trains back from the game's date, and ages the player by
+		// it: move it to this month's development day, or it trains the weeks before the start.
+		addDays(game_address(RVA_CURRENT_DATE), (int)days);
 		develop(sim->player, false, 1);
 		if (!recordRow(sim, seed, month + 1)) {
 			return false;
@@ -447,16 +455,19 @@ static void restoreValues(Simulation *sim) {
 	developmentFile_restore(sim->player, &sim->start);
 }
 
-// Moves a date of birth (PERSON_DATE_OF_BIRTH: u16 day of year from 1 | other bits, u16 year)
-// back by `days`, keeping the bits above the day.
-static void ageBy(uint8_t *person, unsigned days) {
-	uint8_t *date = person + PERSON_DATE_OF_BIRTH;
+// Moves a date (u16 day of year from 1 | other bits, u16 year) by `days`, keeping the bits above
+// the day.
+static void addDays(uint8_t *date, int days) {
 	uint16_t field = memory_loadU16(date);
 	int year = memory_loadU16(date + 2);
-	int day = (field & DAY_MASK) - (int)days;
+	int day = (field & DAY_MASK) + days;
 	while (day < 1) {
 		--year;
 		day += isLeap(year) ? 366 : 365;
+	}
+	while (day > (isLeap(year) ? 366 : 365)) {
+		day -= isLeap(year) ? 366 : 365;
+		++year;
 	}
 	field = (uint16_t)((field & ~DAY_MASK) | day);
 	uint16_t year16 = (uint16_t)year;

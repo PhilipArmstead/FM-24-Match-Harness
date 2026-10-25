@@ -102,6 +102,7 @@ enum ManagerLayout {
 
 // Database layouts.
 enum DatabaseLayout {
+	PERSON_ROW_ID = 0x08, // u32: the person's database row; sets the development day
 	PERSON_UNIQUE_ID = 0x0C,
 	PERSON_FORENAME = 0x58,    // doubly indirect string
 	PERSON_SURNAME = 0x60,     // doubly indirect string
@@ -134,6 +135,9 @@ enum DatabaseLayout {
 	// Training (knowledge-base/FM24 Training — Attribute Growth.md).
 	// INDIVIDUAL_TRAINING_INFO *, NULL until the first daily training after loading a save.
 	PLAYER_FOCUS_RECORD = 0x170,
+	// vector<u16> *: attribute (rating index) | signed amount << 8; negative ones make the injury
+	// recovery focuses available (sub_1439242B0).
+	PLAYER_ATTRIBUTE_CHANGES = 0x188,
 	FOCUS_ID = 6,                      // u8 in it: the additional focus, 255 none
 	PLAYER_TRAINING_WEEK = 0x198,      // s32: TRAINING_MANAGER_WEEK when last trained, 0 never
 	PLAYER_TRAINING_INTENSITY = 0x1C2, // u8: 0/1 normal, 2 double, 254 half, 255 the team's

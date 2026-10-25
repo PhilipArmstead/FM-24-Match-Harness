@@ -509,6 +509,7 @@ static const char *keyOf(const Field *field) {
 }
 
 static bool writeField(FILE *file, uint8_t *player, const Field *field, const char *heading);
+static void writeAttributeChanges(FILE *file, uint8_t *player);
 static void writeSchedule(FILE *file, const uint16_t *schedule);
 
 bool developmentFile_write(
@@ -528,14 +529,24 @@ bool developmentFile_write(
 		"  // Edit values, then: fm24ctl develop <this file> <months> <seeds> <output.csv>\n"
 		"  // Change values only: don't add, rename or reorder fields, ratings or categories.\n"
 		"  // Remove a field to keep the player's own value. More in docs/CLI.md.\n"
-		"  \"format\": \"fm24-development/1\",\n  \"source\": "
 	);
+	uint16_t day = 0;
+	uint16_t year = 0;
+	const uint8_t *date = game_address(RVA_CURRENT_DATE);
+	if (memory_readU16(date, 0, &day) && memory_readU16(date, 2, &year)) {
+		fprintf(file, "  // Exported on day %u of %u (game date).\n", day & 0x1FF, year);
+	}
+	writeAttributeChanges(file, player);
+	fprintf(file, "  \"format\": \"fm24-development/1\",\n  \"source\": ");
 	configWriter_writeString(file, name);
-	fprintf(
-		file,
-		",\n  \"fields\": [\n    // the player (don't change)\n"
-		"    {\"name\": \"person_uid\", \"player\": "
-	);
+	// The scheduler develops a person on day (row ID % 28) + 1 of each month (sub_144F6FC80).
+	uint32_t row = 0;
+	bool hasRow = memory_readU32(player + PLAYER_PERSON, PERSON_ROW_ID, &row);
+	fprintf(file, ",\n  \"fields\": [\n    // the player (don't change)");
+	if (hasRow) {
+		fprintf(file, "; develops on day %u of each month", row % 28 + 1);
+	}
+	fprintf(file, "\n    {\"name\": \"person_uid\", \"player\": ");
 	configWriter_writeString(file, name);
 	fprintf(file, ", \"u32\": %u}", uniqueId);
 	for (size_t i = 0; i < FIELD_COUNT; ++i) {
@@ -557,6 +568,27 @@ bool developmentFile_write(
 	fprintf(file, "\n  ]\n}\n");
 	bool ok = !ferror(file);
 	return fclose(file) == 0 && ok;
+}
+
+// The attribute changes the game keeps for the player (e.g. losses from an injury), as a comment:
+// not in the file's values, and not yet understood (knowledge-base section 15).
+static void writeAttributeChanges(FILE *file, uint8_t *player) {
+	uint8_t *list = NULL;
+	uint8_t *begin = NULL;
+	uint8_t *end = NULL;
+	if (!memory_readPointer(player, PLAYER_ATTRIBUTE_CHANGES, &list) || !list ||
+			!memory_readPointer(list, 0, &begin) || !memory_readPointer(list, 8, &end) || end <= begin ||
+			end - begin > 512) {
+		return;
+	}
+	fprintf(file, "  // Attribute changes the game keeps (not applied by develop):");
+	for (uint8_t *entry = begin; entry + 2 <= end; entry += 2) {
+		uint16_t value = 0;
+		if (memory_readU16(entry, 0, &value)) {
+			fprintf(file, " %s %+d", labels_ratingName(value & 0xFF), (int8_t)(value >> 8));
+		}
+	}
+	fprintf(file, "\n");
 }
 
 // One field as ",\n" + `heading` (unless NULL) + its note + the entry. False if the player has no
