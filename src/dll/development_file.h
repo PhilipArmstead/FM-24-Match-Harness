@@ -15,7 +15,12 @@
 #include <wchar.h>
 
 
-enum { DEVELOPMENT_FIELD_LIMIT = 64, DEVELOPMENT_SNAPSHOT_SIZE = 256, DEVELOPMENT_WEEK_LIMIT = 52 };
+enum {
+	DEVELOPMENT_FIELD_LIMIT = 64,
+	DEVELOPMENT_SNAPSHOT_SIZE = 256,
+	DEVELOPMENT_WEEK_LIMIT = 52,
+	DEVELOPMENT_MONTH_LIMIT = 600, // develop's most months
+};
 
 // Values to apply, as `fm24ctl develop` sends them: "name:hex,name:hex" (each a field's encoded
 // bytes, in the file's order).
@@ -27,6 +32,10 @@ typedef struct DevelopmentValues {
 	// "schedule.week1".."schedule.weekN": session IDs day by day, repeated for every week trained.
 	size_t scheduleWeeks;
 	uint16_t schedule[DEVELOPMENT_WEEK_LIMIT][SCHEDULE_SESSIONS];
+	// "match_points.month1".."match_points.monthN": the match points each simulated month earns,
+	// the last repeated for later months.
+	size_t matchMonths;
+	uint16_t matchPoints[DEVELOPMENT_MONTH_LIMIT];
 } DevelopmentValues;
 
 // Every table field's current bytes, to put back later.

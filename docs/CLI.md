@@ -353,7 +353,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `training_happiness.unknown_08` | the last change to `training_happiness` (new − old), as the bits of an `s16` |
 | `last_development.gains`, `last_development.other_gains` | `s16`; rating points from the last development |
 | `weak_foot_progress` | 0–65535; the weaker foot gains 1 above 10 × its rating + 500 |
-| `development_period.*` (4) | a total and count moved to `last_*` each period; meaning unknown |
+| `development_period.*` (4) | match points and matches since the last development (`total`, `count`), moved to `last_total`, `last_count` on the development day, which then bands `last_total` |
 | `rating_progress.important_matches`, `rating_progress.determination` | 0–65535; the rating gains 1 at a threshold |
 | `personality_progress.pressure`, `personality_progress.professionalism` | 0–65535; the trait gains 1 at a threshold |
 | `played_level`, `played_level.appearances` | best league reputation ÷ 10 with 11+ league appearances in a season (cups and Europe not counted); appearances there, 0–120 |
@@ -364,6 +364,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `coach_workload` | the team's coach workload per category (11), 0–100; progress builds `(100 − workload)%` as fast |
 | `training_facilities` | the club's training facilities, 1–20 |
 | `schedule.week1` … `schedule.weekN` | `sessions`: 21 training sessions, `day1.slot1` to `day7.slot3`; up to 52 weeks |
+| `match_points.month1` … `match_points.monthN` | `u16`: the match points each simulated month earns (not exported; add them); up to 600 months |
 
 `get-development` writes the schedule the player's team trains on this week
 as `schedule.week1`. `develop` trains every simulated week on the file's
@@ -383,6 +384,44 @@ unknown name is an error. A number is taken as a session ID.
   "day7.slot1": "Team Rest", "day7.slot2": "Team Rest", "day7.slot3": "Team Rest"
 }}
 ```
+
+`match_points.monthN` plans the player's match time. Every match a player
+appears in adds points to `development_period.total`, and on each
+development day the game bands the period's total: under 20 points is "no
+matches", then 20, 40, 60, 80, 100, 125 and 150 start bands 0 to 6. A higher
+band means more growth for players with headroom (about +1 to +1.8 CA a
+month for a full month), but bands 0 and 1 can cost players at their peak.
+Under-19s get a band of 2 to 4 without playing, depending on Professionalism,
+so for them only points above that count (knowledge base, section 20).
+Without these fields `develop` plays no matches: month 1 uses the
+`development_period.total` already earned, and later months have none.
+With them, month N's development uses `match_points.monthN` as the period's
+total, replacing what the player had earned. Months after the last one given
+repeat it, so `match_points.month1` alone sets every month. To keep the
+points the player has already earned for month 1, give
+`development_period.total`'s value as `match_points.month1` and plan from
+month 2.
+
+A full Premier League game earns a regular senior about 27–33 points, and a
+young player up to twice that. A full U21 game earns about 20–23. To work out
+a month from planned matches, use the game's formula in
+`tools/experiments/match_points.py`, once per kind of match:
+
+```powershell
+python -I ..\tools\experiments\match_points.py --file kellyman.json --matches 3 --minutes 90 `
+    --level 18 --average-ability 136 --opponent-reputation 7000 --month 2
+# 3 x 58 = 174 points
+# {"name": "match_points.month2", "u16": 174}
+```
+
+`--level` is the competition's reputation ÷ 10 (Premier League 18, 1 for
+friendlies), `--average-ability` the average CA of both matchday squads, and
+`--friendly` marks a match that isn't competitive (U21 games appear not to
+be). The player's played level comes from the file. Only the points total is
+planned, not the match count, which made no difference to growth in tests.
+Matches also raise sharpness and the
+`rating_progress` and `personality_progress` counters in the game. `develop`
+doesn't simulate those yet.
 
 `training_focus` is the player's additional focus. Right after loading a
 save the game hasn't set it up yet (it does at the first training day), so

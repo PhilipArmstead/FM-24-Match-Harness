@@ -101,10 +101,29 @@ def fields_of(path):
     return json.loads(re.sub(r"^\s*//.*$", "", path.read_text(encoding="utf-8"), flags=re.M))
 
 
-def with_weeks(folder, uid, weeks):
-    """The baseline file with schedule.week1..N from the snapshots in `weeks` (each one's week1)."""
+def recorded_points(folder, uid, labels):
+    """The match points the game banded at each development since the baseline: last_total in the
+    first snapshot after it (the development day moves the period's total there)."""
+    _, start, day = load(folder / f"{uid}.json")
+    points = []
+    for label in labels:
+        values, date, _ = load(RESULTS / label / f"{uid}.json")
+        developments = developments_between(start, date, day)
+        if developments > len(points) + 1:
+            raise SystemExit(f"{uid}: {label} is more than one development after the last snapshot")
+        if developments > len(points):
+            points.append(max(0, values["development_period.last_total"]))
+    return points
+
+
+def with_weeks(folder, uid, weeks, points):
+    """The baseline file with schedule.week1..N from the snapshots in `weeks` (each one's week1),
+    and with `points`, match_points.month1..N as the game recorded them."""
     config = fields_of(folder / f"{uid}.json")
     fields = [f for f in config["fields"] if not f["name"].startswith("schedule.week")]
+    if points:
+        for month, total in enumerate(recorded_points(folder, uid, weeks), 1):
+            fields.append({"name": f"match_points.month{month}", "u16": total})
     dates = []
     for number, label in enumerate(weeks, 1):
         path = RESULTS / label / f"{uid}.json"
@@ -119,7 +138,7 @@ def with_weeks(folder, uid, weeks):
     return out
 
 
-def predict(label, months, seeds, weeks, fm24ctl):
+def predict(label, months, seeds, weeks, points, fm24ctl):
     folder = RESULTS / label
     # develop counts from the game's date, so the game must be at the snapshot's (load its save).
     uid = next(iter(PLAYERS))
@@ -131,7 +150,7 @@ def predict(label, months, seeds, weeks, fm24ctl):
         raise SystemExit(f"the game is at {now}, the {label} snapshot at {wanted}: load the {label} save")
     for uid, name in PLAYERS.items():
         print(f"{name}...", flush=True)
-        source = with_weeks(folder, uid, weeks) if weeks else folder / f"{uid}.json"
+        source = with_weeks(folder, uid, weeks, points) if weeks else folder / f"{uid}.json"
         run(fm24ctl, "develop", source, months, seeds, folder / f"predict-{uid}.csv",
             "--per-seed-breakdown")
     print(f"wrote {folder}")
@@ -191,6 +210,8 @@ def main():
     command.add_argument("--months", type=int, default=3)
     command.add_argument("--seeds", default="1-200")
     command.add_argument("--weeks", nargs="+", help="weekly snapshots, in order: their schedules")
+    command.add_argument("--recorded-points", action="store_true",
+                         help="with --weeks: each month's match points as the snapshots recorded them")
     command = commands.add_parser("compare")
     command.add_argument("baseline")
     command.add_argument("snapshots", nargs="+")
@@ -198,7 +219,9 @@ def main():
     if args.command == "snapshot":
         snapshot(args.label, find_fm24ctl())
     elif args.command == "predict":
-        predict(args.label, args.months, args.seeds, args.weeks, find_fm24ctl())
+        if args.recorded_points and not args.weeks:
+            parser.error("--recorded-points needs --weeks")
+        predict(args.label, args.months, args.seeds, args.weeks, args.recorded_points, find_fm24ctl())
     else:
         compare(args.baseline, args.snapshots)
 

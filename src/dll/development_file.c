@@ -267,7 +267,8 @@ static const Field fields[] = {
 		65535,
 		0,
 		true,
-		"a total and a count moved to last_* each period; meaning unknown"},
+		"match points and matches since the last development, moved to last_* on that day; plan "
+		"later months with match_points.monthN (docs/CLI.md)"},
 	{"development_period.last_total",
 		KIND_S16,
 		ON_PLAYER,
@@ -406,6 +407,7 @@ _Static_assert(
 );
 
 static const char SCHEDULE_PREFIX[] = "schedule.week";
+static const char MATCH_PREFIX[] = "match_points.month";
 
 static size_t sizeOf(const Field *field) {
 	switch (field->kind) {
@@ -529,6 +531,7 @@ bool developmentFile_write(
 		"  // Edit values, then: fm24ctl develop <this file> <months> <seeds> <output.csv>\n"
 		"  // Change values only: don't add, rename or reorder fields, ratings or categories.\n"
 		"  // Remove a field to keep the player's own value. More in docs/CLI.md.\n"
+		"  // Add match_points.month1, month2 ... (u16) to plan match time; see docs/CLI.md.\n"
 	);
 	uint16_t day = 0;
 	uint16_t year = 0;
@@ -693,6 +696,44 @@ static bool parseWeek(
 	return true;
 }
 
+// One month's "<N>:hex" (after "match_points.month"): a u16 points total, months numbered from 1
+// in order.
+static bool parseMonth(
+	const char *number,
+	const char *colon,
+	const char *end,
+	DevelopmentValues *out,
+	char *error,
+	size_t errorSize
+) {
+	char *stop = NULL;
+	unsigned long month = strtoul(number, &stop, 10);
+	if (stop != colon || month != out->matchMonths + 1 || month > DEVELOPMENT_MONTH_LIMIT) {
+		(void)snprintf(
+			error,
+			errorSize,
+			"match points must be %s1 to %s%d, in order",
+			MATCH_PREFIX,
+			MATCH_PREFIX,
+			DEVELOPMENT_MONTH_LIMIT
+		);
+		return false;
+	}
+	const char *hex = colon + 1;
+	if (end - hex != 4) {
+		(void)snprintf(error, errorSize, "%s%lu should be a u16", MATCH_PREFIX, month);
+		return false;
+	}
+	char digits[5] = {hex[2], hex[3], hex[0], hex[1], 0}; // LE
+	out->matchPoints[month - 1] = (uint16_t)strtoul(digits, &stop, 16);
+	if (*stop) {
+		(void)snprintf(error, errorSize, "%s%lu has a bad hex digit", MATCH_PREFIX, month);
+		return false;
+	}
+	out->matchMonths = month;
+	return true;
+}
+
 // One "name:hex" entry of `text` (ending at `end`) into `out`.
 static bool parseEntry(
 	const char *text,
@@ -706,6 +747,9 @@ static bool parseEntry(
 	size_t prefix = sizeof SCHEDULE_PREFIX - 1;
 	if (colon && strncmp(text, SCHEDULE_PREFIX, prefix) == 0) {
 		return parseWeek(text + prefix, colon, end, out, error, errorSize);
+	}
+	if (colon && strncmp(text, MATCH_PREFIX, sizeof MATCH_PREFIX - 1) == 0) {
+		return parseMonth(text + sizeof MATCH_PREFIX - 1, colon, end, out, error, errorSize);
 	}
 	const Field *field = colon ? findField(text, (size_t)(colon - text)) : NULL;
 	if (!field) {

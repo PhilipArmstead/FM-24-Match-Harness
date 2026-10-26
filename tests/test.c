@@ -81,6 +81,7 @@ int main(const int argc, const char *argv[]) {
 #if defined(_WIN32) || defined(FM24_DLL_TESTS)
 		{"job", registerJobTests},
 		{"dll", registerDllTests},
+		{"development_file", registerDevelopmentFileTests},
 #endif
 #if defined(_WIN32) || defined(FM24_RUNNER_TESTS)
 		{"runner", registerRunnerTests},

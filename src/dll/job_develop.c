@@ -416,6 +416,14 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 		// The routine dates the weeks it trains back from the game's date, and ages the player by
 		// it: move it to this month's development day, or it trains the weeks before the start.
 		addDays(game_address(RVA_CURRENT_DATE), (int)days);
+		size_t planned = sim->values ? sim->values->matchMonths : 0;
+		if (planned) {
+			// The routine moves this to last_total and bands it (knowledge-base section 20).
+			// shortcut: the match count isn't planned, as the band reads only the total; plan it if
+			// another use of the count turns up.
+			uint16_t points = sim->values->matchPoints[month < planned ? month : planned - 1];
+			memcpy(sim->player + PLAYER_DEVELOPMENT_PERIOD, &points, sizeof points);
+		}
 		develop(sim->player, false, 1);
 		if (!recordRow(sim, seed, month + 1)) {
 			return false;

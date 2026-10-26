@@ -128,6 +128,7 @@ if(FM24_BUILD_TESTS)
 		tests/test.c
 		tests/job_test.c
 		tests/dll_test.c
+		tests/development_file_test.c
 		tests/fixture_data_test.c
 		tests/runner_main_test.c
 		tests/runner_test.c
@@ -143,6 +144,7 @@ if(FM24_BUILD_TESTS)
 		src/runner/paths.c
 		src/runner/player_inject.c
 		src/runner/probe_patterns.c
+		src/dll/development_file.c
 		src/dll/memory.c
 		src/dll/site_lookup.c
 		src/dll/site_members.c

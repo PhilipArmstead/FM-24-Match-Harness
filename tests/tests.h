@@ -8,6 +8,7 @@ void fixtureTest_config(ByteBuffer *out);
 
 void registerJobTests(void);
 void registerDllTests(void);
+void registerDevelopmentFileTests(void);
 void registerFixtureDataTests(void);
 void registerFixtureBaselineTests(const char *path);
 void registerRunnerMainTests(void);
