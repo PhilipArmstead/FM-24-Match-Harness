@@ -220,8 +220,8 @@ static const Field fields[] = {
 		false,
 		"day of the year, from 1"},
 	{"date_of_birth.year", KIND_U16, ON_PERSON, PERSON_DATE_OF_BIRTH + 2, 1900, 2100, 0, false, NULL},
-	{"training_happiness", KIND_U8, ON_HAPPINESS, 0x0C, 0, 100, 0, true, "0-100"},
-	// Changes at the weekly training review; meaning unknown (knowledge-base section 13).
+	{"training_happiness", KIND_S8, ON_HAPPINESS, 0x0C, -100, 100, 0, true, "-100 to 100"},
+	// The last change to training_happiness (new - old, as s16), written with it (sub_143923980).
 	{"training_happiness.unknown_08",
 		KIND_U16,
 		ON_HAPPINESS,
@@ -230,7 +230,7 @@ static const Field fields[] = {
 		65535,
 		0,
 		true,
-		"changes at the weekly training review; meaning unknown"},
+		"the last change to training_happiness, as s16 bits"},
 	// Development state the routine reads and updates (knowledge-base section 16).
 	{"last_development.gains",
 		KIND_S16,
@@ -339,7 +339,7 @@ static const Field fields[] = {
 		255,
 		0,
 		true,
-		"best club reputation / 10 with 11+ appearances in a season"},
+		"best league reputation / 10 with 11+ league appearances in a season"},
 	{"played_level.appearances",
 		KIND_U8,
 		ON_PLAYER,

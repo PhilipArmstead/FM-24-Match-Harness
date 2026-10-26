@@ -118,7 +118,7 @@ enum DatabaseLayout {
 	PERSON_RELATIONSHIPS = 0x80,
 	RELATIONSHIP_SIZE = 16,
 	RELATIONSHIP_TYPE = 0x0A,
-	RELATIONSHIP_TRAINING_HAPPINESS = 0x4700, // its u8 value (0-100) is at +0x0C
+	RELATIONSHIP_TRAINING_HAPPINESS = 0x4700, // s8 (-100 to 100) at +0x0C; s16 last change at +0x08
 	NATION_UNIQUE_ID = 0x0C,
 	// Player record (database_playerRecord) members copied into a match (docs/FIXTURE.md).
 	PLAYER_WEIGHT = 0x14C,             // u8, kilograms
@@ -148,7 +148,7 @@ enum DatabaseLayout {
 		0x1AE, // u16 total, s16 last total, then u8 last count at +0x1BA, count +0x1BB
 	PLAYER_RATING_PROGRESS = 0x1B2,      // 2 u16: Important Matches, Determination +1 accumulators
 	PLAYER_PERSONALITY_PROGRESS = 0x1B6, // 2 u16: Pressure, Professionalism +1 accumulators
-	PLAYER_PLAYED_LEVEL = 0x1BC, // u8 best club reputation / 10 with 11+ apps, u8 apps there (0-120)
+	PLAYER_PLAYED_LEVEL = 0x1BC,      // u8 best league rep / 10 with 11+ league apps, u8 apps (0-120)
 	PLAYER_DEVELOPMENT_FLAGS = 0x1BE, // u16: 0x40 late developer, 0x200 late growth due, 0x100 had it
 	PLAYER_TRAINING_RATING = 0x1C0,   // u8, 1-20
 	PLAYER_ABILITY_CARRY = 0x1E8,     // f32: CA growth carried to the next development

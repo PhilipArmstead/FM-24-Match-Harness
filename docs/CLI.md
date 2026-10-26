@@ -349,14 +349,14 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `height`, `weight` | cm, kg |
 | `personality.<trait>` (8) | 1–20 |
 | `date_of_birth.day`, `date_of_birth.year` | day of the year from 1, and the year |
-| `training_happiness` | 0–100 (only if the player has a training happiness record) |
-| `training_happiness.unknown_08` | changes at the weekly training review; meaning unknown |
+| `training_happiness` | −100 to 100 (only if the player has a training happiness record) |
+| `training_happiness.unknown_08` | the last change to `training_happiness` (new − old), as the bits of an `s16` |
 | `last_development.gains`, `last_development.other_gains` | `s16`; rating points from the last development |
 | `weak_foot_progress` | 0–65535; the weaker foot gains 1 above 10 × its rating + 500 |
 | `development_period.*` (4) | a total and count moved to `last_*` each period; meaning unknown |
 | `rating_progress.important_matches`, `rating_progress.determination` | 0–65535; the rating gains 1 at a threshold |
 | `personality_progress.pressure`, `personality_progress.professionalism` | 0–65535; the trait gains 1 at a threshold |
-| `played_level`, `played_level.appearances` | best club reputation ÷ 10 with 11+ appearances in a season; appearances there, 0–120 |
+| `played_level`, `played_level.appearances` | best league reputation ÷ 10 with 11+ league appearances in a season (cups and Europe not counted); appearances there, 0–120 |
 | `development_flags` | `0x40` late developer, `0x200` late growth due, `0x100` late growth had |
 | `training_rating` | 0–20 |
 | `ability_carry` | `hex`: the 4 bytes of a float, the CA growth carried to the next development |
