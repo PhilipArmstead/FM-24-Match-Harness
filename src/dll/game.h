@@ -135,6 +135,11 @@ enum DatabaseLayout {
 	// Training (knowledge-base/FM24 Training — Attribute Growth.md).
 	// INDIVIDUAL_TRAINING_INFO *, NULL until the first daily training after loading a save.
 	PLAYER_FOCUS_RECORD = 0x170,
+	// vector<INJURY *> *: begin, end, capacity. The game drops an injury once it has healed.
+	PLAYER_INJURIES = 0xF8,
+	INJURY_START = 0x20, // date: u16 day of year (from 1) | other bits, u16 year
+	INJURY_DAYS = 0x28,  // u16: length in days; bit 15 marks another form (sub_142741D60)
+	INJURY_WEEKS = 0x33, // s8: if 0 or more, its length in weeks, whatever the date
 	// vector<u16> *: attribute (rating index) | signed amount << 8; negative ones make the injury
 	// recovery focuses available (sub_1439242B0).
 	PLAYER_ATTRIBUTE_CHANGES = 0x188,

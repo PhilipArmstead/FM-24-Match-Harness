@@ -253,7 +253,10 @@ game's date moves on to that month's development day (and back afterwards),
 so the player ages and trains on the weeks being predicted, with the club's
 rest days and season dates for those weeks. Month 1 ends on the player's next
 development day (day `id % 28 + 1` of a month), with the whole weeks of
-training before it; later months have 4 or 5 weeks (52 a year). `months` is
+training before it; later months have 4 or 5 weeks (52 a year). Injuries
+that have healed by a simulated month's date are left out of that month, as
+the game would have cleared them; current ones still stop the player's
+attributes rising. `months` is
 `1` to `600`. Seeds take the same forms as `run` (`42`, `1-100`,
 `1,5,10-20`, not `keep`); each seed is a separate simulation from the
 player's current values.
