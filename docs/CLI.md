@@ -27,6 +27,7 @@ Exporting or rebuilding needs the human manager's upcoming fixture.
 | `develop`                      | Yes; **changes the game**                   | Simulate a player's training and growth    |
 | `get-development`              | Yes                                         | Export a player's development inputs       |
 | `seed-development`             | Yes; patches game code until it fires       | Fix the game's next development seed       |
+| `watch-write`                  | Yes; hardware breakpoints until stopped     | Log the code that writes a player field    |
 | `inject-player`                | Only when given a player ID                 | Copy player values into a fixture          |
 | `probe`                        | Only to discover an omitted executable path | Inspect a game executable on disk          |
 
@@ -496,6 +497,37 @@ routine are redirected through a small hook until that player develops, then
 put back. Other players develop normally. Running it again before then
 replaces the player and seed. Reloading a save keeps the hook armed; it lasts
 until the player develops or FM24 exits.
+
+## Find the code that writes a player field: `watch-write`
+
+```text
+fm24ctl watch-write <person unique ID> <offset>
+fm24ctl watch-write stop
+```
+
+Logs every instruction that writes that field of the player's record, to find
+the game code behind a value. The offset is in the player record, decimal or
+`0x` hex, below `0x1000`; an even address is watched as 2 bytes, an odd one as
+1. Advance the game, then read `harness.log`:
+
+```powershell
+.\fm24ctl.exe watch-write 2000147523 0x1AE   # Kellyman's match-points counter
+# play a match and advance a day
+.\fm24ctl.exe watch-write stop
+```
+
+Each write logs one line: the instruction **after** the write (data
+breakpoints stop once it has happened), the field's value now, some registers,
+and up to eight `fm.exe` addresses found on the stack, which are likely
+callers. The first 200 writes are logged; later ones are only counted, and
+`stop` reports the total.
+
+It sets hardware breakpoint 0 on every thread that exists when it runs, and
+clears it on `stop`. Threads the game creates later are not watched: run it
+again after loading a save. Reloading a save also moves the player's record,
+so the old address is meaningless: stop, then run it again. Arming it again
+replaces the watch. Debug registers can upset copy protection or debuggers;
+try it first on a save you can lose.
 
 ## Copy a player's values into a slot: `inject-player`
 

@@ -442,6 +442,37 @@ int commands_seedDevelopment(int argc, wchar_t **argv) {
 	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
+int commands_watchWrite(int argc, wchar_t **argv) {
+	char person[16] = "";
+	unsigned long offset = 0;
+	bool stop = argc == 3 && wcscmp(argv[2], L"stop") == 0;
+	if (!stop) {
+		wchar_t *end = NULL;
+		errno = 0;
+		offset = argc == 4 ? wcstoul(argv[3], &end, 0) : 0; // decimal or 0x hex
+		if (argc != 4 || !parsePersonId(argv[2], person, sizeof person) || errno != 0 ||
+				end == argv[3] || *end != 0 || offset >= 0x1000) {
+			fprintf(stderr, "usage: fm24ctl watch-write <person unique ID> <offset> | stop\n");
+			return EXIT_USAGE;
+		}
+	}
+	char job[JOB_LENGTH];
+	if (stop) {
+		(void)snprintf(job, sizeof job, "command=watch_write\n");
+	} else {
+		(void)snprintf(job, sizeof job, "command=watch_write\nperson=%s\noffset=%lu\n", person, offset);
+	}
+	char result[CLIENT_RESULT_LENGTH];
+	(void)snprintf(
+		result, sizeof result, "Cannot watch; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, sizeof result)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
+}
+
 int commands_injectPlayer(int argc, wchar_t **argv) {
 	char result[CLIENT_RESULT_LENGTH];
 	return commands_injectPlayerWithResult(argc, argv, result, sizeof result);

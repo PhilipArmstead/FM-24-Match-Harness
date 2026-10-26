@@ -14,7 +14,7 @@
 #include <windows.h>
 
 
-enum { MAX_SEED_RANGE = 10000000, MAX_MONTHS = 600 };
+enum { MAX_SEED_RANGE = 10000000, MAX_MONTHS = 600, MAX_WATCH_OFFSET = 0x1000 };
 
 static bool widen(const char *text, wchar_t *out, size_t size);
 static bool appendSeed(Job *job, size_t *capacity, uint32_t seed);
@@ -171,6 +171,7 @@ static bool parseCommand(Job *job, const char *value) {
 		{"develop", JOB_DEVELOP},
 		{"seed_development", JOB_SEED_DEVELOPMENT},
 		{"get_development", JOB_GET_DEVELOPMENT},
+		{"watch_write", JOB_WATCH_WRITE},
 	};
 	for (size_t i = 0; i < sizeof commands / sizeof commands[0]; ++i) {
 		if (strcmp(value, commands[i].name) == 0) {
@@ -308,6 +309,16 @@ static bool parseLine(Job *job, char *key, char *value) {
 		job->personId = (uint32_t)person;
 		return true;
 	}
+	if (strcmp(key, "offset") == 0) {
+		char *end = NULL;
+		unsigned long long offset = 0;
+		if (!parseNumber(value, &end, &offset) || *end != 0 || offset >= MAX_WATCH_OFFSET) {
+			return false;
+		}
+		job->offset = (uint32_t)offset;
+		job->hasOffset = true;
+		return true;
+	}
 	if (strcmp(key, "values") == 0) {
 		return copyValues(job, value);
 	}
@@ -348,6 +359,7 @@ static bool isComplete(const Job *job) {
 			return job->personId != 0 && job->hasSeed && (job->seedCount > 0) == hasOutput;
 		case JOB_GET_DEVELOPMENT:
 			return (hasOutput || job->outputDirectory[0] != 0) && job->personId != 0;
+		case JOB_WATCH_WRITE: return (job->personId != 0) == job->hasOffset; // neither: stop
 	}
 	return false;
 }

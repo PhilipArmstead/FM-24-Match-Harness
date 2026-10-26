@@ -26,6 +26,8 @@
 //   fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]
 //       the game's own next development of that player draws from `seed`, as develop's does;
 //       with seeds, develop's simulation of that development is run first, at the same moment
+//   fm24ctl watch-write <person unique ID> <offset> | stop
+//       logs every instruction that writes that field of the player's record (harness.log)
 //   fm24ctl inject-player <input.json> <home|away>.player[N] <person unique ID|player.json>
 //       <output.json> [--allow-duplicate]
 //       the input with that player block's database values replaced by another player's
@@ -61,6 +63,7 @@ static const char usage[] =
 	"  fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>\n"
 	"      [--per-seed-breakdown]\n"
 	"  fm24ctl seed-development <person unique ID> <seed> [<seeds> <output.csv>]\n"
+	"  fm24ctl watch-write <person unique ID> <offset> | stop\n"
 	"  fm24ctl inject-player <input.json> <home|away>.player[N]\n"
 	"      <person unique ID|player.json> <output.json> [--allow-duplicate]\n"
 	"  fm24ctl probe [path to fm.exe]\n";
@@ -106,6 +109,7 @@ int wmain(int argc, wchar_t **argv) {
 		{L"develop", commands_develop},
 		{L"get-development", commands_getDevelopment},
 		{L"seed-development", commands_seedDevelopment},
+		{L"watch-write", commands_watchWrite},
 		{L"inject-player", commands_injectPlayer},
 		{L"probe", commands_probe},
 	};

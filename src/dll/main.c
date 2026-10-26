@@ -61,6 +61,7 @@ static void runJob(char *text) {
 		case JOB_DEVELOP: jobs_develop(&job); break;
 		case JOB_SEED_DEVELOPMENT: jobs_seedDevelopment(&job); break;
 		case JOB_GET_DEVELOPMENT: jobs_getDevelopment(&job); break;
+		case JOB_WATCH_WRITE: jobs_watchWrite(&job); break;
 	}
 	job_free(&job);
 }

@@ -27,6 +27,7 @@ int commands_getPlayer(int argc, wchar_t **argv);
 int commands_develop(int argc, wchar_t **argv);
 int commands_seedDevelopment(int argc, wchar_t **argv);
 int commands_getDevelopment(int argc, wchar_t **argv);
+int commands_watchWrite(int argc, wchar_t **argv);
 int commands_injectPlayer(int argc, wchar_t **argv);
 // As above, also returning the outcome line for the viewer.
 int commands_injectPlayerWithResult(int argc, wchar_t **argv, char *result, size_t resultSize);
