@@ -360,7 +360,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `development_flags` | `0x40` late developer, `0x200` late growth due, `0x100` late growth had |
 | `training_rating` | 0–20 |
 | `ability_carry` | `hex`: the 4 bytes of a float, the CA growth carried to the next development |
-| `coaching` | the team's coaching rating per category (11), 0–100: best coach + training facilities − 10 |
+| `best_coach` | the team's best coach per category (11), 0–100; `develop` makes the coaching rating best coach + training facilities − 10, capped 0–100 |
 | `coach_workload` | the team's coach workload per category (11), 0–100; progress builds `(100 − workload)%` as fast |
 | `training_facilities` | the club's training facilities, 1–20 |
 | `schedule.week1` … `schedule.weekN` | `sessions`: 21 training sessions, `day1.slot1` to `day7.slot3`; up to 52 weeks |
@@ -410,15 +410,21 @@ game; the others are inferred from the attributes.
 | 21–25 | Goalkeeping | Shot Stopping, Positioning, Handling, One on Ones, Distribution |
 | 26 | Playmaking | First Touch, Passing, Vision |
 
-`coaching`, `coach_workload` and `training_facilities` belong to the
+`best_coach`, `coach_workload` and `training_facilities` belong to the
 player's team and club, not the player: `develop` sets them for the run and
-puts them back afterwards. The game works `coaching` out from the coaches'
-attributes and assignments, the training facilities and the squad's
-schedules (see the knowledge base, section 18); `develop` doesn't, so
-`coaching` already includes the facilities at export. If you change
-`training_facilities`, change `coaching` by the same amount to match. Teams
-without a coaching record (it is made when the game first rates the team's
-coaches) don't export these two, and a file with them is refused.
+puts them back afterwards. The game rates each coach from their attributes
+and assignments and the squad's schedules (see the knowledge base, section
+18), then stores the team's coaching rating as the best coach's + training
+facilities − 10, capped 0–100. `develop` doesn't rate the coaches: the file
+carries the best coach's rating, worked back from the stored one, and
+`develop` adds the facilities. So changing `training_facilities` changes the
+coaching too; without `best_coach` in the file, the team's own best coach is
+kept. Where the game capped the rating at 100 (or 0), the exported
+`best_coach` is the lowest (or highest) it can be, so lowering (or raising)
+the facilities there can give less (or more) coaching than the game would.
+Teams without a coaching record (it is made when the game first rates the
+team's coaches) don't export `best_coach` or `coach_workload`, and a file
+with them is refused.
 
 Not in the file yet: rest (the club's rest list) and position/role/duty
 training.

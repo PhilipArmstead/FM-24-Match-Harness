@@ -370,7 +370,8 @@ static const Field fields[] = {
 		true,
 		"the 4 bytes of a float: CA growth carried to the next development"},
 	// The team's, not the player's: the weekly training reads them (knowledge-base section 18).
-	{"coaching",
+	// The game's coaching rating is this + training facilities - 10, capped 0-100; apply sets it.
+	{"best_coach",
 		KIND_CATEGORIES,
 		ON_TEAM_TRAINING,
 		0,
@@ -378,7 +379,7 @@ static const Field fields[] = {
 		100,
 		0,
 		false,
-		"the team's, 0-100 per category: best coach + training facilities - 10"},
+		"the team's, 0-100 per category: its best coach; develop adds training facilities - 10"},
 	{"coach_workload",
 		KIND_CATEGORIES,
 		ON_TEAM_TRAINING,
@@ -396,7 +397,7 @@ static const Field fields[] = {
 		20,
 		0,
 		false,
-		"the club's, 1-20; change coaching by the same amount"},
+		"the club's, 1-20"},
 };
 
 enum { FIELD_COUNT = sizeof fields / sizeof fields[0] };
@@ -503,6 +504,22 @@ static int valueAt(const Field *field, const uint8_t *bytes) {
 	return 0;
 }
 
+static const char BEST_COACH[] = "best_coach";
+static const char TRAINING_FACILITIES[] = "training_facilities";
+
+static const Field *findField(const char *name, size_t length);
+
+// The club's training facilities level, 1-20, or 10 (which adds nothing to coaching) if none.
+static int facilitiesLevel(uint8_t *player) {
+	const uint8_t *at =
+		locate(player, findField(TRAINING_FACILITIES, sizeof TRAINING_FACILITIES - 1));
+	return at ? *at : 10;
+}
+
+static uint8_t clampRating(int value) {
+	return (uint8_t)(value < 0 ? 0 : value > 100 ? 100 : value);
+}
+
 static const char *keyOf(const Field *field) {
 	static const char *const keys[] = {"u8", "u16", "s8", "s16", "u8map", "hex", "u8map"};
 	return keys[field->kind];
@@ -605,10 +622,14 @@ static bool writeField(FILE *file, uint8_t *player, const Field *field, const ch
 	fprintf(file, "    {\"name\": \"%s\", \"%s\": ", field->name, keyOf(field));
 	if (field->kind == KIND_RATINGS || field->kind == KIND_CATEGORIES) {
 		bool ratings = field->kind == KIND_RATINGS;
+		// best_coach is stored as the coaching rating, which adds facilities - 10 (capped 0-100)
+		int shift =
+			field == findField(BEST_COACH, sizeof BEST_COACH - 1) ? 10 - facilitiesLevel(player) : 0;
 		fprintf(file, "{");
 		for (size_t k = 0; k < sizeOf(field); ++k) {
 			const char *key = ratings ? labels_ratingName(k) : labels_categoryName(k);
-			fprintf(file, "%s\"%s\": %u", k ? ", " : "", key, at[k]);
+			unsigned value = shift ? clampRating(at[k] + shift) : at[k];
+			fprintf(file, "%s\"%s\": %u", k ? ", " : "", key, value);
 		}
 		fprintf(file, "}}");
 	} else if (field->kind == KIND_F32) {
@@ -817,6 +838,9 @@ void developmentFile_restore(uint8_t *player, const DevelopmentSnapshot *snapsho
 }
 
 void developmentFile_apply(uint8_t *player, const DevelopmentValues *values) {
+	const Field *bestCoach = findField(BEST_COACH, sizeof BEST_COACH - 1);
+	const uint8_t *best = NULL;
+	int facilitiesBefore = facilitiesLevel(player);
 	for (size_t i = 0; i < values->count; ++i) {
 		const Field *field = &fields[values->field[i]];
 		if (field->base == ON_FOCUS) {
@@ -824,6 +848,10 @@ void developmentFile_apply(uint8_t *player, const DevelopmentValues *values) {
 		}
 		uint8_t *at = locate(player, field);
 		const uint8_t *value = values->bytes + values->offset[i];
+		if (field == bestCoach) {
+			best = value; // set below, once the facilities are
+			continue;
+		}
 		if (!at) {
 			continue; // checked by developmentFile_fits
 		}
@@ -833,6 +861,16 @@ void developmentFile_apply(uint8_t *player, const DevelopmentValues *values) {
 			memcpy(at, &word, sizeof word);
 		} else {
 			memcpy(at, value, sizeOf(field));
+		}
+	}
+	// The coaching rating the weekly training reads: best coach + facilities - 10 (sub_144F42720).
+	// Without best_coach in the file, the team's own best coach is kept.
+	int facilities = facilitiesLevel(player);
+	uint8_t *coaching = locate(player, bestCoach);
+	if (coaching && (best || facilities != facilitiesBefore)) {
+		for (size_t k = 0; k < TRAINING_CATEGORY_COUNT; ++k) {
+			int coach = best ? best[k] : coaching[k] + 10 - facilitiesBefore;
+			coaching[k] = clampRating(coach + facilities - 10);
 		}
 	}
 }
