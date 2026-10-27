@@ -257,7 +257,8 @@ development day (day `id % 28 + 1` of a month), with the whole weeks of
 training before it; later months have 4 or 5 weeks (52 a year). Injuries
 that have healed by a simulated month's date are left out of that month, as
 the game would have cleared them; current ones still stop the player's
-attributes rising. `months` is
+attributes rising. A development file can plan more (`injury.windowN`).
+`months` is
 `1` to `600`. Seeds take the same forms as `run` (`42`, `1-100`,
 `1,5,10-20`, not `keep`); each seed is a separate simulation from the
 player's current values.
@@ -369,6 +370,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `training_facilities` | the club's training facilities, 1–20 |
 | `schedule.week1` … `schedule.weekN` | `sessions`: 21 training sessions, `day1.slot1` to `day7.slot3`; up to 52 weeks |
 | `match_points.month1` … `match_points.monthN` | `u16`: the match points each simulated month earns (not exported; add them); up to 600 months |
+| `injury.window1.start`, `injury.window1.days` … | `u16` each: a planned injury from `start` days after the game's date for `days` days (not exported; add them); up to 16 windows |
 
 `get-development` writes the schedule the player's team trains on this week
 as `schedule.week1`. `develop` trains every simulated week on the file's
@@ -426,6 +428,25 @@ planned, not the match count, which made no difference to growth in tests.
 Matches also raise sharpness and the
 `rating_progress` and `personality_progress` counters in the game. `develop`
 doesn't simulate those yet.
+
+`injury.windowN.start` and `injury.windowN.days` plan injuries. Number the
+windows from 1 in order; each needs both fields, and `days` must be 1 or more.
+`start` counts days from the game's date when `develop` starts (0 = injured
+from today). At each simulated development, the game's routine sees the
+injuries under way that day, planned and real, as the game's injury list
+would hold them. An injury under way on a development day stops almost all
+of that month's growth; with 7 or more days still to go it stops every rise.
+Attributes can still fall. For example, to have a player out for six weeks
+from a month after today:
+
+```json
+{"name": "injury.window1.start", "u16": 30},
+{"name": "injury.window1.days", "u16": 42}
+```
+
+Not simulated: the attribute losses an injury can cause when it happens, and
+the lighter weekly training load while injured. Plan the matches the player
+misses with `match_points.monthN`.
 
 `training_focus` is the player's additional focus. Right after loading a
 save the game hasn't set it up yet (it does at the first training day), so

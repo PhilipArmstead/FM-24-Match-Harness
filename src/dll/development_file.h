@@ -20,6 +20,7 @@ enum {
 	DEVELOPMENT_SNAPSHOT_SIZE = 256,
 	DEVELOPMENT_WEEK_LIMIT = 52,
 	DEVELOPMENT_MONTH_LIMIT = 600, // develop's most months
+	DEVELOPMENT_INJURY_LIMIT = 16,
 };
 
 // Values to apply, as `fm24ctl develop` sends them: "name:hex,name:hex" (each a field's encoded
@@ -36,6 +37,12 @@ typedef struct DevelopmentValues {
 	// the last repeated for later months.
 	size_t matchMonths;
 	uint16_t matchPoints[DEVELOPMENT_MONTH_LIMIT];
+	// "injury.window1.start"/".days" ...: planned injuries, from `start` days after the run's first
+	// date, lasting `days`.
+	size_t injuryWindows;
+	uint16_t injuryStart[DEVELOPMENT_INJURY_LIMIT];
+	uint16_t injuryDays[DEVELOPMENT_INJURY_LIMIT];
+	uint8_t injuryParts[DEVELOPMENT_INJURY_LIMIT]; // bit 0 start given, bit 1 days given
 } DevelopmentValues;
 
 // Every table field's current bytes, to put back later.

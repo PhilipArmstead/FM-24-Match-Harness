@@ -41,6 +41,8 @@ enum {
 	// u8 in the subobject at [[player+8]+8]: the scheduler skips development while 0x20 is set.
 	DEVELOPMENT_FLAGS = 0x142,
 	NO_DEVELOPMENT = 0x20,
+	INJURY_LIMIT = 32,          // the game's injuries develop handles per player
+	PLANNED_INJURY_SIZE = 0x40, // covers every injury field the routines read (to +0x33)
 };
 
 // The routine's first bytes, as game.c checks the match functions (only this job calls it).
@@ -64,18 +66,18 @@ typedef struct Simulation {
 	DevelopmentSnapshot before;      // the file's fields before `values` were applied
 	DevelopmentSnapshot start;       // and as every seed starts
 	const char *failure;             // why the simulation did not run, or NULL
+	// The file's injury windows as injuries the routine can read (only the fields it reads).
+	uint8_t planned[DEVELOPMENT_INJURY_LIMIT][PLANNED_INJURY_SIZE];
 } Simulation;
 
-enum { INJURY_LIMIT = 32 };
-
-// The player's injuries with the healed ones moved past a lowered end (hideHealedInjuries).
-typedef struct HiddenInjuries {
-	uint8_t **vector; // the list's {begin, end, capacity}, or NULL when nothing is hidden
-	uint8_t **begin;
-	uint8_t **lowered; // the end while hidden
-	size_t count;
-	uint8_t *entries[INJURY_LIMIT]; // in the game's order
-} HiddenInjuries;
+// The injury list the routine sees for one development (swapInjuries): the game's injuries that
+// are still current and the planned ones under way, in develop's own vector.
+typedef struct InjuryList {
+	uint8_t **slot;     // player + PLAYER_INJURIES while swapped, else NULL
+	uint8_t *original;  // the game's list there (may be NULL)
+	uint8_t *vector[3]; // begin, end, capacity
+	uint8_t *entries[INJURY_LIMIT + DEVELOPMENT_INJURY_LIMIT];
+} InjuryList;
 
 typedef struct CurrentSchedule {
 	uint8_t *player;
@@ -91,8 +93,9 @@ static bool daysToDevelopment(const uint8_t *person, unsigned *days);
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months);
 static void restoreValues(Simulation *sim);
 static void addDays(uint8_t *date, int days);
-static void hideHealedInjuries(uint8_t *player, HiddenInjuries *hidden);
-static bool restoreInjuries(const HiddenInjuries *hidden);
+static void planInjuries(Simulation *sim);
+static void swapInjuries(Simulation *sim, bool dropHealed, InjuryList *list);
+static bool restoreInjuries(const InjuryList *list);
 static bool writeHeader(FILE *csv, bool perSeed);
 static bool recordRow(Simulation *sim, uint32_t seed, unsigned month);
 static bool writeAverages(Simulation *sim);
@@ -372,6 +375,7 @@ bool develop_runHere(
 static void simulateAll(void *context) {
 	Simulation *sim = context;
 	memcpy(sim->startDate, game_address(RVA_CURRENT_DATE), sizeof sim->startDate);
+	planInjuries(sim);
 	if (sim->values) {
 		developmentFile_save(sim->player, &sim->before);
 		developmentFile_apply(sim->player, sim->values);
@@ -439,12 +443,10 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 		}
 		// At the real date the game's list is current; once the date moves on, it would have
 		// dropped the injuries healed by then.
-		HiddenInjuries hidden = {0};
-		if (days) {
-			hideHealedInjuries(sim->player, &hidden);
-		}
+		InjuryList injuries = {0};
+		swapInjuries(sim, days != 0, &injuries);
 		develop(sim->player, false, 1);
-		if (!restoreInjuries(&hidden)) {
+		if (!restoreInjuries(&injuries)) {
 			sim->failure = "the development routine changed the injury list; reload the save";
 			return false;
 		}
@@ -525,57 +527,74 @@ static bool isHealed(const uint8_t *injury, int today) {
 				 today >= dayNumber(start) + length;
 }
 
-// Moves the healed injuries past a lowered end of the player's list, keeping the rest in order.
-// Leaves `hidden` empty when nothing is healed.
-static void hideHealedInjuries(uint8_t *player, HiddenInjuries *hidden) {
-	uint8_t *list = NULL;
-	uint8_t *first = NULL;
-	uint8_t *last = NULL;
-	if (!memory_readPointer(player, PLAYER_INJURIES, &list) || !list ||
-			!memory_readPointer(list, 0, &first) || !memory_readPointer(list, 8, &last) ||
-			last <= first || (size_t)(last - first) > INJURY_LIMIT * sizeof(void *)) {
-		return;
+// The file's injury windows as injuries starting `start` days after the run's first date. Only the
+// fields the development and weekly routines read are set (sub_142741D60, sub_1421781F0,
+// sub_1438F1890); the pointers stay NULL, as nothing those routines call reads them.
+static void planInjuries(Simulation *sim) {
+	size_t windows = sim->values ? sim->values->injuryWindows : 0;
+	for (size_t i = 0; i < windows; ++i) {
+		uint8_t *injury = sim->planned[i];
+		memcpy(injury + INJURY_START, sim->startDate, 4);
+		addDays(injury + INJURY_START, sim->values->injuryStart[i]);
+		memset(injury + INJURY_START + 4, 0xFF, 4); // as in the game's injuries
+		memcpy(injury + INJURY_DAYS, &sim->values->injuryDays[i], 2);
+		injury[INJURY_TYPE] = 1;
+		injury[INJURY_WEEKS] = 0xFF; // timed in days
 	}
-	uint8_t **vector = (uint8_t **)list;
-	uint8_t **begin = (uint8_t **)first;
-	size_t count = (size_t)(last - first) / sizeof(void *);
-	int today = dayNumber(game_address(RVA_CURRENT_DATE));
-	uint8_t *current[INJURY_LIMIT];
-	size_t kept = 0;
-	for (size_t i = 0; i < count; ++i) {
-		if (!isHealed(begin[i], today)) {
-			current[kept++] = begin[i];
-		}
-	}
-	if (kept == count) {
-		return;
-	}
-	*hidden =
-		(HiddenInjuries){.vector = vector, .begin = begin, .lowered = begin + kept, .count = count};
-	memcpy(hidden->entries, begin, count * sizeof *begin);
-	size_t next = kept;
-	for (size_t i = 0; i < count; ++i) {
-		if (isHealed(begin[i], today)) {
-			current[next++] = begin[i];
-		}
-	}
-	memcpy(begin, current, count * sizeof *begin);
-	vector[1] = (uint8_t *)hidden->lowered;
 }
 
-// Puts the list back as the game left it. False, leaving it alone, if the routine changed its
-// bounds while the healed entries were hidden (they may have been overwritten).
-static bool restoreInjuries(const HiddenInjuries *hidden) {
-	if (!hidden->vector) {
+// Points the player's injury list at develop's own for the routine's call when it differs from the
+// game's: without the injuries healed by today if `dropHealed`, and with the planned ones under
+// way today. Leaves `list` empty, and the game's list in place, otherwise.
+static void swapInjuries(Simulation *sim, bool dropHealed, InjuryList *list) {
+	// memory_read, not memory_readPointer: no list, or an empty one (NULL begin and end), is common.
+	uint8_t *original = NULL;
+	uint8_t *bounds[2] = {NULL, NULL};
+	if (!memory_read(sim->player + PLAYER_INJURIES, &original, sizeof original) ||
+			(original && (!memory_read(original, bounds, sizeof bounds) || bounds[1] < bounds[0] ||
+										 (size_t)(bounds[1] - bounds[0]) > INJURY_LIMIT * sizeof(void *)))) {
+		return; // shortcut: a list longer than INJURY_LIMIT is left as it is
+	}
+	uint8_t *first = bounds[0];
+	uint8_t *last = bounds[1];
+	int today = dayNumber(game_address(RVA_CURRENT_DATE));
+	size_t count = 0;
+	bool changed = false;
+	for (uint8_t **entry = (uint8_t **)first; entry < (uint8_t **)last; ++entry) {
+		if (dropHealed && isHealed(*entry, today)) {
+			changed = true;
+		} else {
+			list->entries[count++] = *entry;
+		}
+	}
+	size_t windows = sim->values ? sim->values->injuryWindows : 0;
+	for (size_t i = 0; i < windows; ++i) {
+		uint8_t *injury = sim->planned[i];
+		if (dayNumber(injury + INJURY_START) <= today && !isHealed(injury, today)) {
+			list->entries[count++] = injury;
+			changed = true;
+		}
+	}
+	if (!changed) {
+		return;
+	}
+	list->slot = (uint8_t **)(sim->player + PLAYER_INJURIES);
+	list->original = original;
+	list->vector[0] = (uint8_t *)list->entries;
+	list->vector[1] = list->vector[2] = (uint8_t *)(list->entries + count);
+	*list->slot = (uint8_t *)list->vector;
+}
+
+// Puts the game's list back. False if the routine replaced or resized develop's list meanwhile;
+// the game's is put back regardless, as develop's is gone with the caller's stack.
+static bool restoreInjuries(const InjuryList *list) {
+	if (!list->slot) {
 		return true;
 	}
-	if ((uint8_t **)hidden->vector[0] != hidden->begin ||
-			(uint8_t **)hidden->vector[1] != hidden->lowered) {
-		return false;
-	}
-	memcpy(hidden->begin, hidden->entries, hidden->count * sizeof *hidden->begin);
-	hidden->vector[1] = (uint8_t *)(hidden->begin + hidden->count);
-	return true;
+	bool intact = *list->slot == (uint8_t *)list->vector &&
+								list->vector[0] == (uint8_t *)list->entries && list->vector[1] == list->vector[2];
+	*list->slot = list->original;
+	return intact;
 }
 
 // Per-seed rows start "seed,month"; averaged rows "month,seeds" (how many seeds each averages).

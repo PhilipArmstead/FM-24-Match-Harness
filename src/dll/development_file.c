@@ -408,6 +408,7 @@ _Static_assert(
 
 static const char SCHEDULE_PREFIX[] = "schedule.week";
 static const char MATCH_PREFIX[] = "match_points.month";
+static const char INJURY_PREFIX[] = "injury.window";
 
 static size_t sizeOf(const Field *field) {
 	switch (field->kind) {
@@ -531,7 +532,8 @@ bool developmentFile_write(
 		"  // Edit values, then: fm24ctl develop <this file> <months> <seeds> <output.csv>\n"
 		"  // Change values only: don't add, rename or reorder fields, ratings or categories.\n"
 		"  // Remove a field to keep the player's own value. More in docs/CLI.md.\n"
-		"  // Add match_points.month1, month2 ... (u16) to plan match time; see docs/CLI.md.\n"
+		"  // Add match_points.month1, month2 ... (u16) to plan match time, and\n"
+		"  // injury.window1.start / .days ... (u16) to plan injuries; see docs/CLI.md.\n"
 	);
 	uint16_t day = 0;
 	uint16_t year = 0;
@@ -696,6 +698,17 @@ static bool parseWeek(
 	return true;
 }
 
+// A u16 as the runner encodes it: 4 hex digits, little-endian.
+static bool readU16(const char *hex, const char *end, uint16_t *out) {
+	if (end - hex != 4) {
+		return false;
+	}
+	char digits[5] = {hex[2], hex[3], hex[0], hex[1], 0};
+	char *stop = NULL;
+	*out = (uint16_t)strtoul(digits, &stop, 16);
+	return !*stop;
+}
+
 // One month's "<N>:hex" (after "match_points.month"): a u16 points total, months numbered from 1
 // in order.
 static bool parseMonth(
@@ -719,18 +732,54 @@ static bool parseMonth(
 		);
 		return false;
 	}
-	const char *hex = colon + 1;
-	if (end - hex != 4) {
+	if (!readU16(colon + 1, end, &out->matchPoints[month - 1])) {
 		(void)snprintf(error, errorSize, "%s%lu should be a u16", MATCH_PREFIX, month);
 		return false;
 	}
-	char digits[5] = {hex[2], hex[3], hex[0], hex[1], 0}; // LE
-	out->matchPoints[month - 1] = (uint16_t)strtoul(digits, &stop, 16);
-	if (*stop) {
-		(void)snprintf(error, errorSize, "%s%lu has a bad hex digit", MATCH_PREFIX, month);
+	out->matchMonths = month;
+	return true;
+}
+
+// One window's "<N>.start:hex" or "<N>.days:hex" (after "injury.window"), each a u16, windows
+// numbered from 1 in order. developmentFile_parse checks that each has both.
+static bool parseInjury(
+	const char *number,
+	const char *colon,
+	const char *end,
+	DevelopmentValues *out,
+	char *error,
+	size_t errorSize
+) {
+	char *stop = NULL;
+	unsigned long window = strtoul(number, &stop, 10);
+	size_t length = (size_t)(colon - stop);
+	int part = length == 6 && memcmp(stop, ".start", 6) == 0  ? 1
+						 : length == 5 && memcmp(stop, ".days", 5) == 0 ? 2
+																														: 0;
+	if (!part || window == 0 || window > out->injuryWindows + 1 ||
+			window > DEVELOPMENT_INJURY_LIMIT || (out->injuryParts[window - 1] & part)) {
+		(void)snprintf(
+			error,
+			errorSize,
+			"injuries must be %s1.start and .days to %s%d, in order, each once",
+			INJURY_PREFIX,
+			INJURY_PREFIX,
+			DEVELOPMENT_INJURY_LIMIT
+		);
 		return false;
 	}
-	out->matchMonths = month;
+	if (!readU16(
+				colon + 1, end, part == 1 ? &out->injuryStart[window - 1] : &out->injuryDays[window - 1]
+			)) {
+		(void)snprintf(
+			error, errorSize, "%s%lu%.*s should be a u16", INJURY_PREFIX, window, (int)length, stop
+		);
+		return false;
+	}
+	out->injuryParts[window - 1] |= (uint8_t)part;
+	if (window > out->injuryWindows) {
+		out->injuryWindows = window;
+	}
 	return true;
 }
 
@@ -750,6 +799,9 @@ static bool parseEntry(
 	}
 	if (colon && strncmp(text, MATCH_PREFIX, sizeof MATCH_PREFIX - 1) == 0) {
 		return parseMonth(text + sizeof MATCH_PREFIX - 1, colon, end, out, error, errorSize);
+	}
+	if (colon && strncmp(text, INJURY_PREFIX, sizeof INJURY_PREFIX - 1) == 0) {
+		return parseInjury(text + sizeof INJURY_PREFIX - 1, colon, end, out, error, errorSize);
 	}
 	const Field *field = colon ? findField(text, (size_t)(colon - text)) : NULL;
 	if (!field) {
@@ -813,6 +865,14 @@ bool developmentFile_parse(
 			return false;
 		}
 		text = *end ? end + 1 : end;
+	}
+	for (size_t i = 0; i < out->injuryWindows; ++i) {
+		if (out->injuryParts[i] != 3 || out->injuryDays[i] == 0) {
+			(void)snprintf(
+				error, errorSize, "%s%zu needs .start and .days (1 or more)", INJURY_PREFIX, i + 1
+			);
+			return false;
+		}
 	}
 	return true;
 }
