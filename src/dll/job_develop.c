@@ -405,6 +405,25 @@ static void simulateAll(void *context) {
 	}
 }
 
+// Sets the file's plan for this month (from 0): the last month given repeats.
+static void planMonth(uint8_t *player, const DevelopmentValues *values, unsigned month) {
+	size_t planned = values->matchMonths;
+	if (planned) {
+		// The routine moves this to last_total and bands it (knowledge-base section 20).
+		// shortcut: the match count isn't planned, as the band reads only the total; plan it if
+		// another use of the count turns up.
+		uint16_t points = values->matchPoints[month < planned ? month : planned - 1];
+		memcpy(player + PLAYER_DEVELOPMENT_PERIOD, &points, sizeof points);
+	}
+	size_t focused = values->focusMonths;
+	uint8_t *record = NULL;
+	// The weekly and monthly routines read the focus (knowledge-base section 15); the record
+	// exists, made by developmentFile_apply if the player had none.
+	if (focused && memory_readPointer(player, PLAYER_FOCUS_RECORD, &record)) {
+		record[FOCUS_ID] = values->focus[month < focused ? month : focused - 1];
+	}
+}
+
 static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 	PlayerDevelopFn develop = (PlayerDevelopFn)game_function(RVA_PLAYER_DEVELOP);
 	restoreValues(sim);
@@ -433,13 +452,8 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 		// The routine dates the weeks it trains back from the game's date, and ages the player by
 		// it: move it to this month's development day, or it trains the weeks before the start.
 		addDays(game_address(RVA_CURRENT_DATE), (int)days);
-		size_t planned = sim->values ? sim->values->matchMonths : 0;
-		if (planned) {
-			// The routine moves this to last_total and bands it (knowledge-base section 20).
-			// shortcut: the match count isn't planned, as the band reads only the total; plan it if
-			// another use of the count turns up.
-			uint16_t points = sim->values->matchPoints[month < planned ? month : planned - 1];
-			memcpy(sim->player + PLAYER_DEVELOPMENT_PERIOD, &points, sizeof points);
+		if (sim->values) {
+			planMonth(sim->player, sim->values, month);
 		}
 		// At the real date the game's list is current; once the date moves on, it would have
 		// dropped the injuries healed by then.

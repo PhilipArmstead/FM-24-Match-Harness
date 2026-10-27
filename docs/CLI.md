@@ -370,6 +370,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `training_facilities` | the club's training facilities, 1–20 |
 | `schedule.week1` … `schedule.weekN` | `sessions`: 21 training sessions, `day1.slot1` to `day7.slot3`; up to 52 weeks |
 | `match_points.month1` … `match_points.monthN` | `u16`: the match points each simulated month earns (not exported; add them); up to 600 months |
+| `training_focus.month1` … `training_focus.monthN` | `u8`: the additional focus in each simulated month, IDs below or 255 for none (not exported; add them); up to 600 months |
 | `injury.window1.start`, `injury.window1.days` … | `u16` each: a planned injury from `start` days after the game's date for `days` days (not exported; add them); up to 16 windows |
 
 `get-development` writes the schedule the player's team trains on this week
@@ -453,6 +454,20 @@ save the game hasn't set it up yet (it does at the first training day), so
 `get-development` leaves the field out; add it yourself and `develop` gives
 the player the focus for the run. Names marked * were confirmed in the
 game; the others are inferred from the attributes.
+
+`training_focus` holds one focus for the whole run. To change it over time,
+add `training_focus.month1`, `training_focus.month2` and so on (numbered in
+order): month N's focus is used for that month's training and development,
+replacing `training_focus`, and months after the last one repeat it. Use 255
+for no focus. Only the IDs 0 to 26 below and 255 are accepted. The game
+clears a focus the player can't have (such as a goalkeeping focus for an
+outfield player) at the next weekly training; it doesn't change a valid one,
+as it can in a real season, so plan those changes yourself.
+
+```json
+{"name": "training_focus.month1", "u8": 255},
+{"name": "training_focus.month2", "u8": 15}
+```
 
 | ID | Focus | Attributes |
 |---|---|---|

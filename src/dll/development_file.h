@@ -43,6 +43,10 @@ typedef struct DevelopmentValues {
 	uint16_t injuryStart[DEVELOPMENT_INJURY_LIMIT];
 	uint16_t injuryDays[DEVELOPMENT_INJURY_LIMIT];
 	uint8_t injuryParts[DEVELOPMENT_INJURY_LIMIT]; // bit 0 start given, bit 1 days given
+	// "training_focus.month1".."training_focus.monthN": each simulated month's additional focus
+	// (255 none), the last repeated for later months.
+	size_t focusMonths;
+	uint8_t focus[DEVELOPMENT_MONTH_LIMIT];
 } DevelopmentValues;
 
 // Every table field's current bytes, to put back later.

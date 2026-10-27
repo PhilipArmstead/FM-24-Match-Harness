@@ -71,7 +71,41 @@ TEST(parses_injury_windows) {
 	free(values);
 }
 
+TEST(parses_focus_by_month) {
+	DevelopmentValues *values = malloc(sizeof *values);
+	char error[160] = "";
+	ASSERT_BOOL_EQ(values != NULL, true);
+	ASSERT_BOOL_EQ(
+		developmentFile_parse(
+			"training_focus:09,training_focus.month1:ff,training_focus.month2:0f,"
+			"training_focus.month3:1a",
+			values,
+			error,
+			sizeof error
+		),
+		true
+	);
+	ASSERT_INT_EQ((int)values->count, 1); // training_focus itself is a table field
+	ASSERT_INT_EQ((int)values->focusMonths, 3);
+	ASSERT_INT_EQ(values->focus[0], 255);
+	ASSERT_INT_EQ(values->focus[1], 15);
+	ASSERT_INT_EQ(values->focus[2], 26);
+	static const char *const invalid[] = {
+		"training_focus.month2:0f",                       // month 1 missing
+		"training_focus.month1:1b",                       // 27: no such focus
+		"training_focus.month1:fe",                       // 254 likewise
+		"training_focus.month1:0f0f",                     // not a u8
+		"training_focus.month1:0g",                       // bad digit
+		"training_focus.month1:0f,training_focus.month1:0f", // repeated
+	};
+	for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		ASSERT_BOOL_EQ(developmentFile_parse(invalid[i], values, error, sizeof error), false);
+	}
+	free(values);
+}
+
 void registerDevelopmentFileTests(void) {
+	test_run("DLL reads the training focus month by month", test_parses_focus_by_month);
 	test_run("DLL reads monthly match points in order", test_parses_match_points_by_month);
 	test_run("DLL reads planned injury windows", test_parses_injury_windows);
 }

@@ -409,6 +409,8 @@ _Static_assert(
 static const char SCHEDULE_PREFIX[] = "schedule.week";
 static const char MATCH_PREFIX[] = "match_points.month";
 static const char INJURY_PREFIX[] = "injury.window";
+static const char FOCUS_PREFIX[] = "training_focus.month";
+enum { FOCUS_LAST = 26, FOCUS_NONE = 255 };
 
 static size_t sizeOf(const Field *field) {
 	switch (field->kind) {
@@ -532,7 +534,8 @@ bool developmentFile_write(
 		"  // Edit values, then: fm24ctl develop <this file> <months> <seeds> <output.csv>\n"
 		"  // Change values only: don't add, rename or reorder fields, ratings or categories.\n"
 		"  // Remove a field to keep the player's own value. More in docs/CLI.md.\n"
-		"  // Add match_points.month1, month2 ... (u16) to plan match time, and\n"
+		"  // Add match_points.month1, month2 ... (u16) to plan match time,\n"
+		"  // training_focus.month1 ... (u8) to plan the focus month by month, and\n"
 		"  // injury.window1.start / .days ... (u16) to plan injuries; see docs/CLI.md.\n"
 	);
 	uint16_t day = 0;
@@ -711,6 +714,27 @@ static bool readU16(const char *hex, const char *end, uint16_t *out) {
 
 // One month's "<N>:hex" (after "match_points.month"): a u16 points total, months numbered from 1
 // in order.
+// The N of "<prefix>N:" (`number` follows the prefix): months numbered from 1 in order, `count`
+// read so far. 0, with the reason in `error`, otherwise.
+static size_t monthNumber(
+	const char *prefix,
+	const char *number,
+	const char *colon,
+	size_t count,
+	char *error,
+	size_t errorSize
+) {
+	char *stop = NULL;
+	unsigned long month = strtoul(number, &stop, 10);
+	if (stop != colon || month != count + 1 || month > DEVELOPMENT_MONTH_LIMIT) {
+		(void)snprintf(
+			error, errorSize, "%s1 to %s%d must be in order", prefix, prefix, DEVELOPMENT_MONTH_LIMIT
+		);
+		return 0;
+	}
+	return month;
+}
+
 static bool parseMonth(
 	const char *number,
 	const char *colon,
@@ -719,24 +743,53 @@ static bool parseMonth(
 	char *error,
 	size_t errorSize
 ) {
-	char *stop = NULL;
-	unsigned long month = strtoul(number, &stop, 10);
-	if (stop != colon || month != out->matchMonths + 1 || month > DEVELOPMENT_MONTH_LIMIT) {
-		(void)snprintf(
-			error,
-			errorSize,
-			"match points must be %s1 to %s%d, in order",
-			MATCH_PREFIX,
-			MATCH_PREFIX,
-			DEVELOPMENT_MONTH_LIMIT
-		);
+	size_t month = monthNumber(MATCH_PREFIX, number, colon, out->matchMonths, error, errorSize);
+	if (!month) {
 		return false;
 	}
 	if (!readU16(colon + 1, end, &out->matchPoints[month - 1])) {
-		(void)snprintf(error, errorSize, "%s%lu should be a u16", MATCH_PREFIX, month);
+		(void)snprintf(error, errorSize, "%s%zu should be a u16", MATCH_PREFIX, month);
 		return false;
 	}
 	out->matchMonths = month;
+	return true;
+}
+
+// One month's "<N>:hex" (after "training_focus.month"): a u8 focus ID, 0-26 (the IDs the game
+// accepts, sub_1439242B0) or 255 for none.
+static bool parseFocusMonth(
+	const char *number,
+	const char *colon,
+	const char *end,
+	DevelopmentValues *out,
+	char *error,
+	size_t errorSize
+) {
+	size_t month = monthNumber(FOCUS_PREFIX, number, colon, out->focusMonths, error, errorSize);
+	if (!month) {
+		return false;
+	}
+	char digits[3] = {0};
+	char *stop = NULL;
+	unsigned long focus = 0;
+	if (end - colon == 3) {
+		memcpy(digits, colon + 1, 2);
+		focus = strtoul(digits, &stop, 16);
+	}
+	if (!stop || *stop || (focus > FOCUS_LAST && focus != FOCUS_NONE)) {
+		(void)snprintf(
+			error,
+			errorSize,
+			"%s%zu must be 0 to %d, or %d for none",
+			FOCUS_PREFIX,
+			month,
+			FOCUS_LAST,
+			FOCUS_NONE
+		);
+		return false;
+	}
+	out->focus[month - 1] = (uint8_t)focus;
+	out->focusMonths = month;
 	return true;
 }
 
@@ -802,6 +855,9 @@ static bool parseEntry(
 	}
 	if (colon && strncmp(text, INJURY_PREFIX, sizeof INJURY_PREFIX - 1) == 0) {
 		return parseInjury(text + sizeof INJURY_PREFIX - 1, colon, end, out, error, errorSize);
+	}
+	if (colon && strncmp(text, FOCUS_PREFIX, sizeof FOCUS_PREFIX - 1) == 0) {
+		return parseFocusMonth(text + sizeof FOCUS_PREFIX - 1, colon, end, out, error, errorSize);
 	}
 	const Field *field = colon ? findField(text, (size_t)(colon - text)) : NULL;
 	if (!field) {
@@ -938,5 +994,10 @@ void developmentFile_apply(uint8_t *player, const DevelopmentValues *values) {
 		} else {
 			memcpy(at, value, sizeOf(field));
 		}
+	}
+	// develop writes each month's focus into the record, so it must exist; restore removes it again
+	// if it was made here, as for training_focus.
+	if (values->focusMonths) {
+		((FocusRecordFn)game_function(RVA_FOCUS_RECORD))((uint8_t **)(player + PLAYER_FOCUS_RECORD));
 	}
 }
