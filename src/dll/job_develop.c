@@ -383,7 +383,9 @@ static void simulateAll(void *context) {
 	}
 	developmentFile_save(sim->player, &sim->start);
 	size_t weeks = sim->values ? sim->values->scheduleWeeks : 0;
-	if (weeks && !schedule_override(sim->values->schedule, weeks)) {
+	// Without a file schedule the hook only logs the club's weeks, so develop runs without it.
+	bool hooked = schedule_override(weeks ? sim->values->schedule : NULL, weeks);
+	if (weeks && !hooked) {
 		sim->failure = "cannot replace the training schedule; see harness.log";
 		sim->written = false;
 	} else {
@@ -392,8 +394,8 @@ static void simulateAll(void *context) {
 	for (size_t i = 0; i < sim->seedCount && sim->written; ++i) {
 		sim->written = simulateSeed(sim, sim->seeds[i], sim->months);
 	}
-	if (weeks) {
-		schedule_override(NULL, 0);
+	if (hooked) {
+		schedule_release();
 	}
 	memcpy(game_address(RVA_CURRENT_DATE), sim->startDate, sizeof sim->startDate);
 	restoreValues(sim);

@@ -377,12 +377,14 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 as `schedule.week1`. `develop` trains every simulated week on the file's
 weeks in turn (week 1, 2, … N, then 1 again, restarting for each seed),
 instead of the club's own schedules. Remove every `schedule.week` field to
-keep the club's schedules. Add `schedule.week2` and so on (numbered in order)
-for a rotation. Sessions are named as in the game's `training_sessions.jsb`
-(case doesn't matter), e.g. `"Team Physical"`, `"Team Rest"`,
-`"Match Prep Match Practice"`, `"Unit Technical Chance Conversion"`. The
-game's short aliases work too (`"Match Practice"`, `"Team Bonding"`). An
-unknown name is an error. A number is taken as a session ID.
+keep the club's schedules; `harness.log` then lists each week trained (its
+start date and 21 sessions, `|` between days), once per run. Add
+`schedule.week2` and so on (numbered in order) for a rotation. Sessions are
+named as in the game's `training_sessions.jsb` (case doesn't matter), e.g.
+`"Team Physical"`, `"Team Rest"`, `"Match Prep Match Practice"`,
+`"Unit Technical Chance Conversion"`. The game's short aliases work too
+(`"Match Practice"`, `"Team Bonding"`). An unknown name is an error. A
+number is taken as a session ID.
 
 ```json
 {"name": "schedule.week1", "sessions": {
