@@ -1207,8 +1207,9 @@ maxProblem(const FixtureTeam *team, const FixturePlayer *player, unsigned button
 	if (button == PLAYER_FAMILIARITY) {
 		return familiarityKnown(team, player)
 						 ? NULL
-						 : L"The selected player or tactic is missing tactical familiarity data (export the "
-							 L"fixture again); no players were changed.";
+						 : L"The selected player or tactic is missing tactical familiarity data; no players "
+							 L"were changed. Please raise an issue and provide your fixture data to the "
+							 L"maintainer.";
 	}
 	bool known = button == PLAYER_HAPPINESS ? player->morale.known
 																					: player->condition.known && player->sharpness[0].known &&

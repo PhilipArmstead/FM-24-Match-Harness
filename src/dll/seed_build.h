@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Per-seed match inputs that match the game's own build with each seed (docs/PLAN.md Phase 19).
+// Per-seed match inputs that match the game's own build with each seed.
 //
 // The game's match seed is used twice: GAME_MATCH__init_from_fixture draws the pre-match values
 // from it (a random number per player, the officials' match-day ratings, attendance, weather), and

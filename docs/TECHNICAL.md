@@ -23,7 +23,6 @@ src/ui/      fixture_window (Win32 controls and GDI pitch drawing),
 tests/       custom test runner, fixture reader, job, runner startup and viewer checks
 cmake/       MinGW-w64 toolchain file
 scripts/     build.sh, format.sh, tidy.sh (env.sh: tool locations)
-docs/        PLAN.md: the plan and every finding, phase by phase
 tools/       memscan.py: read-only memory scanner for the running fm.exe
              ida_annotations.py: IDAPython names and comments for fm.exe
              fields/: field-name data and generators (tactic_bits.json ->
@@ -261,8 +260,8 @@ but does not cancel DLL work; later jobs still wait for it.
 	  game's match statistics screen shows it) and the team totals. The data
 	  is the engine's own per-player stats objects. The values match the
 	  game's statistics screens, team and player (checked on one match). The
-	  members are listed in `src/dll/match_stats.c` and `docs/PLAN.md`
-	  (Phase 18). Player rows are ordered by unique ID and retain each person's
+	  members are listed in `src/dll/match_stats.c`.
+	  Player rows are ordered by unique ID and retain each person's
 	  totals when a rebuilt line-up changes order or introduces another player.
 	  Reports are written only after every seed succeeds; a CSV or detailed-report
 	  write failure makes the job fail rather than reporting success.
@@ -385,8 +384,8 @@ field meanings are in `docs/FIXTURE.md`.
   `.attendance`, `.stand[i].*`, `.section[i].*`, ...) and the attendance's
   copies in `fixture` and `fixture_extra` are named by write site or member
   (`labelVenueField` in `src/dll/labels.c`, sites in `src/dll/sites.h`).
-- **Tactics:** each manager's tactic is under `<side>.manager.tactic`
-  (`docs/PLAN.md`, Phase 15). It holds `takers`, the active `plan[0]` and a
+- **Tactics:** each manager's tactic is under `<side>.manager.tactic`.
+  It holds `takers`, the active `plan[0]` and a
   second `plan[1]`, `set_pieces`, and `formation[i]`. A plan names
   `.mentality` (1-7), `.team_instructions[0..2]` and each formation slot's
   `.slot[i].position`, `.slot[i].role` (role bit plus a duty bit) and
@@ -404,8 +403,7 @@ field meanings are in `docs/FIXTURE.md`.
 Values and strings (including their length) can be edited freely. Adding or
 removing entries changes the structure and is not safe yet. Edited ratings
 can be played as they are: the engine plays from the raw attributes, and the
-values the game derives from them (ability, role ratings) don't affect results
-(`docs/PLAN.md`, Phase 12).
+values the game derives from them (ability, role ratings) don't affect results.
 
 # Known limits
 
@@ -415,8 +413,8 @@ values the game derives from them (ability, role ratings) don't affect results
 - On the Epic build, configs lack five tactic plan labels (`.mentality`,
   `.team_instructions`, `.slot[i].position`, `.slot[i].role`,
   `.slot[i].player_instructions[role]`) and, with `--full`, the `member`
-  notes of functions in `.arch`: that code differs between the builds
-  (`docs/PLAN.md`, Phase 20). Values are unaffected.
+  notes of functions in `.arch`: that code differs between the builds.
+  Values are unaffected.
 
 - With `--keep-build`, patching the seed in an input is not the game
   choosing that seed: pre-match data (attendance etc.) also depends on the

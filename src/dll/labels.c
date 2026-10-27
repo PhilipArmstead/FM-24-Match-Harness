@@ -200,7 +200,7 @@ static const char *const staffAttributeNames[STAFF_ATTRIBUTE_COUNT] = {
 	"coaching_set_pieces",
 };
 
-// Player trait (preferred move) bits, in FMRTE's order (docs/PLAN.md Phase 21). Bit 39 is shown in
+// Player trait (preferred move) bits, in FMRTE's order. Bit 39 is shown in
 // game as "cuts inside from both wings".
 static const char *const traitNames[] = {
 	"runs with ball down left",
@@ -285,7 +285,7 @@ typedef struct MemberName {
 	FlagKind flags;
 } MemberName;
 
-// Members that hold a copy of a database value (docs/PLAN.md Phase 21): every player's and staff
+// Members that hold a copy of a database value: every player's and staff
 // member's value equals the database person/player/team field in the comment. The referee's
 // person values come from elsewhere. Caps match the game's player screen but no single database
 // offset.
@@ -408,7 +408,7 @@ static const char *const pitchLandmarkNames[] = {
 // with seats or standing room; bit 5's meaning is unknown).
 static const char *const standFlagNames[] = {"roof", "seats", NULL, "tunnel"};
 
-// Extra bits of tactic position and role masks (docs/PLAN.md Phase 15, 17).
+// Extra bits of tactic position and role masks.
 enum {
 	POSITION_LEFT_BIT = 20,
 	POSITION_RIGHT_BIT = 21,
@@ -600,7 +600,7 @@ static void roleEntryName(const Walk *walk, size_t first, char *out, size_t size
 	);
 }
 
-// Names the derived values in a player's data whose meaning is known (docs/PLAN.md Phase 11).
+// Names the derived values in a player's data whose meaning is known.
 static void labelDerivedField(Walk *walk, size_t i, const TraceRecord *record) {
 	FieldLabel *label = &walk->labels[i];
 	char entry[64];
@@ -794,7 +794,7 @@ static unsigned lowestBit(uint64_t mask) {
 	return bit;
 }
 
-// Names the fields of a tactic plan whose meaning is known (docs/PLAN.md Phase 15).
+// Names the fields of a tactic plan whose meaning is known.
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record) {
 	FieldLabel *label = &walk->labels[i];
 	const char *block = walk->block;

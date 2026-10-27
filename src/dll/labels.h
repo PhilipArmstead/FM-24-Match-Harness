@@ -17,7 +17,7 @@
 
 enum { LABEL_LENGTH = 112, PLAYER_NAME_LENGTH = 128 };
 
-// What the bits of a bit-set field mean (docs/PLAN.md Phase 17, 21); see labels_flagName.
+// What the bits of a bit-set field mean; see labels_flagName.
 typedef enum FlagKind {
 	FLAGS_NONE,
 	FLAGS_TEAM_INSTRUCTIONS,   // team_instructions[flagWord]

@@ -3,7 +3,7 @@
 
 // Player and team statistics of played matches, summed over a run's seeds (run --detailed). They
 // come from the engine's per-player GAME_MATCH_PLAYER_STATS objects (MATCH_PLAYER+5856), the data
-// the game's own match stats screens show; offsets and names are in docs/PLAN.md Phase 18.
+// the game's own match stats screens show; offsets and names are in match_stats.c.
 #pragma once
 
 #include <stdbool.h>

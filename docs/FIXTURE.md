@@ -369,7 +369,9 @@ familiarity** sets each category's first entry to the tactic's setting at
 gain one, and keeps its floor). Saving or simulating writes these edits into
 the file, like the other player buttons. Position/role/duty isn't shown or
 changed. Exports from before these fields were named show `-` and can't be
-maximised: export the fixture again.
+maximised: export the fixture again. If the new export still can't be
+maximised, please raise an issue and provide your fixture data to the
+maintainer.
 
 **Position/role/duty** compares each entry's `key` with the player's slot in
 the formation. The `key` packs three signed codes: bits 0-5 the position,

@@ -60,7 +60,7 @@ enum PlayerField {
 	SITE_PLAYER_ABILITY = 0x1A80A2B,    // MATCH_PLAYER_DATA+0x60: ability, caps every role rating
 	SITE_PLAYER_LEADERSHIP = 0x1A80AD4, // MATCH_PLAYER_DATA+0x70: driven by leadership
 	SITE_ROLE_RATING = 0x1A80FAC,       // role rating entries {u16 rating, u8 role, u8 position}:
-	SITE_ROLE_ID = 0x1A80FC1,           //   written rating, role, position (docs/PLAN.md Phase 11)
+	SITE_ROLE_ID = 0x1A80FC1,           //   written rating, role, position
 	SITE_ROLE_POSITION = 0x1A80FD4,
 };
 
@@ -78,8 +78,8 @@ enum FamiliarityField {
 	SITE_FAMILIARITY_AMOUNT = 0x1BF341D,         // u32: 0-10000
 };
 
-// Write call sites in the person block (sub_141A7FDC0) every player, staff member and official has
-// (docs/PLAN.md Phase 21). Players get their database values; others mostly a default.
+// Write call sites in the person block (sub_141A7FDC0) every player, staff member and official has.
+// Players get their database values; others mostly a default.
 enum PersonField {
 	SITE_PERSON_HEIGHT = 0x1A8004E, // u32: float metres, from PLAYER+0x14E (u16 cm)
 	SITE_PERSON_WEIGHT = 0x1A80064, // u8: kg, from PLAYER+0x14C
@@ -133,7 +133,7 @@ enum VenueField {
 };
 
 // Return addresses inside the tactic serialiser (sub_141A896D0, a ~7 KB object). Every manager and
-// backroom entry carries one; the managers' are the teams' real tactics (docs/PLAN.md Phase 15).
+// backroom entry carries one; the managers' are the teams' real tactics.
 // Parts whose meaning is unknown are named by their member offset.
 enum TacticPart {
 	SITE_TACTIC_TAKERS = 0x1A896E9,           // sub_141C27F40: captains and set-piece takers
@@ -149,8 +149,8 @@ enum TacticPart {
 	SITE_TACTIC_END = 0x1A89B23,   // and end: direct writes lie in between
 };
 
-// Fields of a tactic plan (sub_141BFFCD0), found by changing one setting at a time in the game
-// (docs/PLAN.md Phase 15). Position masks hold one bit per position code (labels.c) plus a side
+// Fields of a tactic plan (sub_141BFFCD0), found by changing one setting at a time in the game.
+// Position masks hold one bit per position code (labels.c) plus a side
 // bit (20 left, 21 right); role masks one bit per role ID plus a duty bit (21 defend, 22 support,
 // 23 attack, 34 automatic).
 enum TacticField {

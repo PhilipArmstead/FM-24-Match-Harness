@@ -22,7 +22,7 @@ enum {
 	PLAYER_STATS = 5856,       // MATCH_PLAYER: GAME_MATCH_PLAYER_STATS *
 	MATCH_RESULT = 2352,       // GAME_MATCH: the match result object
 	RESULT_MATCH_LENGTH = 148, // match result: u16 minutes (90)
-	// GAME_MATCH_PLAYER_STATS members (docs/PLAN.md Phase 18)
+	// GAME_MATCH_PLAYER_STATS members
 	STATS_PERSON = 16,      // i32 database person ID, -1 if not in the squad
 	STATS_FLAGS = 88,       // u32: 0x20 substitute
 	STATS_RATING = 118,     // i16 rating x 100
@@ -95,8 +95,7 @@ typedef enum PlayerValueIndex {
 } PlayerValueIndex;
 _Static_assert(V_DISTANCE_KM + 1 == MATCH_STATS_PLAYER_VALUES, "one index per player value");
 
-// Members identified by matching one match's sums with the game's own Teams statistics screen
-// (docs/PLAN.md Phase 18).
+// Members identified by matching one match's sums with the game's own Teams statistics screen.
 static const PlayerValue playerValues[] = {
 	[V_GOALS] = {"goals", VALUE_U8, 127},
 	[V_ASSISTS] = {"assists", VALUE_U8, 147},

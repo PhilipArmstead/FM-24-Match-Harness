@@ -1,4 +1,4 @@
-"""Team instruction bit experiment (docs/PLAN.md Phase 16).
+"""Team instruction bit experiment.
 
     python -I team_instructions.py make <config.json> <dir> <bits>
     python -I team_instructions.py rank <dir>

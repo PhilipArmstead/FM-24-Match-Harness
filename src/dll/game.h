@@ -14,7 +14,7 @@
 
 // PE timestamps of the builds these addresses are valid for. The Epic Games build is a separate
 // link of the same source; `fm24ctl probe` found every function and data address below at the
-// same RVA in it (docs/PLAN.md, Phase 20).
+// same RVA in it.
 enum {
 	GAME_PE_TIMESTAMP_STEAM = 1744804480,
 	GAME_PE_TIMESTAMP_EPIC = 1744804949,
@@ -89,7 +89,7 @@ enum MatchLayout {
 	MATCH_TEAM_GOALS = 0x248, // u8 in MATCH_TEAM
 };
 
-// A team's manager and its control flags (docs/PLAN.md Phase 18).
+// A team's manager and its control flags.
 enum ManagerLayout {
 	// MATCH_TEAM: the manager (its tactic etc.; "<side>.manager" in a config).
 	MATCH_TEAM_MANAGER = 312,

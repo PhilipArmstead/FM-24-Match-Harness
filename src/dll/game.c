@@ -28,7 +28,7 @@ typedef struct Signature {
 
 #define SIGNATURE(rva, name, bytes) {(name), (bytes), sizeof(bytes) - 1, (rva), false}
 // A thunk's displacement differs between builds (the Epic build's prepare_to_play target is
-// 0x25D10 further on, docs/PLAN.md Phase 20), so only the opcode and the target are checked.
+// 0x25D10 further on), so only the opcode and the target are checked.
 #define SIGNATURE_THUNK(rva, name, bytes) {(name), (bytes), sizeof(bytes) - 1, (rva), true}
 
 // The first bytes of every function the harness calls. A mismatch means a different game build,
