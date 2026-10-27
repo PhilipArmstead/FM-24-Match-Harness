@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Phil Armstead <philarmstead@mailbox.org>
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../src/dll/development_file.h"
+#include "../src/dll/sharpness.h"
 #include "test.h"
 #include "tests.h"
 
@@ -104,7 +105,73 @@ TEST(parses_focus_by_month) {
 	free(values);
 }
 
+TEST(parses_matches_by_month) {
+	DevelopmentValues *values = malloc(sizeof *values);
+	char error[160] = "";
+	ASSERT_BOOL_EQ(values != NULL, true);
+	ASSERT_BOOL_EQ(
+		developmentFile_parse(
+			"matches.month1.minutes:5a00,matches.month1.count:0400,matches.month2.count:0000,"
+			"matches.month2.minutes:0000",
+			values,
+			error,
+			sizeof error
+		),
+		true
+	);
+	ASSERT_INT_EQ((int)values->playMonths, 2);
+	ASSERT_INT_EQ(values->playCount[0], 4);
+	ASSERT_INT_EQ(values->playMinutes[0], 90);
+	ASSERT_INT_EQ(values->playCount[1], 0);
+	static const char *const invalid[] = {
+		"matches.month1.count:0400",                                // no minutes
+		"matches.month2.count:0400,matches.month2.minutes:5a00",    // month 1 missing
+		"matches.month1.count:2000,matches.month1.minutes:5a00",    // 32 matches
+		"matches.month1.count:0400,matches.month1.minutes:7900",    // 121 minutes
+		"matches.month1.goals:0400",                                // unknown part
+	};
+	for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+		ASSERT_BOOL_EQ(developmentFile_parse(invalid[i], values, error, sizeof error), false);
+	}
+	free(values);
+}
+
+// Measured with the game's match engine (knowledge-base section 21): start, minutes, x, end.
+TEST(moves_sharpness_as_the_engine_does) {
+	static const unsigned cases[][4] = {
+		{6100, 90, 5, 7000},   // below 7500 throughout: 10 a minute
+		{6900, 90, 2, 7713},   // across 7500 (x below 6 counts as 5)
+		{8450, 90, 5, 9025},   // across 9000
+		{9000, 90, 5, 9180},   // above 9000: 2 a minute
+		{9900, 90, 5, 10000},  // capped
+		{8900, 90, 6, 9242},   // x 6
+		{7300, 90, 20, 9160},  // x above 15 counts as 15; across both thresholds
+		{4100, 45, 6, 4640},   // half a match
+		{6000, 0, 15, 6000},   // didn't play
+	};
+	for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
+		ASSERT_INT_EQ(sharpness_afterMatch((uint16_t)cases[i][0], cases[i][1], cases[i][2]), (int)cases[i][3]);
+	}
+}
+
+TEST(draws_the_factor_as_seen) {
+	uint64_t random = 7;
+	unsigned top = 0;
+	for (int i = 0; i < 9000; ++i) {
+		unsigned x = sharpness_drawFactor(&random);
+		ASSERT_BOOL_EQ(x >= 5 && x <= 15, true);
+		top += x == 15;
+	}
+	ASSERT_BOOL_EQ(top > 4400 && top < 5000, true); // 47 in 90 of the values seen
+	uint64_t again = 7;
+	uint64_t first = 7;
+	ASSERT_INT_EQ((int)sharpness_drawFactor(&again), (int)sharpness_drawFactor(&first));
+}
+
 void registerDevelopmentFileTests(void) {
+	test_run("DLL reads planned matches month by month", test_parses_matches_by_month);
+	test_run("DLL moves sharpness as the match engine does", test_moves_sharpness_as_the_engine_does);
+	test_run("DLL draws the sharpness factor as the game sets it", test_draws_the_factor_as_seen);
 	test_run("DLL reads the training focus month by month", test_parses_focus_by_month);
 	test_run("DLL reads monthly match points in order", test_parses_match_points_by_month);
 	test_run("DLL reads planned injury windows", test_parses_injury_windows);

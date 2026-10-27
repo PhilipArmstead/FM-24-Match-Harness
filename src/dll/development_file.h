@@ -47,6 +47,12 @@ typedef struct DevelopmentValues {
 	// (255 none), the last repeated for later months.
 	size_t focusMonths;
 	uint8_t focus[DEVELOPMENT_MONTH_LIMIT];
+	// "matches.month1.count" / ".minutes" ...: each simulated month's matches and the minutes in
+	// each, which move sharpness; the last month repeats.
+	size_t playMonths;
+	uint8_t playCount[DEVELOPMENT_MONTH_LIMIT];
+	uint8_t playMinutes[DEVELOPMENT_MONTH_LIMIT];
+	uint8_t playParts[DEVELOPMENT_MONTH_LIMIT]; // bit 0 count given, bit 1 minutes given
 } DevelopmentValues;
 
 // Every table field's current bytes, to put back later.

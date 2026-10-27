@@ -5,7 +5,8 @@
 
 The game's per-match formula (sub_144886B30; knowledge base section 20), for one kind of match
 played --matches times. Run it once per kind and add the totals for a mixed month. Prints the
-total and the development-file entry. The player's played level and appearances there come from
+total and the development-file entries: match_points.monthN, and matches.monthN for the
+sharpness the same matches bring. The player's played level and appearances there come from
 --file (a get-development export) or --played-level/--appearances; neither changes in-season.
 
 --level is the competition's reputation / 10 (Premier League 18, Serie A 17); friendlies are 1.
@@ -84,7 +85,10 @@ def main():
                         args.player_of_the_match)
     total = min(each * args.matches, 65535)
     print(f"{args.matches} x {each} = {total} points")
-    print(f'{{"name": "match_points.month{args.month}", "u16": {total}}}')
+    print(f'{{"name": "match_points.month{args.month}", "u16": {total}}},')
+    # The same matches for sharpness (develop: matches.monthN, knowledge base section 21).
+    print(f'{{"name": "matches.month{args.month}.count", "u16": {args.matches}}},')
+    print(f'{{"name": "matches.month{args.month}.minutes", "u16": {min(args.minutes, 120)}}}')
 
 
 if __name__ == "__main__":

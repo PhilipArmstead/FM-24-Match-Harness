@@ -297,12 +297,13 @@ places: `month`, `seeds` (how many seeds each row averages), then the player
 values below. With `--per-seed-breakdown` it has one row per seed and month
 instead, with whole values: `seed`, `month`, then the same player values.
 
-| Columns | Meaning |
-|---|---|
-| `current_ability`, `potential_ability` | CA and PA |
-| `weight`, `height` | kg, cm |
-| `progress_strength` … `progress_set_pieces` (11) | training progress, `-100` to `50` |
-| the 69 ratings by name | the game's 1–100 scale (divide by 5 for the 1–20 scale shown in the game); positions 1–20 |
+| Columns                                          | Meaning                                                                                   |
+|--------------------------------------------------|-------------------------------------------------------------------------------------------|
+| `current_ability`, `potential_ability`           | CA and PA                                                                                 |
+| `weight`, `height`                               | kg, cm                                                                                    |
+| `sharpness`                                      | match sharpness at that month's development, 0–10000                                      |
+| `progress_strength` … `progress_set_pieces` (11) | training progress, `-100` to `50`                                                         |
+| the 69 ratings by name                           | the game's 1–100 scale (divide by 5 for the 1–20 scale shown in the game); positions 1–20 |
 
 Players who are also staff, and players the game does not develop, are
 refused.
@@ -370,6 +371,7 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 | `training_facilities` | the club's training facilities, 1–20 |
 | `schedule.week1` … `schedule.weekN` | `sessions`: 21 training sessions, `day1.slot1` to `day7.slot3`; up to 52 weeks |
 | `match_points.month1` … `match_points.monthN` | `u16`: the match points each simulated month earns (not exported; add them); up to 600 months |
+| `matches.month1.count`, `matches.month1.minutes` … | `u16` each: the matches in each simulated month and the minutes in each, for sharpness (not exported; add them); up to 600 months |
 | `training_focus.month1` … `training_focus.monthN` | `u8`: the additional focus in each simulated month, IDs below or 255 for none (not exported; add them); up to 600 months |
 | `injury.window1.start`, `injury.window1.days` … | `u16` each: a planned injury from `start` days after the game's date for `days` days (not exported; add them); up to 16 windows |
 
@@ -420,17 +422,37 @@ a month from planned matches, use the game's formula in
 python -I ..\tools\experiments\match_points.py --file kellyman.json --matches 3 --minutes 90 `
     --level 18 --average-ability 136 --opponent-reputation 7000 --month 2
 # 3 x 58 = 174 points
-# {"name": "match_points.month2", "u16": 174}
+# {"name": "match_points.month2", "u16": 174},
+# {"name": "matches.month2.count", "u16": 3},
+# {"name": "matches.month2.minutes", "u16": 90}
 ```
 
 `--level` is the competition's reputation ÷ 10 (Premier League 18, 1 for
 friendlies), `--average-ability` the average CA of both matchday squads, and
 `--friendly` marks a match that isn't competitive (U21 games appear not to
-be). The player's played level comes from the file. Only the points total is
-planned, not the match count, which made no difference to growth in tests.
-Matches also raise sharpness and the
-`rating_progress` and `personality_progress` counters in the game. `develop`
-doesn't simulate those yet.
+be). The player's played level comes from the file.
+
+`matches.monthN.count` and `matches.monthN.minutes` plan the same matches for
+match sharpness: how many the player plays in month N, and the minutes in each
+(0–31 matches, 0–120 minutes). Number the months in order; each needs both,
+and months after the last one repeat it. `develop` spreads the month's matches
+evenly over the days before its development. For each it first runs the
+game's own fitness update for the days since the last one (sharpness drops
+without matches), then raises sharpness as the match engine does at the end of
+a match: per minute, 2x while below 7500, 1.5x up to 9000 and 0.5x above,
+capped at 10000. x is a factor from 5 to 15 that the game sets for each player
+every day; `develop` draws it from the values seen in the game (half the time
+15, a fifth of the time 5), so seeds differ. A full match takes a player from
+5000 to between 5900 and 7700. Sharpness matters for growth only from 5000:
+an extra rise roll that passes more often the closer it is to 10000. Without
+`matches` fields, sharpness keeps the file's value, as before. The CSV's
+`sharpness` column shows it at each development.
+
+Only the points total and the matches are planned, not the match count's
+effect on the points band, which made no difference to growth in tests.
+Matches also fill the `rating_progress` and `personality_progress` counters
+in the game, and change condition and fatigue; `develop` doesn't simulate
+those yet.
 
 `injury.windowN.start` and `injury.windowN.days` plan injuries. Number the
 windows from 1 in order; each needs both fields, and `days` must be 1 or more.

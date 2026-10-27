@@ -54,6 +54,9 @@ enum GameFunction {
 	RVA_WEEK_SCHEDULE_CALL = 0x38F2BBF,
 	// The player's INDIVIDUAL_TRAINING_INFO, allocated with no focus if missing (sub_142906AB0).
 	RVA_FOCUS_RECORD = 0x2906AB0,
+	// GAME_ACTUAL_PLAYER's vtable slot 664 (sub_144B62B30): brings a player's sharpness, fatigue and
+	// condition up to the game's date from PLAYER_FITNESS_DATE (knowledge-base section 21).
+	RVA_PLAYER_FITNESS_UPDATE = 0x4B62B30,
 };
 
 // Game data.
@@ -71,6 +74,7 @@ enum GameData {
 	RVA_HUMAN_MATCHES_HOLDER = 0x6374488,
 	RVA_TLS_INDEX = 0x638EEC0,        // fm.exe's _tls_index
 	RVA_TRAINING_MANAGER = 0x63651C8, // [p] + TRAINING_MANAGER_WEEK
+	RVA_PLAYER_MANAGER = 0x642DD60,   // [p]: GAME_ACTUAL_PLAYER, the fitness update's `this`
 };
 
 // GAME_MATCH layout.
@@ -135,6 +139,8 @@ enum DatabaseLayout {
 	// Training (knowledge-base/FM24 Training — Attribute Growth.md).
 	// INDIVIDUAL_TRAINING_INFO *, NULL until the first daily training after loading a save.
 	PLAYER_FOCUS_RECORD = 0x170,
+	PLAYER_FITNESS_DATE = 0x150,  // date the fitness update last ran (RVA_PLAYER_FITNESS_UPDATE)
+	PLAYER_FITNESS_STATE = 0x16A, // 6 bytes it keeps with it: u16 state, then flag bytes
 	// vector<INJURY *> *: begin, end, capacity. The game drops an injury once it has healed.
 	PLAYER_INJURIES = 0xF8,
 	INJURY_START = 0x20, // date: u16 day of year (from 1) | other bits, u16 year
@@ -227,6 +233,8 @@ typedef void (*VoidFn)(void);
 typedef void (*PlayerDevelopFn)(uint8_t *player, bool lastDay, uint8_t flag);
 typedef uint8_t *(*TrainingTeamFn)(uint8_t *manager, uint8_t *player);
 typedef uint8_t *(*FocusRecordFn)(uint8_t **record);
+// `flags` is 1 in the development routine's calls.
+typedef void (*PlayerFitnessUpdateFn)(uint8_t *manager, uint8_t *player, uint16_t flags);
 // A schedule: SCHEDULE_DAYS records of SCHEDULE_DAY_SIZE bytes, each holding SCHEDULE_SLOTS u16
 // session IDs from SCHEDULE_SESSIONS_AT (the training_sessions.jsb IDs; 11 is Team Rest).
 typedef uint8_t *(*WeekScheduleFn)(uint8_t *manager, uint8_t *team, const uint32_t *weekStart);

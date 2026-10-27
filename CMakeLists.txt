@@ -68,6 +68,7 @@ add_library(harness SHARED
 	src/dll/rng.c
 	src/dll/schedule.c
 	src/dll/seed_build.c
+	src/dll/sharpness.c
 	src/dll/site_lookup.c
 	src/dll/site_members.c
 	src/dll/stream.c
@@ -147,6 +148,7 @@ if(FM24_BUILD_TESTS)
 		src/runner/probe_patterns.c
 		src/dll/development_file.c
 		src/dll/memory.c
+		src/dll/sharpness.c
 		src/dll/site_lookup.c
 		src/dll/site_members.c
 		src/dll/tactic_flags.c

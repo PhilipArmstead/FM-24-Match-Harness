@@ -410,6 +410,9 @@ static const char SCHEDULE_PREFIX[] = "schedule.week";
 static const char MATCH_PREFIX[] = "match_points.month";
 static const char INJURY_PREFIX[] = "injury.window";
 static const char FOCUS_PREFIX[] = "training_focus.month";
+static const char PLAY_PREFIX[] = "matches.month";
+// A month's matches, and the minutes in each (120 with extra time).
+enum { PLAY_COUNT_LIMIT = 31, PLAY_MINUTES_LIMIT = 120 };
 enum { FOCUS_LAST = 26, FOCUS_NONE = 255 };
 
 static size_t sizeOf(const Field *field) {
@@ -534,7 +537,8 @@ bool developmentFile_write(
 		"  // Edit values, then: fm24ctl develop <this file> <months> <seeds> <output.csv>\n"
 		"  // Change values only: don't add, rename or reorder fields, ratings or categories.\n"
 		"  // Remove a field to keep the player's own value. More in docs/CLI.md.\n"
-		"  // Add match_points.month1, month2 ... (u16) to plan match time,\n"
+		"  // Add match_points.month1, month2 ... (u16) and matches.month1.count / .minutes ...\n"
+		"  // (u16) to plan match time,\n"
 		"  // training_focus.month1 ... (u8) to plan the focus month by month, and\n"
 		"  // injury.window1.start / .days ... (u16) to plan injuries; see docs/CLI.md.\n"
 	);
@@ -793,6 +797,51 @@ static bool parseFocusMonth(
 	return true;
 }
 
+// One month's "<N>.count:hex" or "<N>.minutes:hex" (after "matches.month"), each a u16: matches
+// played and minutes in each, months numbered from 1 in order. developmentFile_parse checks that
+// each month has both.
+static bool parsePlayMonth(
+	const char *number,
+	const char *colon,
+	const char *end,
+	DevelopmentValues *out,
+	char *error,
+	size_t errorSize
+) {
+	char *stop = NULL;
+	unsigned long month = strtoul(number, &stop, 10);
+	size_t length = (size_t)(colon - stop);
+	int part = length == 6 && memcmp(stop, ".count", 6) == 0     ? 1
+						 : length == 8 && memcmp(stop, ".minutes", 8) == 0 ? 2
+																															 : 0;
+	if (!part || month == 0 || month > out->playMonths + 1 || month > DEVELOPMENT_MONTH_LIMIT ||
+			(out->playParts[month - 1] & part)) {
+		(void)snprintf(
+			error,
+			errorSize,
+			"matches must be %s1.count and .minutes to %s%d, in order, each once",
+			PLAY_PREFIX,
+			PLAY_PREFIX,
+			DEVELOPMENT_MONTH_LIMIT
+		);
+		return false;
+	}
+	uint16_t value = 0;
+	int limit = part == 1 ? PLAY_COUNT_LIMIT : PLAY_MINUTES_LIMIT;
+	if (!readU16(colon + 1, end, &value) || value > limit) {
+		(void)snprintf(
+			error, errorSize, "%s%lu%.*s must be 0 to %d", PLAY_PREFIX, month, (int)length, stop, limit
+		);
+		return false;
+	}
+	(part == 1 ? out->playCount : out->playMinutes)[month - 1] = (uint8_t)value;
+	out->playParts[month - 1] |= (uint8_t)part;
+	if (month > out->playMonths) {
+		out->playMonths = month;
+	}
+	return true;
+}
+
 // One window's "<N>.start:hex" or "<N>.days:hex" (after "injury.window"), each a u16, windows
 // numbered from 1 in order. developmentFile_parse checks that each has both.
 static bool parseInjury(
@@ -846,18 +895,22 @@ static bool parseEntry(
 	size_t errorSize
 ) {
 	const char *colon = memchr(text, ':', (size_t)(end - text));
-	size_t prefix = sizeof SCHEDULE_PREFIX - 1;
-	if (colon && strncmp(text, SCHEDULE_PREFIX, prefix) == 0) {
-		return parseWeek(text + prefix, colon, end, out, error, errorSize);
-	}
-	if (colon && strncmp(text, MATCH_PREFIX, sizeof MATCH_PREFIX - 1) == 0) {
-		return parseMonth(text + sizeof MATCH_PREFIX - 1, colon, end, out, error, errorSize);
-	}
-	if (colon && strncmp(text, INJURY_PREFIX, sizeof INJURY_PREFIX - 1) == 0) {
-		return parseInjury(text + sizeof INJURY_PREFIX - 1, colon, end, out, error, errorSize);
-	}
-	if (colon && strncmp(text, FOCUS_PREFIX, sizeof FOCUS_PREFIX - 1) == 0) {
-		return parseFocusMonth(text + sizeof FOCUS_PREFIX - 1, colon, end, out, error, errorSize);
+	// Entries numbered by week, month or window, outside the field table.
+	static const struct {
+		const char *prefix;
+		bool (*parse)(const char *, const char *, const char *, DevelopmentValues *, char *, size_t);
+	} numbered[] = {
+		{SCHEDULE_PREFIX, parseWeek},
+		{MATCH_PREFIX, parseMonth},
+		{INJURY_PREFIX, parseInjury},
+		{FOCUS_PREFIX, parseFocusMonth},
+		{PLAY_PREFIX, parsePlayMonth},
+	};
+	for (size_t i = 0; colon && i < sizeof numbered / sizeof numbered[0]; ++i) {
+		size_t prefix = strlen(numbered[i].prefix);
+		if (strncmp(text, numbered[i].prefix, prefix) == 0) {
+			return numbered[i].parse(text + prefix, colon, end, out, error, errorSize);
+		}
 	}
 	const Field *field = colon ? findField(text, (size_t)(colon - text)) : NULL;
 	if (!field) {
@@ -927,6 +980,12 @@ bool developmentFile_parse(
 			(void)snprintf(
 				error, errorSize, "%s%zu needs .start and .days (1 or more)", INJURY_PREFIX, i + 1
 			);
+			return false;
+		}
+	}
+	for (size_t i = 0; i < out->playMonths; ++i) {
+		if (out->playParts[i] != 3) {
+			(void)snprintf(error, errorSize, "%s%zu needs .count and .minutes", PLAY_PREFIX, i + 1);
 			return false;
 		}
 	}

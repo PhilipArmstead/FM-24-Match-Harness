@@ -24,6 +24,7 @@
 #include "memory.h"
 #include "rng.h"
 #include "schedule.h"
+#include "sharpness.h"
 #include "slug.h"
 
 #include <stdio.h>
@@ -36,8 +37,9 @@ enum {
 	MONTHS_PER_YEAR = 12,
 	DAYS_PER_WEEK = 7,
 	DAY_MASK = 0x1FF,
-	// Values per CSV row after its first two columns: CA, PA, weight, height, progress, ratings.
-	ROW_VALUES = 4 + TRAINING_CATEGORY_COUNT + PLAYER_RATING_COUNT,
+	// Values per CSV row after its first two columns: CA, PA, weight, height, sharpness, progress,
+	// ratings.
+	ROW_VALUES = 5 + TRAINING_CATEGORY_COUNT + PLAYER_RATING_COUNT,
 	// u8 in the subobject at [[player+8]+8]: the scheduler skips development while 0x20 is set.
 	DEVELOPMENT_FLAGS = 0x142,
 	NO_DEVELOPMENT = 0x20,
@@ -408,6 +410,39 @@ static void simulateAll(void *context) {
 }
 
 // Sets the file's plan for this month (from 0): the last month given repeats.
+// The game's fitness update: sharpness, fatigue and condition brought up to its date.
+static void updateFitness(uint8_t *player) {
+	uint8_t *manager = NULL;
+	if (memory_readPointer(game_address(RVA_PLAYER_MANAGER), 0, &manager)) {
+		((PlayerFitnessUpdateFn)game_function(RVA_PLAYER_FITNESS_UPDATE))(manager, player, 1);
+	}
+}
+
+// Plays the month's planned matches, for sharpness: spread evenly over the `days` from the game's
+// date to this month's development, each after the game's update for the days before it. Leaves
+// the date where it was.
+// shortcut: the matches' other effects (condition, fatigue, injuries) aren't simulated.
+static void playMonth(Simulation *sim, unsigned month, unsigned days, uint64_t *random) {
+	const DevelopmentValues *values = sim->values;
+	size_t index = month < values->playMonths ? month : values->playMonths - 1;
+	unsigned count = values->playCount[index];
+	uint8_t *date = game_address(RVA_CURRENT_DATE);
+	uint8_t start[4];
+	memcpy(start, date, sizeof start);
+	for (unsigned k = 0; k < count; ++k) {
+		memcpy(date, start, sizeof start);
+		addDays(date, (int)((2 * k + 1) * days / (2 * count)));
+		updateFitness(sim->player);
+		uint16_t sharpness = sharpness_afterMatch(
+			memory_loadU16(sim->player + PLAYER_SHARPNESS),
+			values->playMinutes[index],
+			sharpness_drawFactor(random)
+		);
+		memcpy(sim->player + PLAYER_SHARPNESS, &sharpness, sizeof sharpness);
+	}
+	memcpy(date, start, sizeof start);
+}
+
 static void planMonth(uint8_t *player, const DevelopmentValues *values, unsigned month) {
 	size_t planned = values->matchMonths;
 	if (planned) {
@@ -430,8 +465,9 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 	PlayerDevelopFn develop = (PlayerDevelopFn)game_function(RVA_PLAYER_DEVELOP);
 	restoreValues(sim);
 	memcpy(game_address(RVA_CURRENT_DATE), sim->startDate, sizeof sim->startDate);
-	schedule_restart();   // a file's schedule starts from its first week for every seed
-	rng_seedThread(seed); // the routine draws from this thread's PCG
+	schedule_restart();     // a file's schedule starts from its first week for every seed
+	rng_seedThread(seed);   // the routine draws from this thread's PCG
+	uint64_t random = seed; // the planned matches' draws (sharpness_drawFactor)
 	if (!recordRow(sim, seed, 0)) {
 		return false;
 	}
@@ -453,7 +489,14 @@ static bool simulateSeed(Simulation *sim, uint32_t seed, unsigned months) {
 		memcpy(sim->player + PLAYER_TRAINING_WEEK, &(int32_t){lastTrained ? lastTrained : -1}, 4);
 		// The routine dates the weeks it trains back from the game's date, and ages the player by
 		// it: move it to this month's development day, or it trains the weeks before the start.
+		bool played = sim->values && sim->values->playMonths;
+		if (played) {
+			playMonth(sim, month, days, &random);
+		}
 		addDays(game_address(RVA_CURRENT_DATE), (int)days);
+		if (played) {
+			updateFitness(sim->player); // the days since the last match
+		}
 		if (sim->values) {
 			planMonth(sim->player, sim->values, month);
 		}
@@ -491,6 +534,10 @@ static const struct {
 	{PLAYER_RATINGS, PLAYER_RATING_COUNT},
 	{PLAYER_PERSON + PERSON_DATE_OF_BIRTH, 4},
 	{PLAYER_PERSON + PERSON_PERSONALITY, 8}, // youth players' personalities develop too
+	// The fitness update's own date and state: the routine runs it too, so without them each seed
+	// would start from the dates the last one left.
+	{PLAYER_FITNESS_DATE, 4},
+	{PLAYER_FITNESS_STATE, 6},
 };
 
 // Puts the simulated fields back as they were when the job started, so every seed starts with the
@@ -616,7 +663,7 @@ static bool restoreInjuries(const InjuryList *list) {
 // Per-seed rows start "seed,month"; averaged rows "month,seeds" (how many seeds each averages).
 static bool writeHeader(FILE *csv, bool perSeed) {
 	fputs(perSeed ? "seed,month" : "month,seeds", csv);
-	fputs(",current_ability,potential_ability,weight,height", csv);
+	fputs(",current_ability,potential_ability,weight,height,sharpness", csv);
 	for (size_t i = 0; i < TRAINING_CATEGORY_COUNT; ++i) {
 		fprintf(csv, ",progress_%s", labels_categoryName(i));
 	}
@@ -633,6 +680,7 @@ static void rowValues(const uint8_t *player, int out[ROW_VALUES]) {
 	out[n++] = memory_loadU16(player + PLAYER_POTENTIAL_ABILITY);
 	out[n++] = player[PLAYER_WEIGHT];
 	out[n++] = memory_loadU16(player + PLAYER_HEIGHT);
+	out[n++] = memory_loadU16(player + PLAYER_SHARPNESS);
 	for (size_t i = 0; i < TRAINING_CATEGORY_COUNT; ++i) {
 		int progress = player[PLAYER_TRAINING_PROGRESS + i]; // stored as s8
 		out[n++] = progress > INT8_MAX ? progress - 256 : progress;
