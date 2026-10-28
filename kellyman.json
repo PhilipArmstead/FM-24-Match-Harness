@@ -1,0 +1,109 @@
+{
+  // Edit values, then: fm24ctl develop <this file> <months> <seeds> <output.csv>
+  // Change values only: don't add, rename or reorder fields, ratings or categories.
+  // Remove a field to keep the player's own value. More in docs/CLI.md.
+  // Add match_points.month1, month2 ... (u16) and matches.month1.count / .minutes ...
+  // (u16) to plan match time,
+  // training_focus.month1 ... (u8) to plan the focus month by month, and
+  // injury.window1.start / .days ... (u16) to plan injuries; see docs/CLI.md.
+  // Exported on day 186 of 2023 (game date).
+  "format": "fm24-development/1",
+  "source": "Omari Kellyman",
+  "fields": [
+    // the player (don't change); develops on day 11 of each month
+    {"name": "person_uid", "player": "Omari Kellyman", "u32": 2000147523},
+    // 1-200
+    {"name": "current_ability", "u16": 99},
+    // 1-200
+    {"name": "potential_ability", "u16": 163},
+    // by name: positions 1-20, attributes 1-100
+    {"name": "ratings", "u8map": {"pos_gk": 1, "pos_sw": 1, "pos_dl": 1, "pos_dc": 1, "pos_dr": 1, "pos_dm": 1, "pos_ml": 1, "pos_mc": 1, "pos_mr": 1, "pos_aml": 15, "pos_amc": 20, "pos_amr": 15, "pos_st": 18, "pos_wbl": 1, "pos_wbr": 1, "crossing": 40, "dribbling": 55, "finishing": 60, "heading": 45, "long_shots": 55, "marking": 30, "off_the_ball": 55, "passing": 60, "penalty_taking": 40, "tackling": 40, "vision": 55, "handling": 15, "aerial_reach": 10, "command_of_area": 5, "communication": 15, "kicking": 5, "throwing": 5, "anticipation": 55, "decisions": 40, "one_on_ones": 10, "positioning": 35, "reflexes": 15, "first_touch": 65, "technique": 65, "left_foot": 100, "right_foot": 25, "flair": 65, "corners": 30, "teamwork": 55, "work_rate": 50, "long_throws": 20, "eccentricity": 5, "rushing_out": 15, "punching": 5, "acceleration": 70, "free_kicks": 35, "strength": 40, "stamina": 50, "pace": 70, "jumping_reach": 45, "leadership": 55, "dirtiness": 45, "balance": 65, "bravery": 50, "consistency": 40, "aggression": 75, "agility": 65, "important_matches": 95, "injury_proneness": 60, "versatility": 55, "natural_fitness": 75, "determination": 65, "composure": 70, "concentration": 55}},
+    // 0 or 1 normal, 2 double, 254 half, 255 the team's workload
+    {"name": "training_intensity", "u8": 255},
+    // cm
+    {"name": "height", "u16": 188},
+    // kg
+    {"name": "weight", "u8": 68},
+    // 1-20 each
+    {"name": "personality.adaptability", "u8": 11},
+    {"name": "personality.ambition", "u8": 13},
+    {"name": "personality.loyalty", "u8": 13},
+    {"name": "personality.pressure", "u8": 13},
+    {"name": "personality.professionalism", "u8": 13},
+    {"name": "personality.sportsmanship", "u8": 11},
+    {"name": "personality.temperament", "u8": 16},
+    {"name": "personality.controversy", "u8": 6},
+    // day of the year, from 1
+    {"name": "date_of_birth.day", "u16": 258},
+    {"name": "date_of_birth.year", "u16": 2005},
+    // the team's, 0-100 per category: best coach + training facilities - 10
+    {"name": "coaching", "u8map": {"strength": 79, "quickness": 100, "gk_shot_stopping": 84, "gk_handling": 57, "defending": 58, "tackling": 65, "tactics": 70, "ball_control": 73, "attacking": 74, "shooting": 70, "set_pieces": 77}},
+    // the team's, 0-100 per category: progress builds (100 - workload)% as fast
+    {"name": "coach_workload", "u8map": {"strength": 8, "quickness": 8, "gk_shot_stopping": 4, "gk_handling": 7, "defending": 6, "tackling": 11, "tactics": 11, "ball_control": 11, "attacking": 11, "shooting": 10, "set_pieces": 0}},
+    // the club's, 1-20; change coaching by the same amount
+    {"name": "training_facilities", "u8": 20},
+    // sessions by name as in the game (or ID); add schedule.week2 etc. for a rotation, or remove to train on the club's schedules
+    {"name": "schedule.week1", "sessions": {
+      "day1.slot1": "Team Physical", "day1.slot2": "Team Outfield", "day1.slot3": "Team Rest",
+      "day2.slot1": "Team Physical", "day2.slot2": "Team Outfield", "day2.slot3": "Team Rest",
+      "day3.slot1": "Physical Recovery", "day3.slot2": "Team Overall", "day3.slot3": "Extra Curricular Team Bonding",
+      "day4.slot1": "Team Physical", "day4.slot2": "Team Outfield", "day4.slot3": "Team Rest",
+      "day5.slot1": "Team Overall", "day5.slot2": "Team Rest", "day5.slot3": "Match Focus",
+      "day6.slot1": "Team Travel", "day6.slot2": "Team Match/Match Practice", "day6.slot3": "Team Travel",
+      "day7.slot1": "Team Rest", "day7.slot2": "Team Rest", "day7.slot3": "Team Rest"
+    }},
+
+    // here be dragons
+    // The game computes these as it plays; to simulate training, leave them alone.
+    // per category, -100 (untrained) to 50; development turns it into attribute growth
+    {"name": "training_progress.strength", "s8": 40},
+    {"name": "training_progress.quickness", "s8": 35},
+    {"name": "training_progress.gk_shot_stopping", "s8": -100},
+    {"name": "training_progress.gk_handling", "s8": -100},
+    {"name": "training_progress.defending", "s8": 50},
+    {"name": "training_progress.tackling", "s8": 23},
+    {"name": "training_progress.tactics", "s8": 50},
+    {"name": "training_progress.ball_control", "s8": 49},
+    {"name": "training_progress.attacking", "s8": 50},
+    {"name": "training_progress.shooting", "s8": 17},
+    {"name": "training_progress.set_pieces", "s8": -29},
+    // 0-10000
+    {"name": "condition", "u16": 10000},
+    // 0 is fresh
+    {"name": "fatigue", "s16": -58},
+    // 0-10000
+    {"name": "sharpness", "u16": 5400},
+    // 0-255
+    {"name": "morale", "u8": 8},
+    // -100 to 100
+    {"name": "training_happiness", "s8": 0},
+    // the last change to training_happiness, as s16 bits
+    {"name": "training_happiness.unknown_08", "u16": 0},
+    // rating points from the last development
+    {"name": "last_development.gains", "s16": 0},
+    {"name": "last_development.other_gains", "s16": 0},
+    // the weaker foot gains 1 above 10 x its rating + 500
+    {"name": "weak_foot_progress", "u16": 0},
+    // match points and matches since the last development, moved to last_* on that day; plan later months with match_points.monthN (docs/CLI.md)
+    {"name": "development_period.total", "u16": 0},
+    {"name": "development_period.last_total", "s16": 0},
+    {"name": "development_period.last_count", "u8": 0},
+    {"name": "development_period.count", "u8": 0},
+    // the rating gains 1 at a threshold
+    {"name": "rating_progress.important_matches", "u16": 0},
+    {"name": "rating_progress.determination", "u16": 0},
+    // the trait gains 1 at a threshold
+    {"name": "personality_progress.pressure", "u16": 0},
+    {"name": "personality_progress.professionalism", "u16": 0},
+    // best league reputation / 10 with 11+ league appearances in a season
+    {"name": "played_level", "u8": 1},
+    // appearances there, 0-120
+    {"name": "played_level.appearances", "u8": 1},
+    // 0x40 late developer, 0x200 late growth due, 0x100 late growth had
+    {"name": "development_flags", "u16": 16},
+    // 0-20
+    {"name": "training_rating", "u8": 6},
+    // the 4 bytes of a float: CA growth carried to the next development
+    {"name": "ability_carry", "hex": "00000000"}
+  ]
+}
