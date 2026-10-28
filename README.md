@@ -9,6 +9,8 @@ The app includes a Windows UI and a command-line interface. Results are
 saved as CSV files, with optional detailed player and team statistics.
 Written in C17.
 
+> NOTE: a macOS fork of this [has been created here](https://github.com/graemerycyk/FM-24-Match-Harness/releases/latest).
+
 ## Features
 
 - Export the human manager's next fixture as editable JSON or binary data.
