@@ -91,8 +91,10 @@ uint32_t game_rva(const void *address) {
 	return value <= UINT32_MAX ? (uint32_t)value : 0;
 }
 
+static uint32_t timestamp = GAME_PE_TIMESTAMP_STEAM;
+
 uint32_t game_timestamp(void) {
-	return GAME_PE_TIMESTAMP_STEAM;
+	return timestamp;
 }
 
 DataBuffer *stream_create(void) {
@@ -716,6 +718,39 @@ TEST(labels_instruction_runs_in_order) {
 	free(labels);
 }
 
+TEST(labels_epic_plan_sites) {
+	uint64_t role = 1; // goalkeeper
+	TraceRecord records[] = {
+		{.site = SITE_EPIC_TACTIC_MENTALITY},
+		{.site = SITE_EPIC_TACTIC_TEAM_INSTRUCTIONS},
+		{.site = SITE_EPIC_TACTIC_SLOT_POSITION},
+		{.site = SITE_EPIC_TACTIC_SLOT_ROLE},
+		{.site = SITE_EPIC_TACTIC_INSTRUCTIONS_ROLE, .length = 8},
+	};
+	char *paths[] = {"1ac77d5>1b6f34b>1a8971a"};
+	Serialised serialised = {.records = records, .recordCount = 5, .paths = paths, .pathCount = 1};
+	serialised.bytes.data = (uint8_t *)&role;
+	PeopleIndex people = {0};
+	timestamp = GAME_PE_TIMESTAMP_EPIC;
+	FieldLabel *labels = labels_compute(&serialised, &people);
+	timestamp = GAME_PE_TIMESTAMP_STEAM;
+	ASSERT_BOOL_EQ(labels != NULL, true);
+	if (!labels) {
+		return;
+	}
+	static const char *const names[] = {
+		"home.manager.tactic.plan[0].mentality",
+		"home.manager.tactic.plan[0].team_instructions[0]",
+		"home.manager.tactic.plan[0].slot[0].position",
+		"home.manager.tactic.plan[0].slot[0].role",
+		"home.manager.tactic.plan[0].slot[0].player_instructions[goalkeeper]",
+	};
+	for (size_t i = 0; i < 5; ++i) {
+		ASSERT_BOOL_EQ(strcmp(labels[i].name, names[i]) == 0, true);
+	}
+	free(labels);
+}
+
 TEST(labels_staff_attributes_byte_by_byte) {
 	uint8_t bytes[4 + STAFF_ATTRIBUTE_COUNT] = {0};
 	for (size_t k = 0; k < STAFF_ATTRIBUTE_COUNT; ++k) {
@@ -1039,6 +1074,7 @@ void registerDllTests(void) {
 	);
 	test_run("DLL rejects truncated detailed-report paths", test_rejects_truncated_statistics_paths);
 	test_run("DLL numbers instruction runs consistently", test_labels_instruction_runs_in_order);
+	test_run("DLL names the Epic build's tactic plan fields", test_labels_epic_plan_sites);
 	test_run(
 		"DLL exports staff attributes as one named u8 each", test_labels_staff_attributes_byte_by_byte
 	);

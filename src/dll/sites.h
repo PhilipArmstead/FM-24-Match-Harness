@@ -162,3 +162,13 @@ enum TacticField {
 	SITE_TACTIC_INSTRUCTIONS_ROLE = 0x11916B75, // u64 role bit keying a set of player instructions
 	SITE_TACTIC_INSTRUCTIONS_BITS = 0x1A0FD22,  // 2 x u32 bit set: that role's player instructions
 };
+
+// The same fields' sites in the Epic Games build, whose .arch code differs (read from an Epic
+// `--full` export). The instruction bits are written from .sdata, so their site is shared.
+enum EpicTacticField {
+	SITE_EPIC_TACTIC_MENTALITY = 0x11EB98E0,
+	SITE_EPIC_TACTIC_TEAM_INSTRUCTIONS = 0x11EC2932,
+	SITE_EPIC_TACTIC_SLOT_POSITION = 0x1198BD07,
+	SITE_EPIC_TACTIC_SLOT_ROLE = 0x1198BD1F,
+	SITE_EPIC_TACTIC_INSTRUCTIONS_ROLE = 0x119895E5,
+};

@@ -6,12 +6,15 @@
 #include "client.h"
 #include "commands.h"
 #include "constants.h"
+#include "development_format.h"
 #include "files.h"
 #include "fixture_data.h"
 #include "fixture_export.h"
 #include "fixture_load.h"
+#include "match_config.h"
 #include "paths.h"
 #include "protocol.h"
+#include "session_names.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -36,6 +39,9 @@ enum {
 	FILE_TIMER = 3,
 	TEAMS_TIMER = 4,
 	PLAYERS_TIMER = 5,
+	DEVELOPMENT_TIMER = 6,        // the Training tab's player export
+	TRAINING_FILTER_TIMER = 7,    // the Training tab's player search, once typing pauses
+	DEVELOP_TIMER = 8,            // the Training tab's simulation
 	WM_SWAP_PLAYERS = WM_APP + 2, // the player list has loaded or failed (to the swap prompt)
 };
 
@@ -82,173 +88,383 @@ enum {
 	SIM_CONTROL_COUNT,
 };
 
-// kellyman.json's editable values, with maps and schedule sessions expanded.
-static const wchar_t *const trainingFields[] = {
-	L"person_uid",
-	L"current_ability",
-	L"potential_ability",
-	L"ratings.pos_gk",
-	L"ratings.pos_sw",
-	L"ratings.pos_dl",
-	L"ratings.pos_dc",
-	L"ratings.pos_dr",
-	L"ratings.pos_dm",
-	L"ratings.pos_ml",
-	L"ratings.pos_mc",
-	L"ratings.pos_mr",
-	L"ratings.pos_aml",
-	L"ratings.pos_amc",
-	L"ratings.pos_amr",
-	L"ratings.pos_st",
-	L"ratings.pos_wbl",
-	L"ratings.pos_wbr",
-	L"ratings.crossing",
-	L"ratings.dribbling",
-	L"ratings.finishing",
-	L"ratings.heading",
-	L"ratings.long_shots",
-	L"ratings.marking",
-	L"ratings.off_the_ball",
-	L"ratings.passing",
-	L"ratings.penalty_taking",
-	L"ratings.tackling",
-	L"ratings.vision",
-	L"ratings.handling",
-	L"ratings.aerial_reach",
-	L"ratings.command_of_area",
-	L"ratings.communication",
-	L"ratings.kicking",
-	L"ratings.throwing",
-	L"ratings.anticipation",
-	L"ratings.decisions",
-	L"ratings.one_on_ones",
-	L"ratings.positioning",
-	L"ratings.reflexes",
-	L"ratings.first_touch",
-	L"ratings.technique",
-	L"ratings.left_foot",
-	L"ratings.right_foot",
-	L"ratings.flair",
-	L"ratings.corners",
-	L"ratings.teamwork",
-	L"ratings.work_rate",
-	L"ratings.long_throws",
-	L"ratings.eccentricity",
-	L"ratings.rushing_out",
-	L"ratings.punching",
-	L"ratings.acceleration",
-	L"ratings.free_kicks",
-	L"ratings.strength",
-	L"ratings.stamina",
-	L"ratings.pace",
-	L"ratings.jumping_reach",
-	L"ratings.leadership",
-	L"ratings.dirtiness",
-	L"ratings.balance",
-	L"ratings.bravery",
-	L"ratings.consistency",
-	L"ratings.aggression",
-	L"ratings.agility",
-	L"ratings.important_matches",
-	L"ratings.injury_proneness",
-	L"ratings.versatility",
-	L"ratings.natural_fitness",
-	L"ratings.determination",
-	L"ratings.composure",
-	L"ratings.concentration",
-	L"training_intensity",
-	L"height",
-	L"weight",
-	L"personality.adaptability",
-	L"personality.ambition",
-	L"personality.loyalty",
-	L"personality.pressure",
-	L"personality.professionalism",
-	L"personality.sportsmanship",
-	L"personality.temperament",
-	L"personality.controversy",
-	L"date_of_birth.day",
-	L"date_of_birth.year",
-	L"coaching.strength",
-	L"coaching.quickness",
-	L"coaching.gk_shot_stopping",
-	L"coaching.gk_handling",
-	L"coaching.defending",
-	L"coaching.tackling",
-	L"coaching.tactics",
-	L"coaching.ball_control",
-	L"coaching.attacking",
-	L"coaching.shooting",
-	L"coaching.set_pieces",
-	L"coach_workload.strength",
-	L"coach_workload.quickness",
-	L"coach_workload.gk_shot_stopping",
-	L"coach_workload.gk_handling",
-	L"coach_workload.defending",
-	L"coach_workload.tackling",
-	L"coach_workload.tactics",
-	L"coach_workload.ball_control",
-	L"coach_workload.attacking",
-	L"coach_workload.shooting",
-	L"coach_workload.set_pieces",
-	L"training_facilities",
-	L"schedule.week1.day1.slot1",
-	L"schedule.week1.day1.slot2",
-	L"schedule.week1.day1.slot3",
-	L"schedule.week1.day2.slot1",
-	L"schedule.week1.day2.slot2",
-	L"schedule.week1.day2.slot3",
-	L"schedule.week1.day3.slot1",
-	L"schedule.week1.day3.slot2",
-	L"schedule.week1.day3.slot3",
-	L"schedule.week1.day4.slot1",
-	L"schedule.week1.day4.slot2",
-	L"schedule.week1.day4.slot3",
-	L"schedule.week1.day5.slot1",
-	L"schedule.week1.day5.slot2",
-	L"schedule.week1.day5.slot3",
-	L"schedule.week1.day6.slot1",
-	L"schedule.week1.day6.slot2",
-	L"schedule.week1.day6.slot3",
-	L"schedule.week1.day7.slot1",
-	L"schedule.week1.day7.slot2",
-	L"schedule.week1.day7.slot3",
-	L"training_progress.strength",
-	L"training_progress.quickness",
-	L"training_progress.gk_shot_stopping",
-	L"training_progress.gk_handling",
-	L"training_progress.defending",
-	L"training_progress.tackling",
-	L"training_progress.tactics",
-	L"training_progress.ball_control",
-	L"training_progress.attacking",
-	L"training_progress.shooting",
-	L"training_progress.set_pieces",
-	L"condition",
-	L"fatigue",
-	L"sharpness",
-	L"morale",
-	L"training_happiness",
-	L"training_happiness.unknown_08",
-	L"last_development.gains",
-	L"last_development.other_gains",
-	L"weak_foot_progress",
-	L"development_period.total",
-	L"development_period.last_total",
-	L"development_period.last_count",
-	L"development_period.count",
-	L"rating_progress.important_matches",
-	L"rating_progress.determination",
-	L"personality_progress.pressure",
-	L"personality_progress.professionalism",
-	L"played_level",
-	L"played_level.appearances",
-	L"development_flags",
-	L"training_rating",
-	L"ability_carry",
+// The Training tab's Simulation tab: develop's months, seeds and --per-seed-breakdown.
+enum {
+	DEVELOP_MONTHS_LABEL,
+	DEVELOP_MONTHS,
+	DEVELOP_SPINNER,
+	DEVELOP_SEEDS_LABEL,
+	DEVELOP_SEEDS,
+	DEVELOP_PER_SEED,
+	DEVELOP_SUBMIT,
+	DEVELOP_STATUS,
+	DEVELOP_SUMMARY,
+	DEVELOP_CONTROL_COUNT,
 };
 
-enum { TRAINING_FIELD_COUNT = sizeof trainingFields / sizeof trainingFields[0] };
+typedef enum TrainingGroup {
+	TRAINING_PLAYER,
+	TRAINING_FACILITIES,
+	TRAINING_STAFF,
+	TRAINING_SCHEDULE,
+	TRAINING_STATE,
+	TRAINING_GROUP_COUNT,
+} TrainingGroup;
+
+static const wchar_t *const trainingGroupNames[] = {L"Player",
+	L"Facilities",
+	L"Staff",
+	L"Schedule",
+	L"Game state (advanced)"};
+
+enum {
+	SECTION_PLAYER,
+	SECTION_RATINGS,
+	SECTION_CONDITION,
+	SECTION_FACILITIES,
+	SECTION_STAFF,
+	SECTION_SCHEDULE,
+	SECTION_STATE,
+	TRAINING_SECTION_COUNT,
+	TRAINING_COLUMN_LIMIT = 5,
+};
+
+// A block of label/input columns inside a group; headings sit above the columns, or above just
+// their inputs when the labels name the rows.
+typedef struct TrainingSection {
+	TrainingGroup group;
+	bool headingOverInputs;
+	const wchar_t *headings[TRAINING_COLUMN_LIMIT];
+} TrainingSection;
+
+static const TrainingSection trainingSections[] = {
+	[SECTION_PLAYER] = {TRAINING_PLAYER, false, {NULL, NULL, L"Personality"}},
+	[SECTION_RATINGS] = {TRAINING_PLAYER,
+		false,
+		{L"Positions", L"Goalkeeping", L"Technical", L"Mental", L"Physical"}},
+	[SECTION_CONDITION] = {TRAINING_PLAYER, false, {NULL}},
+	[SECTION_FACILITIES] = {TRAINING_FACILITIES, false, {NULL}},
+	[SECTION_STAFF] = {TRAINING_STAFF, true, {L"Coaching", L"Workload"}},
+	[SECTION_SCHEDULE] = {TRAINING_SCHEDULE, true, {L"Slot 1", L"Slot 2", L"Slot 3"}},
+	[SECTION_STATE] = {TRAINING_STATE, false, {L"Training progress"}},
+};
+
+// A development file's values (development_format.h), with maps and schedule sessions expanded,
+// in tab order. Each column stacks its fields in table order.
+typedef struct TrainingField {
+	const char *id; // the file's name; "map.key" in a map, "schedule.week1.dayD.slotS" a session
+	const wchar_t *label;
+	uint8_t section;
+	uint8_t column;
+} TrainingField;
+
+static const TrainingField trainingFields[] = {
+	{"person_uid", L"Person UID", SECTION_PLAYER, 0},
+	{"current_ability", L"Current ability", SECTION_PLAYER, 0},
+	{"potential_ability", L"Potential ability", SECTION_PLAYER, 0},
+	{"training_intensity", L"Training intensity", SECTION_PLAYER, 0},
+	{"training_focus", L"Additional focus", SECTION_PLAYER, 0},
+	{"height", L"Height (cm)", SECTION_PLAYER, 1},
+	{"weight", L"Weight (kg)", SECTION_PLAYER, 1},
+	{"date_of_birth.day", L"Birth day of year", SECTION_PLAYER, 1},
+	{"date_of_birth.year", L"Birth year", SECTION_PLAYER, 1},
+	{"personality.adaptability", L"Adaptability", SECTION_PLAYER, 2},
+	{"personality.ambition", L"Ambition", SECTION_PLAYER, 2},
+	{"personality.loyalty", L"Loyalty", SECTION_PLAYER, 2},
+	{"personality.pressure", L"Pressure", SECTION_PLAYER, 2},
+	{"personality.professionalism", L"Professionalism", SECTION_PLAYER, 3},
+	{"personality.sportsmanship", L"Sportsmanship", SECTION_PLAYER, 3},
+	{"personality.temperament", L"Temperament", SECTION_PLAYER, 3},
+	{"personality.controversy", L"Controversy", SECTION_PLAYER, 3},
+	{"ratings.pos_gk", L"GK", SECTION_RATINGS, 0},
+	{"ratings.pos_sw", L"SW", SECTION_RATINGS, 0},
+	{"ratings.pos_dl", L"D (L)", SECTION_RATINGS, 0},
+	{"ratings.pos_dc", L"D (C)", SECTION_RATINGS, 0},
+	{"ratings.pos_dr", L"D (R)", SECTION_RATINGS, 0},
+	{"ratings.pos_wbl", L"WB (L)", SECTION_RATINGS, 0},
+	{"ratings.pos_wbr", L"WB (R)", SECTION_RATINGS, 0},
+	{"ratings.pos_dm", L"DM", SECTION_RATINGS, 0},
+	{"ratings.pos_ml", L"M (L)", SECTION_RATINGS, 0},
+	{"ratings.pos_mc", L"M (C)", SECTION_RATINGS, 0},
+	{"ratings.pos_mr", L"M (R)", SECTION_RATINGS, 0},
+	{"ratings.pos_aml", L"AM (L)", SECTION_RATINGS, 0},
+	{"ratings.pos_amc", L"AM (C)", SECTION_RATINGS, 0},
+	{"ratings.pos_amr", L"AM (R)", SECTION_RATINGS, 0},
+	{"ratings.pos_st", L"ST", SECTION_RATINGS, 0},
+	{"ratings.aerial_reach", L"Aerial Reach", SECTION_RATINGS, 1},
+	{"ratings.command_of_area", L"Command of Area", SECTION_RATINGS, 1},
+	{"ratings.communication", L"Communication", SECTION_RATINGS, 1},
+	{"ratings.eccentricity", L"Eccentricity", SECTION_RATINGS, 1},
+	{"ratings.handling", L"Handling", SECTION_RATINGS, 1},
+	{"ratings.kicking", L"Kicking", SECTION_RATINGS, 1},
+	{"ratings.one_on_ones", L"One on Ones", SECTION_RATINGS, 1},
+	{"ratings.punching", L"Punching (Tendency)", SECTION_RATINGS, 1},
+	{"ratings.reflexes", L"Reflexes", SECTION_RATINGS, 1},
+	{"ratings.rushing_out", L"Rushing Out (Tendency)", SECTION_RATINGS, 1},
+	{"ratings.throwing", L"Throwing", SECTION_RATINGS, 1},
+	{"ratings.corners", L"Corners", SECTION_RATINGS, 2},
+	{"ratings.crossing", L"Crossing", SECTION_RATINGS, 2},
+	{"ratings.dribbling", L"Dribbling", SECTION_RATINGS, 2},
+	{"ratings.finishing", L"Finishing", SECTION_RATINGS, 2},
+	{"ratings.first_touch", L"First Touch", SECTION_RATINGS, 2},
+	{"ratings.free_kicks", L"Free Kick Taking", SECTION_RATINGS, 2},
+	{"ratings.heading", L"Heading", SECTION_RATINGS, 2},
+	{"ratings.long_shots", L"Long Shots", SECTION_RATINGS, 2},
+	{"ratings.long_throws", L"Long Throws", SECTION_RATINGS, 2},
+	{"ratings.marking", L"Marking", SECTION_RATINGS, 2},
+	{"ratings.passing", L"Passing", SECTION_RATINGS, 2},
+	{"ratings.penalty_taking", L"Penalty Taking", SECTION_RATINGS, 2},
+	{"ratings.tackling", L"Tackling", SECTION_RATINGS, 2},
+	{"ratings.technique", L"Technique", SECTION_RATINGS, 2},
+	{"ratings.left_foot", L"Left Foot", SECTION_RATINGS, 2},
+	{"ratings.right_foot", L"Right Foot", SECTION_RATINGS, 2},
+	{"ratings.aggression", L"Aggression", SECTION_RATINGS, 3},
+	{"ratings.anticipation", L"Anticipation", SECTION_RATINGS, 3},
+	{"ratings.bravery", L"Bravery", SECTION_RATINGS, 3},
+	{"ratings.composure", L"Composure", SECTION_RATINGS, 3},
+	{"ratings.concentration", L"Concentration", SECTION_RATINGS, 3},
+	{"ratings.consistency", L"Consistency", SECTION_RATINGS, 3},
+	{"ratings.decisions", L"Decisions", SECTION_RATINGS, 3},
+	{"ratings.determination", L"Determination", SECTION_RATINGS, 3},
+	{"ratings.dirtiness", L"Dirtiness", SECTION_RATINGS, 3},
+	{"ratings.flair", L"Flair", SECTION_RATINGS, 3},
+	{"ratings.important_matches", L"Important Matches", SECTION_RATINGS, 3},
+	{"ratings.leadership", L"Leadership", SECTION_RATINGS, 3},
+	{"ratings.off_the_ball", L"Off the Ball", SECTION_RATINGS, 3},
+	{"ratings.positioning", L"Positioning", SECTION_RATINGS, 3},
+	{"ratings.teamwork", L"Teamwork", SECTION_RATINGS, 3},
+	{"ratings.versatility", L"Versatility", SECTION_RATINGS, 3},
+	{"ratings.vision", L"Vision", SECTION_RATINGS, 3},
+	{"ratings.work_rate", L"Work Rate", SECTION_RATINGS, 3},
+	{"ratings.acceleration", L"Acceleration", SECTION_RATINGS, 4},
+	{"ratings.agility", L"Agility", SECTION_RATINGS, 4},
+	{"ratings.balance", L"Balance", SECTION_RATINGS, 4},
+	{"ratings.injury_proneness", L"Injury Proneness", SECTION_RATINGS, 4},
+	{"ratings.jumping_reach", L"Jumping Reach", SECTION_RATINGS, 4},
+	{"ratings.natural_fitness", L"Natural Fitness", SECTION_RATINGS, 4},
+	{"ratings.pace", L"Pace", SECTION_RATINGS, 4},
+	{"ratings.stamina", L"Stamina", SECTION_RATINGS, 4},
+	{"ratings.strength", L"Strength", SECTION_RATINGS, 4},
+	// A row under the ratings, then match experience under condition.
+	{"condition", L"Condition", SECTION_CONDITION, 0},
+	{"fatigue", L"Fatigue", SECTION_CONDITION, 1},
+	{"sharpness", L"Sharpness", SECTION_CONDITION, 2},
+	{"morale", L"Morale", SECTION_CONDITION, 3},
+	{"training_happiness", L"Training happiness", SECTION_CONDITION, 4},
+	{"development_period.total", L"Match experience", SECTION_CONDITION, 0},
+	{"training_facilities", L"Training facilities", SECTION_FACILITIES, 0},
+	// Coaching and workload alternate so Tab crosses each category's row.
+	{"coaching.strength", L"Strength", SECTION_STAFF, 0},
+	{"coach_workload.strength", L"", SECTION_STAFF, 1},
+	{"coaching.quickness", L"Quickness", SECTION_STAFF, 0},
+	{"coach_workload.quickness", L"", SECTION_STAFF, 1},
+	{"coaching.gk_shot_stopping", L"GK Shot Stopping", SECTION_STAFF, 0},
+	{"coach_workload.gk_shot_stopping", L"", SECTION_STAFF, 1},
+	{"coaching.gk_handling", L"GK Handling", SECTION_STAFF, 0},
+	{"coach_workload.gk_handling", L"", SECTION_STAFF, 1},
+	{"coaching.defending", L"Defending", SECTION_STAFF, 0},
+	{"coach_workload.defending", L"", SECTION_STAFF, 1},
+	{"coaching.tackling", L"Tackling", SECTION_STAFF, 0},
+	{"coach_workload.tackling", L"", SECTION_STAFF, 1},
+	{"coaching.tactics", L"Tactics", SECTION_STAFF, 0},
+	{"coach_workload.tactics", L"", SECTION_STAFF, 1},
+	{"coaching.ball_control", L"Ball Control", SECTION_STAFF, 0},
+	{"coach_workload.ball_control", L"", SECTION_STAFF, 1},
+	{"coaching.attacking", L"Attacking", SECTION_STAFF, 0},
+	{"coach_workload.attacking", L"", SECTION_STAFF, 1},
+	{"coaching.shooting", L"Shooting", SECTION_STAFF, 0},
+	{"coach_workload.shooting", L"", SECTION_STAFF, 1},
+	{"coaching.set_pieces", L"Set Pieces", SECTION_STAFF, 0},
+	{"coach_workload.set_pieces", L"", SECTION_STAFF, 1},
+	{"schedule.week1.day1.slot1", L"Day 1", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day1.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day1.slot3", L"", SECTION_SCHEDULE, 2},
+	{"schedule.week1.day2.slot1", L"Day 2", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day2.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day2.slot3", L"", SECTION_SCHEDULE, 2},
+	{"schedule.week1.day3.slot1", L"Day 3", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day3.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day3.slot3", L"", SECTION_SCHEDULE, 2},
+	{"schedule.week1.day4.slot1", L"Day 4", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day4.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day4.slot3", L"", SECTION_SCHEDULE, 2},
+	{"schedule.week1.day5.slot1", L"Day 5", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day5.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day5.slot3", L"", SECTION_SCHEDULE, 2},
+	{"schedule.week1.day6.slot1", L"Day 6", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day6.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day6.slot3", L"", SECTION_SCHEDULE, 2},
+	{"schedule.week1.day7.slot1", L"Day 7", SECTION_SCHEDULE, 0},
+	{"schedule.week1.day7.slot2", L"", SECTION_SCHEDULE, 1},
+	{"schedule.week1.day7.slot3", L"", SECTION_SCHEDULE, 2},
+	{"training_progress.strength", L"Strength", SECTION_STATE, 0},
+	{"training_progress.quickness", L"Quickness", SECTION_STATE, 0},
+	{"training_progress.gk_shot_stopping", L"GK Shot Stopping", SECTION_STATE, 0},
+	{"training_progress.gk_handling", L"GK Handling", SECTION_STATE, 0},
+	{"training_progress.defending", L"Defending", SECTION_STATE, 0},
+	{"training_progress.tackling", L"Tackling", SECTION_STATE, 0},
+	{"training_progress.tactics", L"Tactics", SECTION_STATE, 0},
+	{"training_progress.ball_control", L"Ball Control", SECTION_STATE, 0},
+	{"training_progress.attacking", L"Attacking", SECTION_STATE, 0},
+	{"training_progress.shooting", L"Shooting", SECTION_STATE, 0},
+	{"training_progress.set_pieces", L"Set Pieces", SECTION_STATE, 0},
+	{"training_happiness.unknown_08", L"Happiness change", SECTION_STATE, 1},
+	{"last_development.gains", L"Last development gains", SECTION_STATE, 1},
+	{"last_development.other_gains", L"Last other gains", SECTION_STATE, 1},
+	{"weak_foot_progress", L"Weak foot progress", SECTION_STATE, 1},
+	{"development_period.last_total", L"Last period match points", SECTION_STATE, 1},
+	{"development_period.last_count", L"Last period matches", SECTION_STATE, 1},
+	{"development_period.count", L"Period matches", SECTION_STATE, 1},
+	{"rating_progress.important_matches", L"Important Matches progress", SECTION_STATE, 2},
+	{"rating_progress.determination", L"Determination progress", SECTION_STATE, 2},
+	{"personality_progress.pressure", L"Pressure progress", SECTION_STATE, 2},
+	{"personality_progress.professionalism", L"Professionalism progress", SECTION_STATE, 2},
+	{"played_level", L"Played level", SECTION_STATE, 2},
+	{"played_level.appearances", L"Played level appearances", SECTION_STATE, 2},
+	{"development_flags", L"Development flags", SECTION_STATE, 2},
+	{"training_rating", L"Training rating", SECTION_STATE, 2},
+	{"ability_carry", L"Ability carry (hex)", SECTION_STATE, 2},
+};
+
+enum {
+	TRAINING_FIELD_COUNT = sizeof trainingFields / sizeof trainingFields[0],
+	TRAINING_TEXT_LENGTH = 48, // the longest value, a session name, with room to spare
+};
+
+// A drop-down's values: each u8 with its name.
+typedef struct TrainingChoice {
+	uint8_t id;
+	const wchar_t *name;
+} TrainingChoice;
+
+typedef struct TrainingChoices {
+	const TrainingChoice *items;
+	unsigned count;
+	// A blank first item, which leaves the field out. Without one, a file that leaves the field out
+	// or has a value not listed shows the first item.
+	bool blank;
+} TrainingChoices;
+
+// The additional focuses (docs/CLI.md).
+static const TrainingChoice focusItems[] = {{255, L"None"},
+	{0, L"Recovery: Quickness"},
+	{1, L"Recovery: Agility and Balance"},
+	{2, L"Recovery: Strength"},
+	{3, L"Recovery: Stamina"},
+	{4, L"Recovery: Physical"},
+	{5, L"Free Kicks"},
+	{6, L"Corners"},
+	{7, L"Penalty Taking"},
+	{8, L"Long Throws"},
+	{9, L"Quickness"},
+	{10, L"Agility and Balance"},
+	{11, L"Strength"},
+	{12, L"Endurance"},
+	{13, L"Defensive Positioning"},
+	{14, L"Attacking Movement"},
+	{15, L"Shooting"},
+	{16, L"Passing"},
+	{17, L"Decisions"},
+	{18, L"Crossing"},
+	{19, L"Ball Control"},
+	{20, L"Heading"},
+	{21, L"GK Shot Stopping"},
+	{22, L"GK Positioning"},
+	{23, L"GK Handling"},
+	{24, L"GK One on Ones"},
+	{25, L"GK Distribution"},
+	{26, L"Playmaking"}};
+static const TrainingChoices focusChoices = {focusItems,
+	sizeof focusItems / sizeof focusItems[0],
+	true};
+
+// Training intensities (docs/CLI.md); 0 is also normal, so it opens as Normal.
+static const TrainingChoice intensityItems[] = {{1, L"Normal"},
+	{2, L"Double"},
+	{254, L"Half"},
+	{255, L"Team workload"}};
+static const TrainingChoices intensityChoices = {intensityItems,
+	sizeof intensityItems / sizeof intensityItems[0],
+	false};
+
+// Where a Training input's value lives in a development file: a table field (NULL for person_uid
+// and the schedule) and, in a map or the schedule, which of its values.
+typedef struct TrainingTarget {
+	const DevelopmentField *field;
+	size_t key;
+	bool session;
+	const TrainingChoices *choices; // a drop-down of named values, or NULL
+} TrainingTarget;
+
+// A drop-down: a schedule slot or a field of named values.
+static bool trainingCombo(const TrainingTarget *target) {
+	return target->session || target->choices;
+}
+
+static TrainingTarget trainingTarget(const char *id) {
+	static const char schedule[] = "schedule.week1.day";
+	if (strncmp(id, schedule, sizeof schedule - 1) == 0) {
+		const char *day = id + sizeof schedule - 1; // "D.slotS"
+		return (TrainingTarget){NULL, (size_t)(day[0] - '1') * 3 + (size_t)(day[6] - '1'), true, NULL};
+	}
+	const char *dot = strrchr(id, '.');
+	for (size_t i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
+		const DevelopmentField *field = &developmentFields[i];
+		if (strcmp(field->name, id) == 0) {
+			const TrainingChoices *choices = i == DEVELOPMENT_TRAINING_FOCUS       ? &focusChoices
+																			 : i == DEVELOPMENT_TRAINING_INTENSITY ? &intensityChoices
+																																						 : NULL;
+			return (TrainingTarget){field, 0, false, choices};
+		}
+		bool ratings = field->kind == DEVELOPMENT_RATINGS;
+		if ((!ratings && field->kind != DEVELOPMENT_CATEGORIES) || !dot ||
+				strlen(field->name) != (size_t)(dot - id) ||
+				strncmp(field->name, id, (size_t)(dot - id)) != 0) {
+			continue;
+		}
+		for (size_t key = 0; key < developmentFormat_size(field); ++key) {
+			const char *name =
+				ratings ? developmentFormat_ratingName(key) : developmentFormat_categoryName(key);
+			if (strcmp(name, dot + 1) == 0) {
+				return (TrainingTarget){field, key, false, NULL};
+			}
+		}
+	}
+	return (TrainingTarget){0}; // person_uid
+}
+
+// The input's legal range; false for the hex and session inputs, which have none.
+static bool trainingLimits(const TrainingTarget *target, long long *minimum, long long *maximum) {
+	if (trainingCombo(target) || (target->field && target->field->kind == DEVELOPMENT_F32)) {
+		return false;
+	}
+	if (!target->field) {
+		*minimum = 1; // person_uid
+		*maximum = UINT32_MAX;
+		return true;
+	}
+	*minimum = target->field->minimum;
+	*maximum = target->field->kind == DEVELOPMENT_RATINGS && target->key < DEVELOPMENT_POSITION_COUNT
+							 ? DEVELOPMENT_POSITION_MAXIMUM
+							 : target->field->maximum;
+	return true;
+}
+
+// The widest legal value, which sizes an edit and caps its length.
+static void trainingWidest(const TrainingTarget *target, wchar_t *out, size_t size) {
+	long long minimum = 0;
+	long long maximum = 0;
+	if (!trainingLimits(target, &minimum, &maximum)) {
+		(void)swprintf(out, size, L"%ls", trainingCombo(target) ? L"" : L"FFFFFFFF");
+		return;
+	}
+	wchar_t low[24];
+	(void)swprintf(low, 24, L"%lld", minimum);
+	(void)swprintf(out, size, L"%lld", maximum);
+	if (wcslen(low) > wcslen(out)) {
+		(void)swprintf(out, size, L"%ls", low);
+	}
+}
 
 typedef struct SimulationJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
@@ -304,6 +520,23 @@ typedef struct Choice {
 	wchar_t *folded; // what is matched (foldText): the label, or the player's names
 } Choice;
 
+// Exports a player's development values (get-development) on a worker thread.
+typedef struct DevelopmentJob {
+	wchar_t person[SWAP_ID_LENGTH];
+	wchar_t path[HARNESS_PATH_LENGTH]; // in the temp directory, named after the player's ID
+	char error[CLIENT_RESULT_LENGTH];
+} DevelopmentJob;
+
+// Simulates the Training tab's values (develop) on a worker thread.
+typedef struct DevelopJob {
+	wchar_t input[HARNESS_PATH_LENGTH];  // the values, in a temporary development file
+	wchar_t output[HARNESS_PATH_LENGTH]; // the CSV
+	wchar_t months[16];
+	wchar_t seeds[256];
+	bool perSeed;
+	char error[CLIENT_RESULT_LENGTH];
+} DevelopJob;
+
 // Fetches the team or player list on a worker thread.
 typedef struct ChoiceListJob {
 	char error[CLIENT_RESULT_LENGTH];
@@ -330,8 +563,30 @@ typedef struct WindowState {
 	HWND mainTabs;
 	HWND trainingPage;
 	HWND trainingContent;
+	HWND trainingGroups[TRAINING_GROUP_COUNT];
+	HWND trainingHeadings[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT];
 	HWND trainingLabels[TRAINING_FIELD_COUNT];
 	HWND trainingInputs[TRAINING_FIELD_COUNT];
+	HWND trainingInGame; // "Use in-game schedule?", which hides the schedule's slots
+	TrainingTarget trainingTargets[TRAINING_FIELD_COUNT];
+	HWND trainingFileButtons[FILE_CONTROL_COUNT];
+	HWND trainingTabs;    // Player (the player search and form) and Simulation
+	HWND trainingSummary; // whether the values are saved, above the tabs
+	int trainingSummaryHeight;
+	HWND trainingPicker; // finds a player to export and open
+	bool filteringTrainingPlayers;
+	HANDLE developmentThread;
+	DevelopmentJob developmentJob;
+	wchar_t trainingPath[HARNESS_PATH_LENGTH]; // the development file last opened or saved
+	HWND develop[DEVELOP_CONTROL_COUNT];
+	HANDLE developThread;
+	DevelopJob developJob;
+	bool trainingDirty;     // inputs edited since then
+	bool trainingTemporary; // trainingPath is the player search's temp export
+	// Text widths for the current font, measured by setFonts.
+	int trainingHeadingWidths[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT];
+	int trainingLabelWidths[TRAINING_FIELD_COUNT];
+	int trainingInputWidths[TRAINING_FIELD_COUNT];
 	int trainingWheel;
 	HWND metadata;
 	HWND fileButtons[FILE_CONTROL_COUNT];
@@ -372,6 +627,7 @@ typedef struct WindowState {
 	unsigned long threadLimit;
 	HFONT font;
 	HFONT headingFont;
+	HFONT columnHeadingFont; // the Training tab's column headings
 	HBITMAP editIcon;
 	COLORREF editIconColor;
 	COLORREF editIconBackground;
@@ -395,6 +651,7 @@ static HWND activeWindow;
 static const wchar_t pitchClass[] = L"FM24FixturePitch";
 static const wchar_t unsavedPrefix[] = L"This fixture object is not saved. ";
 static const wchar_t exportLink[] = L"Click here";
+static const wchar_t developmentUnsaved[] = L"This development object is not saved. ";
 static const wchar_t missingFixture[] = L"Fixture cannot be found; restart the app";
 static const wchar_t *const columns[] = {
 	L"Slot",
@@ -443,11 +700,14 @@ static void showError(HWND window, const wchar_t *message) {
 }
 
 static void layout(HWND window, WindowState *state);
-static void selectTab(WindowState *state);
+static void selectTab(const WindowState *state);
 static void showFileError(HWND window, const char *error);
 static void removeReplacement(const wchar_t *path);
 static const char *launchReplacement(HWND window, WindowState *state);
 static void enableReplacementActions(const WindowState *state, BOOL enabled);
+static void setTrainingCue(const WindowState *state);
+static void filterTrainingPlayers(WindowState *state, bool drop);
+static void layoutTraining(const WindowState *state);
 static bool
 startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bool temporary);
 
@@ -764,6 +1024,10 @@ static void startSimulation(HWND window, WindowState *state) {
 	if (state->simulationThread || state->replacementThread || state->fileThread) {
 		return;
 	}
+	if (state->developThread) {
+		showError(window, L"Please wait for the training simulation to finish.");
+		return;
+	}
 	SimulationJob *job = &state->simulationJob;
 	wchar_t *end = NULL;
 	errno = 0;
@@ -915,9 +1179,30 @@ static void showSquad(const WindowState *state, unsigned side, bool show) {
 	ShowWindow(state->swapButtons[side], command);
 }
 
-static void selectTab(WindowState *state) {
+// Whether the Training tab's Player tab, with the player search and form, is showing.
+static bool trainingPlayerShown(const WindowState *state) {
+	return TabCtrl_GetCurSel(state->mainTabs) == 1 && TabCtrl_GetCurSel(state->trainingTabs) == 0;
+}
+
+// The Training tab's controls: its summary, Open and Save, its tabs, the Player tab's player
+// search and scrolling form, and the Simulation tab's options.
+static void showTraining(const WindowState *state, bool show) {
+	bool player = show && TabCtrl_GetCurSel(state->trainingTabs) == 0;
+	ShowWindow(state->trainingPage, player ? SW_SHOW : SW_HIDE);
+	ShowWindow(state->trainingPicker, player ? SW_SHOW : SW_HIDE);
+	for (unsigned i = 0; i < DEVELOP_CONTROL_COUNT; ++i) {
+		ShowWindow(state->develop[i], show && !player ? SW_SHOW : SW_HIDE);
+	}
+	ShowWindow(state->trainingSummary, show ? SW_SHOW : SW_HIDE);
+	ShowWindow(state->trainingTabs, show ? SW_SHOW : SW_HIDE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		ShowWindow(state->trainingFileButtons[i], show ? SW_SHOW : SW_HIDE);
+	}
+}
+
+static void selectTab(const WindowState *state) {
 	bool match = TabCtrl_GetCurSel(state->mainTabs) == 0;
-	ShowWindow(state->trainingPage, match ? SW_HIDE : SW_SHOW);
+	showTraining(state, !match);
 	ShowWindow(state->metadata, match ? SW_SHOW : SW_HIDE);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		ShowWindow(state->fileButtons[i], match ? SW_SHOW : SW_HIDE);
@@ -1939,6 +2224,8 @@ static void checkPlayers(HWND window, WindowState *state) {
 	if (state->swapPrompt) {
 		SendMessageW(state->swapPrompt, WM_SWAP_PLAYERS, 0, 0);
 	}
+	setTrainingCue(state);
+	filterTrainingPlayers(state, true);
 }
 
 // The ID in the trailing "(ID)" of a label that is one of the choices', so that a shared name
@@ -2651,35 +2938,52 @@ static void checkFileJob(HWND window, WindowState *state) {
 	job->data = NULL;
 }
 
+// What a file dialog offers: its filters and titles, and the name used in its error message.
+typedef struct FileDialogSpec {
+	const COMDLG_FILTERSPEC *openTypes;
+	UINT openCount;
+	const COMDLG_FILTERSPEC *saveTypes;
+	UINT saveCount;
+	const wchar_t *openTitle;
+	const wchar_t *saveTitle;
+	const wchar_t *subject; // "fixture"
+} FileDialogSpec;
+
+static const COMDLG_FILTERSPEC fixtureOpenTypes[] = {
+	{L"Fixture files (*.bin; *.json)", L"*.bin;*.json"},
+	{L"JSON fixture (*.json)", L"*.json"},
+	{L"Binary fixture (*.bin)", L"*.bin"},
+};
+static const COMDLG_FILTERSPEC fixtureSaveTypes[] = {
+	{L"JSON fixture (*.json)", L"*.json"},
+	{L"Binary fixture (*.bin)", L"*.bin"},
+};
+static const FileDialogSpec fixtureDialog =
+	{fixtureOpenTypes, 3, fixtureSaveTypes, 2, L"Open fixture", L"Save fixture as", L"fixture"};
+
 static HRESULT configureFileDialog(
 	IFileDialog *dialog,
+	const FileDialogSpec *spec,
 	const wchar_t *directory,
 	const wchar_t *filename,
 	bool save,
 	bool binary
 ) {
-	static const COMDLG_FILTERSPEC openTypes[] = {
-		{L"Fixture files (*.bin; *.json)", L"*.bin;*.json"},
-		{L"JSON fixture (*.json)", L"*.json"},
-		{L"Binary fixture (*.bin)", L"*.bin"},
-	};
-	static const COMDLG_FILTERSPEC saveTypes[] = {
-		{L"JSON fixture (*.json)", L"*.json"},
-		{L"Binary fixture (*.bin)", L"*.bin"},
-	};
 	HRESULT result = dialog->lpVtbl->SetOptions(
 		dialog,
 		FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR |
 			(save ? FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES : FOS_FILEMUSTEXIST)
 	);
 	if (SUCCEEDED(result)) {
-		result = dialog->lpVtbl->SetFileTypes(dialog, save ? 2 : 3, save ? saveTypes : openTypes);
+		result = dialog->lpVtbl->SetFileTypes(
+			dialog, save ? spec->saveCount : spec->openCount, save ? spec->saveTypes : spec->openTypes
+		);
 	}
 	if (SUCCEEDED(result)) {
 		result = dialog->lpVtbl->SetFileTypeIndex(dialog, save && binary ? 2 : 1);
 	}
 	if (SUCCEEDED(result)) {
-		result = dialog->lpVtbl->SetTitle(dialog, save ? L"Save fixture as" : L"Open fixture");
+		result = dialog->lpVtbl->SetTitle(dialog, save ? spec->saveTitle : spec->openTitle);
 	}
 	if (SUCCEEDED(result) && save) {
 		result = dialog->lpVtbl->SetDefaultExtension(dialog, binary ? L"bin" : L"json");
@@ -2719,23 +3023,25 @@ static void useSelectedFile(HWND window, WindowState *state, const wchar_t *path
 	}
 }
 
-static void chooseFixtureFile(HWND window, WindowState *state, bool save) {
-	if (state->simulationThread || state->replacementThread || state->fileThread) {
-		showError(window, L"Please wait for the current fixture operation to finish.");
-		return;
-	}
+// Shows the open or save dialog; true with the chosen path (free it with CoTaskMemFree), false if
+// it was cancelled or failed (after saying why).
+static bool pickFile(
+	HWND window,
+	const FileDialogSpec *spec,
+	const wchar_t *filename,
+	bool save,
+	bool binary,
+	wchar_t **path
+) {
+	*path = NULL;
 	wchar_t directory[HARNESS_PATH_LENGTH];
 	DWORD length = GetCurrentDirectoryW(HARNESS_PATH_LENGTH, directory);
 	if (!length || length >= HARNESS_PATH_LENGTH) {
 		showError(window, L"Cannot read the current working directory.");
-		return;
+		return false;
 	}
-	const wchar_t *source = state->savedFilename[0] ? state->savedFilename : state->path;
-	bool binary = files_hasExtension(source, L".bin");
-	const wchar_t *filename = pathFilename(source);
 	IFileDialog *dialog = NULL;
 	IShellItem *selected = NULL;
-	wchar_t *path = NULL;
 	HRESULT result = CoCreateInstance(
 		save ? &CLSID_FileSaveDialog : &CLSID_FileOpenDialog,
 		NULL,
@@ -2744,7 +3050,7 @@ static void chooseFixtureFile(HWND window, WindowState *state, bool save) {
 		(void **)&dialog
 	);
 	if (SUCCEEDED(result)) {
-		result = configureFileDialog(dialog, directory, filename, save, binary);
+		result = configureFileDialog(dialog, spec, directory, filename, save, binary);
 	}
 	if (SUCCEEDED(result)) {
 		result = dialog->lpVtbl->Show(dialog, window);
@@ -2753,24 +3059,858 @@ static void chooseFixtureFile(HWND window, WindowState *state, bool save) {
 		result = dialog->lpVtbl->GetResult(dialog, &selected);
 	}
 	if (SUCCEEDED(result)) {
-		result = selected->lpVtbl->GetDisplayName(selected, SIGDN_FILESYSPATH, &path);
+		result = selected->lpVtbl->GetDisplayName(selected, SIGDN_FILESYSPATH, path);
 	}
-	if (SUCCEEDED(result)) {
-		useSelectedFile(window, state, path, save);
-	} else if (result != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+	if (FAILED(result) && result != HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
 		wchar_t message[128];
 		(void)swprintf(
-			message, 128, L"Cannot use the fixture file dialog (HRESULT 0x%08lx).", (unsigned long)result
+			message,
+			128,
+			L"Cannot use the %ls file dialog (HRESULT 0x%08lx).",
+			spec->subject,
+			(unsigned long)result
 		);
 		showError(window, message);
 	}
-	CoTaskMemFree(path);
 	if (selected) {
 		selected->lpVtbl->Release(selected);
 	}
 	if (dialog) {
 		dialog->lpVtbl->Release(dialog);
 	}
+	if (FAILED(result)) {
+		CoTaskMemFree(*path);
+		*path = NULL;
+	}
+	return SUCCEEDED(result);
+}
+
+static void chooseFixtureFile(HWND window, WindowState *state, bool save) {
+	if (state->simulationThread || state->replacementThread || state->fileThread) {
+		showError(window, L"Please wait for the current fixture operation to finish.");
+		return;
+	}
+	const wchar_t *source = state->savedFilename[0] ? state->savedFilename : state->path;
+	bool binary = files_hasExtension(source, L".bin");
+	wchar_t *path = NULL;
+	if (pickFile(window, &fixtureDialog, pathFilename(source), save, binary, &path)) {
+		useSelectedFile(window, state, path, save);
+	}
+	CoTaskMemFree(path);
+}
+
+// Whether the Training tab holds values no file has: nothing opened yet, the player search's temp
+// export, or edits.
+static bool trainingUnsaved(const WindowState *state) {
+	return !state->trainingPath[0] || state->trainingTemporary || state->trainingDirty;
+}
+
+// The Training tab's summary: the unsaved warning and its export link, or the file's name in bold;
+// then what a blank input means.
+static bool setTrainingSummary(const WindowState *state) {
+	static const wchar_t filenamePrefix[] = L"Viewing development: ";
+	static const wchar_t blankNote[] = L"Fields left blank will use the in-game values.";
+	bool unsaved = trainingUnsaved(state);
+	const wchar_t *filename = pathFilename(state->trainingPath);
+	wchar_t text[HARNESS_PATH_LENGTH + 128];
+	int length =
+		unsaved
+			? swprintf(
+					text,
+					HARNESS_PATH_LENGTH + 128,
+					L"%ls%ls to export it.\r\n%ls",
+					developmentUnsaved,
+					exportLink,
+					blankNote
+				)
+			: swprintf(
+					text, HARNESS_PATH_LENGTH + 128, L"%ls%ls\r\n%ls", filenamePrefix, filename, blankNote
+				);
+	if (length < 0 || !SetWindowTextW(state->trainingSummary, text)) {
+		return false;
+	}
+	HWND summary = state->trainingSummary;
+	COLORREF normal = GetSysColor(COLOR_WINDOWTEXT);
+	LONG start = (LONG)wcslen(unsaved ? developmentUnsaved : filenamePrefix);
+	bool ok =
+		formatMetadata(summary, 0, -1, 0, normal) &&
+		(unsaved
+				? formatMetadata(summary, 0, start, CFE_BOLD, RGB(255, 0, 0)) &&
+						formatMetadata(
+							summary, start, start + (LONG)wcslen(exportLink), CFE_LINK | CFE_UNDERLINE, RGB_BLUE
+						)
+				: formatMetadata(summary, start, start + (LONG)wcslen(filename), CFE_BOLD, normal));
+	SendMessageW(summary, EM_SETSEL, 0, 0);
+	return ok;
+}
+
+static void updateTrainingSummary(HWND window, WindowState *state) {
+	if (!setTrainingSummary(state)) {
+		showError(window, L"Cannot update development summary.");
+		state->failed = true;
+		DestroyWindow(window);
+	}
+}
+
+// The values a development file gives the Training tab, gathered before any input changes.
+typedef struct TrainingValues {
+	const TrainingTarget *targets;
+	wchar_t text[TRAINING_FIELD_COUNT][TRAINING_TEXT_LENGTH]; // "" where the file leaves a value out
+	char error[160];
+	bool schedule; // the file has schedule.week1
+} TrainingValues;
+
+static bool inGameSchedule(const WindowState *state) {
+	return SendMessageW(state->trainingInGame, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+// Ticks (or clears) "Use in-game schedule?", hiding (or showing) the slots; the caller lays out.
+static void showSchedule(const WindowState *state, bool inGame) {
+	SendMessageW(state->trainingInGame, BM_SETCHECK, inGame ? BST_CHECKED : BST_UNCHECKED, 0);
+	int show = inGame ? SW_HIDE : SW_SHOW;
+	for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+		if (state->trainingHeadings[SECTION_SCHEDULE][column]) {
+			ShowWindow(state->trainingHeadings[SECTION_SCHEDULE][column], show);
+		}
+	}
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		if (trainingFields[i].section == SECTION_SCHEDULE) {
+			ShowWindow(state->trainingLabels[i], show);
+			ShowWindow(state->trainingInputs[i], show);
+		}
+	}
+}
+
+static const DevelopmentField *findDevelopmentField(const char *name) {
+	for (size_t i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
+		if (strcmp(developmentFields[i].name, name) == 0) {
+			return &developmentFields[i];
+		}
+	}
+	return NULL;
+}
+
+// The drop-down's text for value `id`: its name, or for one it does not list, an error or (without
+// a blank item) the first item's name.
+static void
+showChoice(TrainingValues *values, const TrainingTarget *target, uint8_t id, wchar_t *text) {
+	const TrainingChoices *choices = target->choices;
+	const wchar_t *name = choices->blank ? NULL : choices->items[0].name;
+	for (unsigned i = 0; i < choices->count; ++i) {
+		if (choices->items[i].id == id) {
+			name = choices->items[i].name;
+		}
+	}
+	if (!name) {
+		(void)snprintf(
+			values->error,
+			sizeof values->error,
+			"%s is %u, which the viewer cannot show",
+			target->field->name,
+			id
+		);
+		return;
+	}
+	(void)swprintf(text, TRAINING_TEXT_LENGTH, L"%ls", name);
+}
+
+// Sets the text of every input `entry` fills: person_uid, schedule.week1 or a table field.
+static void
+showEntry(TrainingValues *values, const ConfigField *entry, const DevelopmentField *field) {
+	bool uniqueId = !field && entry->kind != CONFIG_SESSIONS;
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT && !values->error[0]; ++i) {
+		const TrainingTarget *target = &values->targets[i];
+		const uint8_t *at = entry->bytes + (target->session ? 2 * target->key : target->key);
+		wchar_t *text = values->text[i];
+		if (uniqueId && !target->field && !target->session) {
+			unsigned long id = at[0] | at[1] << 8 | at[2] << 16 | (unsigned long)at[3] << 24;
+			(void)swprintf(text, TRAINING_TEXT_LENGTH, L"%lu", id);
+		} else if (!field && !uniqueId && target->session) {
+			uint16_t id = (uint16_t)(at[0] | at[1] << 8);
+			const char *name = session_name(id);
+			if (!name || !widen(name, text, TRAINING_TEXT_LENGTH)) {
+				(void)snprintf(
+					values->error,
+					sizeof values->error,
+					"schedule.week1 has session %u, which the viewer cannot show",
+					id
+				);
+			}
+		} else if (field && target->field == field && target->choices) {
+			showChoice(values, target, at[0], text);
+		} else if (field && target->field == field && field->kind == DEVELOPMENT_F32) {
+			(void)swprintf(text, TRAINING_TEXT_LENGTH, L"%02x%02x%02x%02x", at[0], at[1], at[2], at[3]);
+		} else if (field && target->field == field) {
+			(void)swprintf(text, TRAINING_TEXT_LENGTH, L"%d", developmentFormat_value(field, at));
+		}
+	}
+}
+
+static void readTrainingEntry(void *context, const ConfigField *entry) {
+	TrainingValues *values = context;
+	bool uniqueId = strcmp(entry->name, "person_uid") == 0;
+	bool schedule = strcmp(entry->name, "schedule.week1") == 0;
+	const DevelopmentField *field = findDevelopmentField(entry->name);
+	// Planning entries and later schedule weeks have no inputs.
+	bool shown = uniqueId || schedule || field;
+	if (values->error[0] || !shown) {
+		return;
+	}
+	size_t size = uniqueId   ? 4
+								: schedule ? (size_t)2 * DEVELOPMENT_SCHEDULE_SESSIONS
+													 : developmentFormat_size(field);
+	if (entry->length != size || schedule != (entry->kind == CONFIG_SESSIONS) ||
+			(field && (field->kind == DEVELOPMENT_F32) != (entry->kind == CONFIG_HEX))) {
+		(void)snprintf(
+			values->error, sizeof values->error, "%s has the wrong kind of value", entry->name
+		);
+		return;
+	}
+	values->schedule |= schedule;
+	showEntry(values, entry, field);
+}
+
+// Fills the Training tab from a development file, leaving it unchanged if the file cannot be read.
+static bool openDevelopment(HWND window, WindowState *state, const wchar_t *path) {
+	static TrainingValues values; // too large for the stack's comfort; the UI has one thread
+	values = (TrainingValues){.targets = state->trainingTargets};
+	ByteBuffer text = {0};
+	char error[256] = "";
+	ConfigVisitor visitor = {.context = &values, .field = readTrainingEntry};
+	bool read = files_read(path, &text);
+	bool ok = read &&
+						matchConfig_visitFormat(
+							buffer_string(&text), text.length, DEVELOPMENT_FORMAT, &visitor, error, sizeof error
+						) &&
+						!values.error[0];
+	buffer_free(&text);
+	if (!ok) {
+		wchar_t reason[256] = L"";
+		(void)widen(values.error[0] ? values.error : error, reason, 256);
+		wchar_t message[384];
+		(void)swprintf(
+			message, 384, L"Cannot open the development file: %ls", read ? reason : L"cannot read it."
+		);
+		showError(window, message);
+		return false;
+	}
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		HWND input = state->trainingInputs[i];
+		if (trainingCombo(&state->trainingTargets[i])) {
+			const TrainingChoices *choices = state->trainingTargets[i].choices;
+			LRESULT item = *values.text[i]
+											 ? SendMessageW(input, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)values.text[i])
+										 : choices && !choices->blank ? 0
+																									: CB_ERR;
+			SendMessageW(input, CB_SETCURSEL, (WPARAM)item, 0);
+		} else {
+			SetWindowTextW(input, values.text[i]);
+		}
+	}
+	showSchedule(state, !values.schedule);
+	layoutTraining(state);
+	(void)swprintf(state->trainingPath, HARNESS_PATH_LENGTH, L"%ls", path);
+	state->trainingDirty = false;
+	state->trainingTemporary = false;
+	updateTrainingSummary(window, state);
+	return true;
+}
+
+// How an error names input `index`: its label (or its row's), with its column heading if any.
+static void trainingInputName(unsigned index, wchar_t *out, size_t size) {
+	const TrainingField *field = &trainingFields[index];
+	const TrainingSection *section = &trainingSections[field->section];
+	const wchar_t *heading = section->headings[field->column];
+	const wchar_t *row = field->label;
+	for (unsigned i = index; !*row && i-- > 0;) {
+		if (trainingFields[i].section == field->section && trainingFields[i].column == 0) {
+			row = trainingFields[i].label;
+		}
+	}
+	if (!heading) {
+		(void)swprintf(out, size, L"%ls", row);
+	} else if (section->headingOverInputs) {
+		(void)swprintf(out, size, L"%ls (%ls)", heading, row);
+	} else {
+		(void)swprintf(out, size, L"%ls: %ls", heading, row);
+	}
+}
+
+// Says why input `index` cannot be saved and puts the caret in it.
+static bool
+refuseInput(HWND window, const WindowState *state, unsigned index, const wchar_t *problem) {
+	wchar_t name[96];
+	trainingInputName(index, name, 96);
+	wchar_t message[256];
+	(void)swprintf(message, 256, L"Cannot save: %ls %ls", name, problem);
+	TabCtrl_SetCurSel(state->trainingTabs, 0);
+	selectTab(state);
+	showError(window, message);
+	SetFocus(state->trainingInputs[index]);
+	return false;
+}
+
+// The values a Save writes, checked against the file's limits, and which fields it writes.
+typedef struct TrainingBytes {
+	uint32_t uniqueId;
+	uint8_t fields[DEVELOPMENT_FIELD_COUNT][DEVELOPMENT_RATING_COUNT];
+	uint16_t sessions[DEVELOPMENT_SCHEDULE_SESSIONS];
+	bool given[DEVELOPMENT_FIELD_COUNT];
+	bool schedule;
+} TrainingBytes;
+
+enum {
+	TRAINING_ENTRY_SCHEDULE = DEVELOPMENT_FIELD_COUNT,
+	TRAINING_ENTRY_UNIQUE_ID,
+	TRAINING_ENTRY_COUNT,
+};
+
+// The file entry an input is part of: its table field, the schedule or person_uid.
+static size_t trainingEntry(const TrainingTarget *target) {
+	return target->session ? TRAINING_ENTRY_SCHEDULE
+				 : target->field ? (size_t)(target->field - developmentFields)
+												 : TRAINING_ENTRY_UNIQUE_ID;
+}
+
+static bool readSession(HWND window, const WindowState *state, unsigned index, TrainingBytes *out) {
+	wchar_t text[64] = L"";
+	char name[64];
+	uint16_t id = 0;
+	GetWindowTextW(state->trainingInputs[index], text, 64);
+	if (!WideCharToMultiByte(CP_UTF8, 0, text, -1, name, sizeof name, NULL, NULL) ||
+			!session_id(name, &id)) {
+		return refuseInput(window, state, index, L"is not a training session.");
+	}
+	out->sessions[state->trainingTargets[index].key] = id;
+	return true;
+}
+
+static bool
+readTrainingInput(HWND window, const WindowState *state, unsigned index, TrainingBytes *out) {
+	const TrainingTarget *target = &state->trainingTargets[index];
+	if (target->session) {
+		return readSession(window, state, index, out);
+	}
+	if (target->choices) {
+		LRESULT item = SendMessageW(state->trainingInputs[index], CB_GETCURSEL, 0, 0);
+		out->fields[target->field - developmentFields][0] =
+			target->choices->items[item - (target->choices->blank ? 1 : 0)].id;
+		return true;
+	}
+	wchar_t text[64] = L"";
+	GetWindowTextW(state->trainingInputs[index], text, 64);
+	uint8_t *bytes =
+		target->field ? out->fields[target->field - developmentFields] + target->key : NULL;
+	long long minimum = 0;
+	long long maximum = 0;
+	if (!trainingLimits(target, &minimum, &maximum)) { // the float's 4 bytes, in order
+		if (wcslen(text) != 8 || wcsspn(text, L"0123456789abcdefABCDEF") != 8) {
+			return refuseInput(window, state, index, L"must be 8 hex digits.");
+		}
+		unsigned long value = wcstoul(text, NULL, 16);
+		for (unsigned i = 0; i < 4; ++i) {
+			bytes[i] = (uint8_t)(value >> (24 - 8 * i));
+		}
+		return true;
+	}
+	wchar_t *end = NULL;
+	errno = 0;
+	long long value = wcstoll(text, &end, 10);
+	if (*end || errno || value < minimum || value > maximum) {
+		wchar_t problem[64];
+		(void)swprintf(problem, 64, L"must be a number from %lld to %lld.", minimum, maximum);
+		return refuseInput(window, state, index, problem);
+	}
+	if (!target->field) {
+		out->uniqueId = (uint32_t)value;
+		return true;
+	}
+	bytes[0] = (uint8_t)value;
+	if (developmentFormat_size(target->field) == 2) {
+		bytes[1] = (uint8_t)((unsigned long long)value >> 8);
+	}
+	return true;
+}
+
+// Checks every input into `values`; false after saying why. A blank input leaves its field out of
+// the file, so develop keeps the game's value; a map is written whole or not at all. The schedule
+// is left out when "Use in-game schedule?" is ticked, and otherwise written whole, a blank slot
+// resting.
+static bool readTraining(HWND window, const WindowState *state, TrainingBytes *values) {
+	enum { TEAM_REST = 11 }; // session_names.c
+	*values = (TrainingBytes){0};
+	unsigned filled[TRAINING_ENTRY_COUNT] = {0};
+	bool inGame = inGameSchedule(state);
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		const TrainingTarget *target = &state->trainingTargets[i];
+		size_t entry = trainingEntry(target);
+		bool blank = !GetWindowTextLengthW(state->trainingInputs[i]);
+		if (target->session && (inGame || blank)) {
+			values->sessions[target->key] = TEAM_REST;
+			continue;
+		}
+		if (blank) {
+			if (entry == TRAINING_ENTRY_UNIQUE_ID) {
+				return refuseInput(window, state, i, L"is empty.");
+			}
+			continue;
+		}
+		if (!readTrainingInput(window, state, i, values)) {
+			return false;
+		}
+		++filled[entry];
+	}
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		const TrainingTarget *target = &state->trainingTargets[i];
+		if (target->session || !filled[trainingEntry(target)] ||
+				GetWindowTextLengthW(state->trainingInputs[i])) {
+			continue;
+		}
+		wchar_t name[32] = L"";
+		(void)widen(target->field->name, name, 32);
+		wchar_t problem[96];
+		(void)swprintf(problem, 96, L"is empty; fill all of %ls or none of it.", name);
+		return refuseInput(window, state, i, problem);
+	}
+	for (size_t i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
+		values->given[i] = filled[i] > 0;
+	}
+	values->schedule = !inGame;
+	return true;
+}
+
+// The Training tab as a development file, laid out and commented as `get-development` writes one,
+// without what only the game knows (the export date, the develop day, the player's name) or what
+// the tab leaves blank.
+static bool writeDevelopment(const wchar_t *path, const TrainingBytes *values) {
+	FILE *file = _wfopen(path, L"wb");
+	if (!file) {
+		return false;
+	}
+	fprintf(
+		file,
+		"{\n%s  \"format\": \"" DEVELOPMENT_FORMAT "\",\n  \"fields\": [\n"
+		"    // the player (don't change)\n    {\"name\": \"person_uid\", \"u32\": %lu}",
+		developmentFormat_header,
+		(unsigned long)values->uniqueId
+	);
+	for (size_t i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
+		if (values->given[i] && !developmentFields[i].internal) {
+			developmentFormat_writeField(file, &developmentFields[i], values->fields[i], NULL);
+		}
+	}
+	if (values->schedule) {
+		developmentFormat_writeSchedule(file, values->sessions);
+	}
+	const char *heading = developmentFormat_dragons;
+	for (size_t i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
+		if (values->given[i] && developmentFields[i].internal) {
+			developmentFormat_writeField(file, &developmentFields[i], values->fields[i], heading);
+			heading = NULL;
+		}
+	}
+	fprintf(file, "\n  ]\n}\n");
+	bool ok = !ferror(file);
+	return fclose(file) == 0 && ok;
+}
+
+static bool storeDevelopment(
+	HWND window,
+	WindowState *state,
+	const wchar_t *path,
+	const TrainingBytes *values
+) {
+	if (!writeDevelopment(path, values)) {
+		showError(window, L"Cannot write the development file.");
+		return false;
+	}
+	(void)swprintf(state->trainingPath, HARNESS_PATH_LENGTH, L"%ls", path);
+	state->trainingDirty = false;
+	state->trainingTemporary = false;
+	updateTrainingSummary(window, state);
+	return true;
+}
+
+// Checks every input, then writes them; nothing is written if any is out of range.
+static bool saveDevelopment(HWND window, WindowState *state, const wchar_t *path) {
+	static TrainingBytes values;
+	return readTraining(window, state, &values) && storeDevelopment(window, state, path, &values);
+}
+
+// The summary's link: saves the tab as "{person_uid}-{timestamp}.json" in the working directory,
+// as the Match tab exports a fixture, never overwriting a file.
+static void exportDevelopment(HWND window, WindowState *state) {
+	static TrainingBytes values;
+	if (state->developmentThread) {
+		showError(window, L"Please wait for the player export to finish before exporting.");
+		return;
+	}
+	if (!trainingUnsaved(state) || !readTraining(window, state, &values)) {
+		return;
+	}
+	time_t timestamp = time(NULL);
+	if (timestamp == (time_t)-1) {
+		showError(window, L"Cannot read current time.");
+		return;
+	}
+	wchar_t filename[64];
+	(void)swprintf(
+		filename, 64, L"%lu-%llu.json", (unsigned long)values.uniqueId, (unsigned long long)timestamp
+	);
+	if (!fileMissing(filename)) {
+		wchar_t message[128];
+		(void)swprintf(
+			message, 128, L"Cannot export: %ls already exists. No file was overwritten.", filename
+		);
+		showError(window, message);
+		return;
+	}
+	(void)storeDevelopment(window, state, filename, &values);
+}
+
+static const COMDLG_FILTERSPEC developmentTypes[] = {{L"Development file (*.json)", L"*.json"}};
+static const FileDialogSpec developmentDialog = {developmentTypes,
+	1,
+	developmentTypes,
+	1,
+	L"Open development file",
+	L"Save development file as",
+	L"development file"};
+
+static void chooseDevelopmentFile(HWND window, WindowState *state, bool save) {
+	const wchar_t *filename =
+		state->trainingPath[0] ? pathFilename(state->trainingPath) : L"development.json";
+	wchar_t *path = NULL;
+	if (!pickFile(window, &developmentDialog, filename, save, false, &path)) {
+		return;
+	}
+	if (wcslen(path) >= HARNESS_PATH_LENGTH) {
+		showError(window, L"Select a development file with a path shorter than 1024 characters.");
+	} else if (save) {
+		(void)saveDevelopment(window, state, path);
+	} else if (!state->trainingDirty ||
+						 MessageBoxW(
+							 window,
+							 L"The training values have unsaved changes. Discard them and open the selected "
+							 L"development file?",
+							 L"Open development file",
+							 MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+						 ) == IDYES) {
+		(void)openDevelopment(window, state, path);
+	}
+	CoTaskMemFree(path);
+}
+
+// What the Training tab's player search takes: a name once the player list has loaded, otherwise
+// only an ID.
+static void setTrainingCue(const WindowState *state) {
+	const wchar_t *cue = L"Find a player by unique ID";
+	if (state->players) {
+		cue = L"Find a player by name or unique ID";
+	} else if (state->playersThread) {
+		cue = L"Find a player by unique ID (loading names…)";
+	}
+	SendMessageW(state->trainingPicker, CB_SETCUEBANNER, 0, (LPARAM)cue);
+}
+
+// Lists the players whose names match what is typed in the player search, unless it is an ID.
+static void filterTrainingPlayers(WindowState *state, bool drop) {
+	wchar_t text[PLAYER_LABEL_LENGTH] = L"";
+	GetWindowTextW(state->trainingPicker, text, PLAYER_LABEL_LENGTH);
+	bool id = text[0] && wcsspn(text, L"0123456789") == wcslen(text);
+	filterPicker(
+		state->trainingPicker,
+		state->players,
+		id || !state->players ? 0 : state->playerCount,
+		PLAYERS_SHOWN,
+		PLAYER_FILTER_MINIMUM,
+		true,
+		drop,
+		&state->filteringTrainingPlayers
+	);
+}
+
+// Exports a player's development values (fm24ctl get-development) into the job's file.
+static DWORD WINAPI fetchDevelopment(LPVOID parameter) {
+	DevelopmentJob *job = parameter;
+	wchar_t *arguments[] = {L"fm24ctl.exe", L"get-development", job->person, job->path, NULL};
+	return (DWORD)commands_getDevelopmentWithResult(4, arguments, job->error, sizeof job->error);
+}
+
+static void enableTrainingFiles(const WindowState *state, BOOL enable) {
+	EnableWindow(state->trainingPicker, enable);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		EnableWindow(state->trainingFileButtons[i], enable);
+	}
+}
+
+// Exports player `person` to the temp directory in the background; checkDevelopment opens it.
+static void startDevelopmentFetch(HWND window, WindowState *state, const wchar_t *person) {
+	DevelopmentJob *job = &state->developmentJob;
+	wchar_t directory[HARNESS_PATH_LENGTH];
+	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, directory);
+	if (!length || length >= HARNESS_PATH_LENGTH - 48) {
+		showError(window, L"Cannot find the temporary folder for the player's development file.");
+		return;
+	}
+	*job = (DevelopmentJob){0};
+	(void)swprintf(job->person, SWAP_ID_LENGTH, L"%ls", person);
+	(void)swprintf(
+		job->path, HARNESS_PATH_LENGTH, L"%lsfm24-development-%ls.json", directory, person
+	);
+	if (!SetTimer(window, DEVELOPMENT_TIMER, 200, NULL)) {
+		showError(window, L"Cannot start the player export.");
+		return;
+	}
+	state->developmentThread = CreateThread(NULL, 0, fetchDevelopment, job, 0, NULL);
+	if (!state->developmentThread) {
+		KillTimer(window, DEVELOPMENT_TIMER);
+		showError(window, L"Cannot start the player export.");
+		return;
+	}
+	enableTrainingFiles(state, FALSE);
+}
+
+// Once the export has finished, opens its file as Open would (asking first about unsaved edits).
+static void checkDevelopment(HWND window, WindowState *state) {
+	if (!state->developmentThread ||
+			WaitForSingleObject(state->developmentThread, 0) == WAIT_TIMEOUT) {
+		return;
+	}
+	KillTimer(window, DEVELOPMENT_TIMER);
+	DWORD result = 1;
+	if (!GetExitCodeThread(state->developmentThread, &result)) {
+		result = 1;
+	}
+	CloseHandle(state->developmentThread);
+	state->developmentThread = NULL;
+	enableTrainingFiles(state, TRUE);
+	DevelopmentJob *job = &state->developmentJob;
+	if (result != 0) {
+		wchar_t reason[CLIENT_RESULT_LENGTH] = L"";
+		(void)widen(job->error, reason, CLIENT_RESULT_LENGTH);
+		wchar_t message[CLIENT_RESULT_LENGTH + 64];
+		(void)swprintf(
+			message,
+			CLIENT_RESULT_LENGTH + 64,
+			L"Cannot export the player's development values: %ls",
+			reason
+		);
+		showError(window, message);
+		return;
+	}
+	if ((!state->trainingDirty ||
+				MessageBoxW(
+					window,
+					L"The training values have unsaved changes. Discard them and show the selected player?",
+					L"Find player",
+					MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+				) == IDYES) &&
+			openDevelopment(window, state, job->path)) {
+		state->trainingTemporary = true;
+		updateTrainingSummary(window, state);
+	}
+}
+
+// Simulates the job's development file (fm24ctl develop), then deletes it.
+static DWORD WINAPI simulateDevelopment(LPVOID parameter) {
+	DevelopJob *job = parameter;
+	wchar_t *arguments[] = {L"fm24ctl.exe",
+		L"develop",
+		job->input,
+		job->months,
+		job->seeds,
+		job->output,
+		job->perSeed ? L"--per-seed-breakdown" : NULL,
+		NULL};
+	int count = job->perSeed ? 7 : 6;
+	DWORD result = (DWORD)commands_developWithResult(count, arguments, job->error, sizeof job->error);
+	removeReplacement(job->input);
+	return result;
+}
+
+static void enableDevelop(const WindowState *state, BOOL enable) {
+	for (unsigned i = 0; i < DEVELOP_STATUS; ++i) {
+		EnableWindow(state->develop[i], enable);
+	}
+	enableTrainingFiles(state, enable);
+}
+
+// Where the CSV goes: beside the development file, as its name with .csv, or for values no file
+// has (the player search's temp export or nothing opened), "{person_uid}-{timestamp}.csv" in the
+// working directory.
+static bool developOutput(const WindowState *state, uint32_t uniqueId, wchar_t *out) {
+	if (state->trainingPath[0] && !state->trainingTemporary) {
+		const wchar_t *name = pathFilename(state->trainingPath);
+		const wchar_t *dot = wcsrchr(name, L'.');
+		int stem = (int)(dot ? dot - state->trainingPath : (ptrdiff_t)wcslen(state->trainingPath));
+		int length = swprintf(out, HARNESS_PATH_LENGTH, L"%.*ls.csv", stem, state->trainingPath);
+		return length > 0 && length < HARNESS_PATH_LENGTH;
+	}
+	time_t timestamp = time(NULL);
+	return timestamp != (time_t)-1 && swprintf(
+																			out,
+																			HARNESS_PATH_LENGTH,
+																			L"%lu-%llu.csv",
+																			(unsigned long)uniqueId,
+																			(unsigned long long)timestamp
+																		) > 0;
+}
+
+// Checks the options and the Player tab's values, writes the values to a temporary development
+// file and simulates it in the background; checkDevelop reports the result.
+static void startDevelop(HWND window, WindowState *state) {
+	static TrainingBytes values;
+	if (state->developThread) {
+		return;
+	}
+	if (state->developmentThread || state->simulationThread || state->replacementThread) {
+		showError(window, L"Please wait for the current operation to finish before simulating.");
+		return;
+	}
+	DevelopJob *job = &state->developJob;
+	*job = (DevelopJob){0};
+	int length = GetWindowTextW(state->develop[DEVELOP_MONTHS], job->months, 16);
+	unsigned long months = wcstoul(job->months, NULL, 10);
+	if (length == 0 || wcsspn(job->months, L"0123456789") != (size_t)length || months < 1 ||
+			months > 600) {
+		showError(window, L"Number of months must be between 1 and 600.");
+		SetFocus(state->develop[DEVELOP_MONTHS]);
+		return;
+	}
+	length = GetWindowTextW(state->develop[DEVELOP_SEEDS], job->seeds, 256);
+	if (length == 0 || GetWindowTextLengthW(state->develop[DEVELOP_SEEDS]) >= 256 ||
+			wcsspn(job->seeds, L"0123456789,-") != (size_t)length) {
+		showError(window, L"Enter a seed pattern such as 1, 42, 1-100, 1,3,5 or 1,4,7-70.");
+		SetFocus(state->develop[DEVELOP_SEEDS]);
+		return;
+	}
+	job->perSeed = SendMessageW(state->develop[DEVELOP_PER_SEED], BM_GETCHECK, 0, 0) == BST_CHECKED;
+	if (!readTraining(window, state, &values)) {
+		return;
+	}
+	if (!developOutput(state, values.uniqueId, job->output)) {
+		showError(window, L"Cannot name the results file.");
+		return;
+	}
+	if (!temporaryJson(job->input, job->error, sizeof job->error)) {
+		showFileError(window, job->error);
+		return;
+	}
+	if (!writeDevelopment(job->input, &values)) {
+		removeReplacement(job->input);
+		showError(window, L"Cannot write the temporary development file.");
+		return;
+	}
+	if (!SetTimer(window, DEVELOP_TIMER, 200, NULL)) {
+		removeReplacement(job->input);
+		showError(window, L"Cannot monitor the training simulation.");
+		return;
+	}
+	state->developThread = CreateThread(NULL, 0, simulateDevelopment, job, 0, NULL);
+	if (!state->developThread) {
+		KillTimer(window, DEVELOP_TIMER);
+		removeReplacement(job->input);
+		showError(window, L"Cannot start the training simulation.");
+		return;
+	}
+	enableDevelop(state, FALSE);
+	SetFocus(state->trainingTabs);
+	SetWindowTextW(
+		state->develop[DEVELOP_STATUS], L"Simulating training... Please wait before closing the window."
+	);
+}
+
+static void checkDevelop(HWND window, WindowState *state) {
+	if (!state->developThread || WaitForSingleObject(state->developThread, 0) == WAIT_TIMEOUT) {
+		return;
+	}
+	KillTimer(window, DEVELOP_TIMER);
+	DWORD result = 1;
+	if (!GetExitCodeThread(state->developThread, &result)) {
+		result = 1;
+	}
+	CloseHandle(state->developThread);
+	state->developThread = NULL;
+	enableDevelop(state, TRUE);
+	const DevelopJob *job = &state->developJob;
+	if (result == 0) {
+		wchar_t message[HARNESS_PATH_LENGTH + 64];
+		(void)swprintf(
+			message,
+			HARNESS_PATH_LENGTH + 64,
+			L"Simulation complete. Results were saved to %ls.",
+			job->output
+		);
+		SetWindowTextW(state->develop[DEVELOP_STATUS], message);
+		return;
+	}
+	SetWindowTextW(
+		state->develop[DEVELOP_STATUS],
+		L"Simulation failed. Check the console and harness.log for details."
+	);
+	wchar_t reason[CLIENT_RESULT_LENGTH] = L"";
+	(void)widen(job->error, reason, CLIENT_RESULT_LENGTH);
+	wchar_t message[CLIENT_RESULT_LENGTH + 64];
+	(void)swprintf(
+		message, CLIENT_RESULT_LENGTH + 64, L"Cannot simulate the player's development: %ls", reason
+	);
+	showError(window, message);
+}
+
+// The player search's answer: the unique ID of the label picked from the list, or as typed.
+// `text` is NULL to read what the search shows. Says why if it is not a player.
+static void chooseTrainingPlayer(HWND window, WindowState *state, const wchar_t *text) {
+	wchar_t typed[PLAYER_LABEL_LENGTH] = L"";
+	if (!text) {
+		GetWindowTextW(state->trainingPicker, typed, PLAYER_LABEL_LENGTH);
+		text = typed;
+	}
+	wchar_t id[SWAP_ID_LENGTH] = L"";
+	if (!listedId(state->players, state->playerCount, text, id, SWAP_ID_LENGTH) &&
+			wcslen(text) < SWAP_ID_LENGTH) {
+		wcscpy(id, text);
+	}
+	if (!validSwapId(id)) {
+		showError(
+			window,
+			L"Choose a player from the list, or enter their unique ID: a number from 1 to 4294967295."
+		);
+		SetFocus(state->trainingPicker);
+		return;
+	}
+	if (!state->developmentThread) {
+		startDevelopmentFetch(window, state, id);
+	}
+}
+
+// Whether `control` is the player search or its own edit field.
+static bool isTrainingPicker(const WindowState *state, HWND control) {
+	return control &&
+				 (control == state->trainingPicker || GetParent(control) == state->trainingPicker);
+}
+
+// Handles the player search's notifications; false when `control` is not the search.
+static bool trainingPickerCommand(HWND window, WindowState *state, HWND control, WORD code) {
+	if (control != state->trainingPicker) {
+		return false;
+	}
+	if (code == CBN_SETFOCUS || code == CBN_DROPDOWN) {
+		startPlayerLoad(window, state);
+		setTrainingCue(state);
+	} else if (code == CBN_EDITCHANGE && !state->filteringTrainingPlayers) {
+		// Typing restarts the delay, so the list is refilled once the typing pauses.
+		SetTimer(window, TRAINING_FILTER_TIMER, PLAYER_FILTER_DELAY_MS, NULL);
+	} else if (code == CBN_SELENDOK && !state->filteringTrainingPlayers) {
+		LRESULT item = SendMessageW(control, CB_GETCURSEL, 0, 0);
+		wchar_t label[PLAYER_LABEL_LENGTH] = L"";
+		if (item != CB_ERR &&
+				SendMessageW(control, CB_GETLBTEXTLEN, (WPARAM)item, 0) < PLAYER_LABEL_LENGTH &&
+				SendMessageW(control, CB_GETLBTEXT, (WPARAM)item, (LPARAM)label) > 0) {
+			chooseTrainingPlayer(window, state, label);
+		}
+	}
+	return true;
 }
 
 static int CALLBACK
@@ -2780,6 +3920,107 @@ fontFound(const LOGFONTW *font, const TEXTMETRICW *metrics, DWORD type, LPARAM f
 	(void)type;
 	*(bool *)found = true; // NOLINT(performance-no-int-to-ptr): LPARAM carries the caller's pointer.
 	return 0;
+}
+
+static int textWidth(HDC dc, const wchar_t *text) {
+	SIZE extent = {0};
+	GetTextExtentPoint32W(dc, text, (int)wcslen(text), &extent);
+	return extent.cx;
+}
+
+// The widest item of a session drop-down's list.
+static int listWidth(HDC dc, HWND combo) {
+	int widest = 0;
+	wchar_t name[64];
+	LRESULT count = SendMessageW(combo, CB_GETCOUNT, 0, 0);
+	for (LRESULT item = 0; item < count; ++item) {
+		if (SendMessageW(combo, CB_GETLBTEXTLEN, (WPARAM)item, 0) <
+					(LRESULT)(sizeof name / sizeof name[0]) &&
+				SendMessageW(combo, CB_GETLBTEXT, (WPARAM)item, (LPARAM)name) > 0) {
+			int width = textWidth(dc, name);
+			widest = width > widest ? width : widest;
+		}
+	}
+	return widest;
+}
+
+// Labels, headings and inputs only as wide as their text: an edit fits its widest legal value, a
+// drop-down its longest item.
+static void measureTraining(WindowState *state) {
+	HDC dc = GetDC(state->trainingContent);
+	if (!dc) {
+		return;
+	}
+	HGDIOBJ oldFont = SelectObject(dc, state->columnHeadingFont);
+	int edges = 2 * GetSystemMetricsForDpi(SM_CXEDGE, state->dpi);
+	for (unsigned i = 0; i < TRAINING_SECTION_COUNT; ++i) {
+		for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+			const wchar_t *heading = trainingSections[i].headings[column];
+			state->trainingHeadingWidths[i][column] = heading ? textWidth(dc, heading) : 0;
+		}
+	}
+	SelectObject(dc, state->font);
+	int sessionWidth = 0;
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		const TrainingField *field = &trainingFields[i];
+		HWND input = state->trainingInputs[i];
+		state->trainingLabelWidths[i] =
+			*field->label ? textWidth(dc, field->label) + scaled(state, 2) : 0;
+		if (!trainingCombo(&state->trainingTargets[i])) {
+			wchar_t widest[24];
+			trainingWidest(&state->trainingTargets[i], widest, 24);
+			LRESULT margins = SendMessageW(input, EM_GETMARGINS, 0, 0);
+			state->trainingInputWidths[i] =
+				textWidth(dc, widest) + LOWORD(margins) + HIWORD(margins) + edges + scaled(state, 4);
+			continue;
+		}
+		// Every session drop-down lists the same sessions, so they are measured once.
+		bool session = state->trainingTargets[i].session;
+		int width = session && sessionWidth
+									? sessionWidth
+									: listWidth(dc, input) + GetSystemMetricsForDpi(SM_CXVSCROLL, state->dpi) +
+											edges + scaled(state, 8);
+		sessionWidth = session ? width : sessionWidth;
+		state->trainingInputWidths[i] = width;
+	}
+	SelectObject(dc, oldFont);
+	ReleaseDC(state->trainingContent, dc);
+}
+
+// The Training tab's column headings: the body font, bold and underlined.
+static HFONT boldUnderlined(HFONT font) {
+	LOGFONTW bold = {0};
+	if (GetObjectW(font, sizeof bold, &bold) != sizeof bold) {
+		return NULL;
+	}
+	bold.lfWeight = FW_BOLD;
+	bold.lfUnderline = TRUE;
+	return CreateFontIndirectW(&bold);
+}
+
+static void setTrainingFonts(const WindowState *state, HFONT font, HFONT columnHeading) {
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		SendMessageW(state->trainingFileButtons[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
+	SendMessageW(state->trainingSummary, WM_SETFONT, (WPARAM)font, TRUE);
+	SendMessageW(state->trainingPicker, WM_SETFONT, (WPARAM)font, TRUE);
+	SendMessageW(state->trainingTabs, WM_SETFONT, (WPARAM)font, TRUE);
+	for (unsigned i = 0; i < TRAINING_GROUP_COUNT; ++i) {
+		SendMessageW(state->trainingGroups[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
+	for (unsigned i = 0; i < TRAINING_SECTION_COUNT; ++i) {
+		for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+			SendMessageW(state->trainingHeadings[i][column], WM_SETFONT, (WPARAM)columnHeading, TRUE);
+		}
+	}
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		SendMessageW(state->trainingLabels[i], WM_SETFONT, (WPARAM)font, TRUE);
+		SendMessageW(state->trainingInputs[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
+	SendMessageW(state->trainingInGame, WM_SETFONT, (WPARAM)font, TRUE);
+	for (unsigned i = 0; i < DEVELOP_CONTROL_COUNT; ++i) {
+		SendMessageW(state->develop[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
 }
 
 static bool setFonts(WindowState *state) {
@@ -2832,16 +4073,19 @@ static bool setFonts(WindowState *state) {
 		}
 		return false;
 	}
+	HFONT columnHeading = boldUnderlined(font);
+	if (!columnHeading) {
+		DeleteObject(font);
+		DeleteObject(heading);
+		return false;
+	}
 	SendMessageW(state->metadata, WM_SETFONT, (WPARAM)font, TRUE);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		SendMessageW(state->fileButtons[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
 	SendMessageW(state->tabs, WM_SETFONT, (WPARAM)font, TRUE);
 	SendMessageW(state->mainTabs, WM_SETFONT, (WPARAM)font, TRUE);
-	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
-		SendMessageW(state->trainingLabels[i], WM_SETFONT, (WPARAM)font, TRUE);
-		SendMessageW(state->trainingInputs[i], WM_SETFONT, (WPARAM)font, TRUE);
-	}
+	setTrainingFonts(state, font, columnHeading);
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
@@ -2867,17 +4111,18 @@ static bool setFonts(WindowState *state) {
 	if (state->font) {
 		DeleteObject(state->font);
 		DeleteObject(state->headingFont);
+		DeleteObject(state->columnHeadingFont);
 	}
 	state->font = font;
 	state->headingFont = heading;
+	state->columnHeadingFont = columnHeading;
+	measureTraining(state);
 	return true;
 }
 
 // A combo box's height includes its list; its own field is sized by its item height, which is set
-// to make the field `height` tall like the buttons beside it.
-static void
-placeTeamPicker(const WindowState *state, unsigned side, int x, int y, int width, int height) {
-	HWND picker = state->teamControls[side][TEAM_INPUT];
+// to make the field `height` tall like the controls beside it.
+static void placeCombo(const WindowState *state, HWND picker, int x, int y, int width, int height) {
 	MoveWindow(picker, x, y, width, height + scaled(state, 300), TRUE);
 	RECT field = {0};
 	GetWindowRect(picker, &field);
@@ -2886,6 +4131,12 @@ placeTeamPicker(const WindowState *state, unsigned side, int x, int y, int width
 	if (adjust && itemHeight + adjust > 0) {
 		SendMessageW(picker, CB_SETITEMHEIGHT, (WPARAM)-1, itemHeight + adjust);
 	}
+}
+
+static void
+placeTeamPicker(const WindowState *state, unsigned side, int x, int y, int width, int height) {
+	HWND picker = state->teamControls[side][TEAM_INPUT];
+	placeCombo(state, picker, x, y, width, height);
 	SendMessageW(picker, CB_SETDROPPEDWIDTH, (WPARAM)scaled(state, 320), 0);
 }
 
@@ -2932,36 +4183,142 @@ static void scrollTraining(const WindowState *state, int position) {
 	);
 }
 
+// Each section column's widest label and input, and its x offset within the section.
+typedef struct TrainingColumns {
+	int labels[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT];
+	int inputs[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT];
+	int x[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT];
+	int width; // the widest section
+} TrainingColumns;
+
+static int maximum(int a, int b) {
+	return a > b ? a : b;
+}
+
+static void measureColumns(const WindowState *state, TrainingColumns *table) {
+	int gap = scaled(state, 8);
+	int columnGap = scaled(state, 24);
+	unsigned rows[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT] = {0};
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		unsigned section = trainingFields[i].section;
+		unsigned column = trainingFields[i].column;
+		table->labels[section][column] =
+			maximum(table->labels[section][column], state->trainingLabelWidths[i]);
+		table->inputs[section][column] =
+			maximum(table->inputs[section][column], state->trainingInputWidths[i]);
+		++rows[section][column];
+	}
+	table->width = 0;
+	for (unsigned section = 0; section < TRAINING_SECTION_COUNT; ++section) {
+		int x = 0;
+		for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT && rows[section][column]; ++column) {
+			int heading = state->trainingHeadingWidths[section][column];
+			int *input = &table->inputs[section][column];
+			if (trainingSections[section].headingOverInputs) {
+				*input = maximum(*input, heading);
+			}
+			int label = table->labels[section][column];
+			table->x[section][column] = x;
+			x += maximum(heading, label + (label ? gap : 0) + *input) + columnGap;
+		}
+		table->width = maximum(table->width, x - columnGap);
+	}
+}
+
+// Places a section's headings and fields from `y`, returning the y below them.
+static int
+placeSection(const WindowState *state, const TrainingColumns *table, unsigned section, int y) {
+	int left = scaled(state, 24);
+	int gap = scaled(state, 8);
+	int rowHeight = scaled(state, 28);
+	int rowStep = rowHeight + scaled(state, 6);
+	bool headed = false;
+	for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+		HWND heading = state->trainingHeadings[section][column];
+		if (!heading) {
+			continue;
+		}
+		int label = table->labels[section][column];
+		bool overInputs = trainingSections[section].headingOverInputs && label;
+		MoveWindow(
+			heading,
+			left + table->x[section][column] + (overInputs ? label + gap : 0),
+			y,
+			state->trainingHeadingWidths[section][column] + scaled(state, 2),
+			scaled(state, 22),
+			TRUE
+		);
+		headed = true;
+	}
+	y += headed ? scaled(state, 26) : 0;
+	int row[TRAINING_COLUMN_LIMIT] = {0};
+	int rows = 0;
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		if (trainingFields[i].section != section) {
+			continue;
+		}
+		unsigned column = trainingFields[i].column;
+		int label = table->labels[section][column];
+		int x = left + table->x[section][column];
+		int rowY = y + row[column]++ * rowStep;
+		rows = maximum(rows, row[column]);
+		MoveWindow(state->trainingLabels[i], x, rowY, label, rowHeight, TRUE);
+		x += label ? label + gap : 0;
+		if (!trainingCombo(&state->trainingTargets[i])) {
+			MoveWindow(state->trainingInputs[i], x, rowY, state->trainingInputWidths[i], rowHeight, TRUE);
+		} else {
+			placeCombo(
+				state, state->trainingInputs[i], x, rowY, state->trainingInputWidths[i], rowHeight
+			);
+		}
+	}
+	return y + rows * rowStep - scaled(state, 6);
+}
+
+// Group boxes stack down the page; inside each, sections stack, and each section's columns sit side
+// by side, as wide as their widest label plus their widest input.
 static void layoutTraining(const WindowState *state) {
 	RECT bounds;
 	GetClientRect(state->trainingPage, &bounds);
 	int margin = scaled(state, 12);
-	int columnCount = bounds.right / scaled(state, 400);
-	columnCount = columnCount < 1 ? 1 : columnCount > 3 ? 3 : columnCount;
-	int width = (bounds.right - margin) / columnCount;
-	int rowHeight = scaled(state, 64);
-	int height = 2 * margin + (TRAINING_FIELD_COUNT + columnCount - 1) / columnCount * rowHeight;
+	TrainingColumns table = {0};
+	measureColumns(state, &table);
+	int groupWidth = maximum(bounds.right - 2 * margin, table.width + 2 * margin);
+	int y = margin;
+	for (unsigned group = 0; group < TRAINING_GROUP_COUNT; ++group) {
+		int groupY = y;
+		y += scaled(state, 26);
+		for (unsigned section = 0; section < TRAINING_SECTION_COUNT; ++section) {
+			if (trainingSections[section].group != group) {
+				continue;
+			}
+			// "Use in-game schedule?" sits above the slots it hides.
+			bool hidden = section == SECTION_SCHEDULE && inGameSchedule(state);
+			if (section == SECTION_SCHEDULE) {
+				int left = scaled(state, 24);
+				MoveWindow(state->trainingInGame, left, y, scaled(state, 220), scaled(state, 28), TRUE);
+				y += scaled(state, 28) + (hidden ? margin : scaled(state, 6));
+			}
+			if (!hidden) {
+				y = placeSection(state, &table, section, y) + margin;
+			}
+		}
+		MoveWindow(state->trainingGroups[group], margin, groupY, groupWidth, y - groupY, TRUE);
+		y += margin;
+	}
 	SCROLLINFO scroll = {.cbSize = sizeof scroll,
 		.fMask = SIF_RANGE | SIF_PAGE | SIF_DISABLENOSCROLL,
-		.nMax = height - 1,
+		.nMax = y - 1,
 		.nPage = (UINT)bounds.bottom};
 	SetScrollInfo(state->trainingPage, SB_VERT, &scroll, TRUE);
 	MoveWindow(
 		state->trainingContent,
 		0,
 		-GetScrollPos(state->trainingPage, SB_VERT),
-		bounds.right,
-		height,
+		maximum(bounds.right, groupWidth + 2 * margin),
+		y,
 		TRUE
 	);
-	for (int i = 0; i < TRAINING_FIELD_COUNT; ++i) {
-		int x = margin + i % columnCount * width;
-		int y = margin + i / columnCount * rowHeight;
-		MoveWindow(state->trainingLabels[i], x, y, width - margin, scaled(state, 22), TRUE);
-		MoveWindow(
-			state->trainingInputs[i], x, y + scaled(state, 24), width - margin, scaled(state, 28), TRUE
-		);
-	}
 }
 
 static LRESULT CALLBACK trainingProcedure(
@@ -3002,15 +4359,28 @@ static LRESULT CALLBACK trainingProcedure(
 			);
 			state->trainingWheel %= WHEEL_DELTA;
 			return 0;
-		case WM_COMMAND:
-			if (HIWORD(wParam) == EN_SETFOCUS) {
+		case WM_COMMAND: {
+			// Only the edits, drop-downs and "Use in-game schedule?" notify.
+			// NOLINTNEXTLINE(performance-no-int-to-ptr): lParam is the control's HWND.
+			bool inGame = HIWORD(wParam) == BN_CLICKED && (HWND)lParam == state->trainingInGame;
+			if (inGame) {
+				showSchedule(state, inGameSchedule(state));
+				layoutTraining(state);
+			}
+			if ((HIWORD(wParam) == EN_CHANGE || HIWORD(wParam) == CBN_SELCHANGE || inGame) &&
+					!state->trainingDirty) {
+				state->trainingDirty = true;
+				updateTrainingSummary(GetParent(state->trainingPage), state);
+			}
+			if (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == CBN_SETFOCUS) {
 				RECT input;
 				RECT page;
-				// NOLINTNEXTLINE(performance-no-int-to-ptr): lParam is the edit control's HWND.
+				// NOLINTNEXTLINE(performance-no-int-to-ptr): lParam is the input's HWND.
 				GetWindowRect((HWND)lParam, &input);
 				MapWindowPoints(NULL, state->trainingPage, (POINT *)&input, 2);
 				GetClientRect(state->trainingPage, &page);
-				int offset = input.top < 0                ? input.top - scaled(state, 36)
+				// Scrolling up keeps room for a group title and column headings above the row.
+				int offset = input.top < 0                ? input.top - scaled(state, 64)
 										 : input.bottom > page.bottom ? input.bottom - page.bottom
 																									: 0;
 				if (offset) {
@@ -3018,6 +4388,7 @@ static LRESULT CALLBACK trainingProcedure(
 				}
 			}
 			return 0;
+		}
 		case WM_CTLCOLORSTATIC:
 		case WM_CTLCOLORBTN:
 			return SendMessageW(GetParent(state->trainingPage), message, wParam, lParam);
@@ -3027,8 +4398,188 @@ static LRESULT CALLBACK trainingProcedure(
 	return DefSubclassProc(window, message, wParam, lParam);
 }
 
+static HWND trainingChild(
+	const WindowState *state,
+	DWORD exStyle,
+	const wchar_t *className,
+	const wchar_t *text,
+	DWORD style
+) {
+	return CreateWindowExW(
+		exStyle,
+		className,
+		text,
+		WS_CHILD | WS_VISIBLE | style,
+		0,
+		0,
+		0,
+		0,
+		state->trainingContent,
+		NULL,
+		GetModuleHandleW(NULL),
+		NULL
+	);
+}
+
+// A label and either an edit capped at its widest legal value or a drop-down of `sessions` or the
+// field's named values.
+static bool createTrainingField(
+	WindowState *state,
+	unsigned index,
+	wchar_t (*sessions)[TRAINING_TEXT_LENGTH],
+	unsigned sessionCount
+) {
+	const TrainingField *field = &trainingFields[index];
+	const TrainingTarget *target = &state->trainingTargets[index];
+	state->trainingTargets[index] = trainingTarget(field->id);
+	state->trainingLabels[index] =
+		trainingChild(state, 0, L"STATIC", field->label, SS_NOPREFIX | SS_CENTERIMAGE);
+	state->trainingInputs[index] =
+		trainingCombo(target)
+			? trainingChild(state, 0, WC_COMBOBOXW, L"", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST)
+			: trainingChild(state, WS_EX_CLIENTEDGE, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL);
+	HWND input = state->trainingInputs[index];
+	if (!state->trainingLabels[index] || !input) {
+		return false;
+	}
+	if (!trainingCombo(target)) {
+		wchar_t widest[24];
+		trainingWidest(target, widest, 24);
+		SendMessageW(input, EM_SETLIMITTEXT, wcslen(widest), 0);
+		return true;
+	}
+	const TrainingChoices *choices = target->choices;
+	// First, a blank item, so the input can be cleared.
+	if ((!choices || choices->blank) && SendMessageW(input, CB_ADDSTRING, 0, (LPARAM)L"") < 0) {
+		return false;
+	}
+	unsigned count = choices ? choices->count : sessionCount;
+	for (unsigned i = 0; i < count; ++i) {
+		const wchar_t *item = choices ? choices->items[i].name : sessions[i];
+		if (SendMessageW(input, CB_ADDSTRING, 0, (LPARAM)item) < 0) {
+			return false;
+		}
+	}
+	// Without a blank item, it starts on the first.
+	return !choices || choices->blank || SendMessageW(input, CB_SETCURSEL, 0, 0) == 0;
+}
+
+// Every field, with "Use in-game schedule?" just before the first slot so Tab reaches it first.
+static bool createTrainingFields(
+	WindowState *state,
+	wchar_t (*sessions)[TRAINING_TEXT_LENGTH],
+	unsigned sessionCount
+) {
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		if (trainingFields[i].section == SECTION_SCHEDULE && !state->trainingInGame &&
+				!(state->trainingInGame = trainingChild(
+						state, 0, L"BUTTON", L"Use in-game schedule?", WS_TABSTOP | BS_AUTOCHECKBOX
+					))) {
+			return false;
+		}
+		if (!createTrainingField(state, i, sessions, sessionCount)) {
+			return false;
+		}
+	}
+	showSchedule(state, true); // an empty form keeps the club's schedule, as an empty file does
+	return true;
+}
+
+static bool createTrainingSummary(HWND window, WindowState *state) {
+	state->trainingSummary = CreateWindowExW(
+		WS_EX_CLIENTEDGE,
+		MSFTEDIT_CLASS,
+		L"",
+		WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS | ES_MULTILINE | ES_READONLY,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		GetModuleHandleW(NULL),
+		NULL
+	);
+	if (!state->trainingSummary) {
+		return false;
+	}
+	SendMessageW(state->trainingSummary, EM_SETEVENTMASK, 0, ENM_REQUESTRESIZE | ENM_LINK);
+	return true;
+}
+
+// Open and Save (after the summary, which createTrainingSummary makes first), then the Player and
+// Simulation tabs, so Tab reaches them before the player search and form.
+static bool createTrainingTabs(HWND window, WindowState *state) {
+	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		state->trainingFileButtons[i] = CreateWindowExW(
+			0,
+			L"BUTTON",
+			fileLabels[i],
+			WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			GetModuleHandleW(NULL),
+			NULL
+		);
+		if (!state->trainingFileButtons[i]) {
+			return false;
+		}
+	}
+	state->trainingTabs = CreateWindowExW(
+		0,
+		WC_TABCONTROLW,
+		L"",
+		WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		GetModuleHandleW(NULL),
+		NULL
+	);
+	if (!state->trainingTabs) {
+		return false;
+	}
+	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = L"Player"};
+	if (SendMessageW(state->trainingTabs, TCM_INSERTITEMW, 0, (LPARAM)&tab) == -1) {
+		return false;
+	}
+	tab.pszText = L"Simulation";
+	return SendMessageW(state->trainingTabs, TCM_INSERTITEMW, 1, (LPARAM)&tab) != -1;
+}
+
 static bool createTrainingControls(HWND window, WindowState *state) {
 	HINSTANCE instance = GetModuleHandleW(NULL);
+	// Before the form, so Tab reaches it first.
+	if (!createTrainingTabs(window, state)) {
+		return false;
+	}
+	state->trainingPicker = CreateWindowExW(
+		0,
+		WC_COMBOBOXW,
+		L"",
+		WS_CHILD | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		NULL
+	);
+	if (!state->trainingPicker) {
+		return false;
+	}
+	SendMessageW(state->trainingPicker, CB_LIMITTEXT, PLAYER_LABEL_LENGTH - 1, 0);
+	setTrainingCue(state);
 	state->trainingPage = CreateWindowExW(
 		WS_EX_CONTROLPARENT,
 		L"STATIC",
@@ -3046,11 +4597,13 @@ static bool createTrainingControls(HWND window, WindowState *state) {
 	if (!state->trainingPage) {
 		return false;
 	}
+	// Not WS_CLIPCHILDREN: the group boxes cover the form but never paint their insides, so the
+	// content must paint under them or scrolling leaves stale pixels there.
 	state->trainingContent = CreateWindowExW(
 		WS_EX_CONTROLPARENT,
 		L"STATIC",
 		L"",
-		WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+		WS_CHILD | WS_VISIBLE,
 		0,
 		0,
 		0,
@@ -3065,40 +4618,64 @@ static bool createTrainingControls(HWND window, WindowState *state) {
 			!SetWindowSubclass(state->trainingContent, trainingProcedure, 0, (DWORD_PTR)state)) {
 		return false;
 	}
-	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
-		state->trainingLabels[i] = CreateWindowExW(
-			0,
-			L"STATIC",
-			trainingFields[i],
-			WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
-			0,
-			0,
-			0,
-			0,
-			state->trainingContent,
-			NULL,
-			instance,
-			NULL
-		);
-		state->trainingInputs[i] = CreateWindowExW(
-			WS_EX_CLIENTEDGE,
-			L"EDIT",
-			L"",
-			WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-			0,
-			0,
-			0,
-			0,
-			state->trainingContent,
-			NULL,
-			instance,
-			NULL
-		);
-		if (!state->trainingLabels[i] || !state->trainingInputs[i]) {
+	// The engine's session IDs run 0-401; aliases share an ID, so session_name gives one name each.
+	wchar_t sessions[64][TRAINING_TEXT_LENGTH];
+	unsigned sessionCount = 0;
+	for (uint16_t id = 0; id <= 401 && sessionCount < 64; ++id) {
+		const char *name = session_name(id);
+		if (name && widen(name, sessions[sessionCount], TRAINING_TEXT_LENGTH)) {
+			++sessionCount;
+		}
+	}
+	for (unsigned i = 0; i < TRAINING_SECTION_COUNT; ++i) {
+		for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+			const wchar_t *heading = trainingSections[i].headings[column];
+			if (heading && !(state->trainingHeadings[i][column] =
+												 trainingChild(state, 0, L"STATIC", heading, SS_NOPREFIX))) {
+				return false;
+			}
+		}
+	}
+	if (!createTrainingFields(state, sessions, sessionCount)) {
+		return false;
+	}
+	// Last in the Z order, below the controls they frame.
+	for (unsigned i = 0; i < TRAINING_GROUP_COUNT; ++i) {
+		state->trainingGroups[i] =
+			trainingChild(state, 0, L"BUTTON", trainingGroupNames[i], BS_GROUPBOX);
+		if (!state->trainingGroups[i]) {
 			return false;
 		}
 	}
 	return true;
+}
+
+// The Training tab's Simulation tab, laid out as the Match tab's without its threads and rebuild
+// options.
+static void layoutDevelop(const WindowState *state, const RECT *page) {
+	static const struct {
+		int x, y, width, height;
+	} developPositions[DEVELOP_CONTROL_COUNT] = {
+		{0, 4, 180, 24},
+		{192, 0, 58, 28},
+		{250, 0, 20, 28},
+		{0, 46, 180, 24},
+		{192, 42, 220, 30},
+		{0, 92, 220, 28},
+		{0, 136, 180, 34},
+		{0, 238, 620, 80},
+		{0, 186, 620, 44},
+	};
+	for (unsigned i = 0; i < DEVELOP_CONTROL_COUNT; ++i) {
+		MoveWindow(
+			state->develop[i],
+			page->left + scaled(state, 12 + developPositions[i].x),
+			page->top + scaled(state, 12 + developPositions[i].y),
+			scaled(state, developPositions[i].width),
+			scaled(state, developPositions[i].height),
+			TRUE
+		);
+	}
 }
 
 static void layout(HWND window, WindowState *state) {
@@ -3111,15 +4688,63 @@ static void layout(HWND window, WindowState *state) {
 	GetClientRect(state->mainTabs, &bounds);
 	TabCtrl_AdjustRect(state->mainTabs, FALSE, &bounds);
 	MapWindowPoints(state->mainTabs, window, (POINT *)&bounds, 2);
+	// The Training tab's summary with Open and Save beside it, above its tabs; the Player tab holds
+	// the player search above the scrolling form.
+	int buttonsLeft = bounds.right - margin - scaled(state, 180);
+	MoveWindow(
+		state->trainingSummary,
+		bounds.left + margin,
+		bounds.top + margin,
+		buttonsLeft - margin - bounds.left - margin,
+		state->trainingSummaryHeight,
+		TRUE
+	);
+	SendMessageW(state->trainingSummary, EM_REQUESTRESIZE, 0, 0);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		MoveWindow(
+			state->trainingFileButtons[i],
+			buttonsLeft + (int)i * scaled(state, 90),
+			bounds.top + margin,
+			scaled(state, 78),
+			scaled(state, 26),
+			TRUE
+		);
+	}
+	int tabsTop = bounds.top + maximum(state->trainingSummaryHeight, scaled(state, 26)) + 2 * margin;
+	MoveWindow(
+		state->trainingTabs,
+		bounds.left + margin,
+		tabsTop,
+		bounds.right - bounds.left - 2 * margin,
+		bounds.bottom - tabsTop - margin,
+		TRUE
+	);
+	RECT player;
+	GetClientRect(state->trainingTabs, &player);
+	TabCtrl_AdjustRect(state->trainingTabs, FALSE, &player);
+	MapWindowPoints(state->trainingTabs, window, (POINT *)&player, 2);
+	int pickerWidth = player.right - player.left - 2 * margin;
+	pickerWidth = pickerWidth > scaled(state, 360) ? scaled(state, 360) : pickerWidth;
+	placeCombo(
+		state,
+		state->trainingPicker,
+		player.left + margin,
+		player.top + margin,
+		pickerWidth,
+		scaled(state, 26)
+	);
+	SendMessageW(state->trainingPicker, CB_SETDROPPEDWIDTH, (WPARAM)scaled(state, 480), 0);
+	int pageTop = player.top + scaled(state, 26) + 2 * margin;
 	MoveWindow(
 		state->trainingPage,
-		bounds.left,
-		bounds.top,
-		bounds.right - bounds.left,
-		bounds.bottom - bounds.top,
+		player.left,
+		pageTop,
+		player.right - player.left,
+		player.bottom - pageTop,
 		TRUE
 	);
 	layoutTraining(state);
+	layoutDevelop(state, &player);
 	int left = bounds.left + margin;
 	int width = bounds.right - left - margin;
 	int top = bounds.top + margin;
@@ -3383,6 +5008,57 @@ static bool createSimulationControls(HWND window, WindowState *state) {
 	return true;
 }
 
+static bool createDevelopControls(HWND window, WindowState *state) {
+	static const struct {
+		const wchar_t *className;
+		const wchar_t *text;
+		DWORD style;
+		DWORD extended;
+	} controls[DEVELOP_CONTROL_COUNT] = {
+		{L"STATIC", L"Number of months (1-600):", 0, 0},
+		{L"EDIT", L"12", WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0},
+		{L"STATIC", L"Seed pattern:", 0, 0},
+		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{L"BUTTON", L"Per-seed breakdown?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
+		{L"BUTTON", L"Simulate training", WS_TABSTOP | BS_PUSHBUTTON, 0},
+		{L"STATIC", L"", 0, 0},
+		{L"STATIC",
+			L"Results are saved beside the development file, using its filename with .csv; for an "
+			L"unsaved player, in the working directory.",
+			0,
+			0},
+	};
+	for (unsigned i = 0; i < DEVELOP_CONTROL_COUNT; ++i) {
+		state->develop[i] = CreateWindowExW(
+			controls[i].extended,
+			controls[i].className,
+			controls[i].text,
+			WS_CHILD | controls[i].style,
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			GetModuleHandleW(NULL),
+			NULL
+		);
+		if (!state->develop[i]) {
+			return false;
+		}
+	}
+	SendMessageW(state->develop[DEVELOP_MONTHS], EM_SETLIMITTEXT, 3, 0);
+	SendMessageW(state->develop[DEVELOP_SEEDS], EM_SETLIMITTEXT, 255, 0);
+	SendMessageW(state->develop[DEVELOP_SEEDS], EM_SETCUEBANNER, TRUE, (LPARAM)L"e.g. 1-100");
+	SendMessageW(
+		state->develop[DEVELOP_SPINNER], UDM_SETBUDDY, (WPARAM)state->develop[DEVELOP_MONTHS], 0
+	);
+	SendMessageW(state->develop[DEVELOP_SPINNER], UDM_SETRANGE32, 1, 600);
+	SendMessageW(state->develop[DEVELOP_SPINNER], UDM_SETPOS32, 0, 12);
+	return true;
+}
+
 static bool createVenueControls(HWND window, WindowState *state) {
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
 		state->venueLabels[i] = CreateWindowExW(
@@ -3418,6 +5094,90 @@ static bool createVenueControls(HWND window, WindowState *state) {
 	SendMessageW(surface, CB_SETITEMDATA, 0, 1);
 	SendMessageW(surface, CB_SETITEMDATA, 1, 8);
 	return setVenue(state);
+}
+
+// A side's squad controls: its player buttons, heading, formation pitch and player list.
+static bool createSquadControls(HWND window, WindowState *state, unsigned side) {
+	HINSTANCE instance = GetModuleHandleW(NULL);
+	static const wchar_t *const playerLabels[] = {
+		L"Max happiness", L"Max condition", L"Max familiarity"};
+	for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
+		state->playerButtons[side][button] = CreateWindowExW(
+			0,
+			L"BUTTON",
+			playerLabels[button],
+			WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON | WS_DISABLED,
+			0,
+			0,
+			0,
+			0,
+			window,
+			NULL,
+			instance,
+			NULL
+		);
+		if (!state->playerButtons[side][button]) {
+			return false;
+		}
+	}
+	state->headings[side] = CreateWindowExW(
+		0,
+		L"STATIC",
+		L"",
+		WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		NULL
+	);
+	state->pitches[side] = CreateWindowExW(
+		0,
+		pitchClass,
+		L"Stored formation",
+		WS_CHILD | WS_VISIBLE,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		&state->data->teams[side]
+	);
+	state->lists[side] = CreateWindowExW(
+		WS_EX_CLIENTEDGE,
+		WC_LISTVIEWW,
+		side ? L"Away team" : L"Home team",
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		NULL
+	);
+	if (!state->headings[side] || !state->pitches[side] || !state->lists[side]) {
+		return false;
+	}
+	ListView_SetExtendedListViewStyle(
+		state->lists[side],
+		LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_GRIDLINES
+	);
+	for (unsigned column = 0; column < sizeof columns / sizeof columns[0]; ++column) {
+		LVCOLUMNW definition = {.mask = LVCF_TEXT | LVCF_WIDTH,
+			.pszText = (wchar_t *)columns[column],
+			.cx = scaled(state, columnWidths[column])};
+		if (SendMessageW(state->lists[side], LVM_INSERTCOLUMNW, column, (LPARAM)&definition) == -1) {
+			return false;
+		}
+	}
+	return true;
 }
 
 static bool createControls(HWND window, WindowState *state) {
@@ -3527,91 +5287,18 @@ static bool createControls(HWND window, WindowState *state) {
 	if (SendMessageW(state->tabs, TCM_INSERTITEMW, 2, (LPARAM)&tab) == -1) {
 		return false;
 	}
-	for (unsigned i = 0; i < 2; ++i) {
-		static const wchar_t *const playerLabels[] = {
-			L"Max happiness", L"Max condition", L"Max familiarity"};
-		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
-			state->playerButtons[i][button] = CreateWindowExW(
-				0,
-				L"BUTTON",
-				playerLabels[button],
-				WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON | WS_DISABLED,
-				0,
-				0,
-				0,
-				0,
-				window,
-				NULL,
-				instance,
-				NULL
-			);
-			if (!state->playerButtons[i][button]) {
-				return false;
-			}
-		}
-		state->headings[i] = CreateWindowExW(
-			0,
-			L"STATIC",
-			L"",
-			WS_CHILD | WS_VISIBLE | SS_ENDELLIPSIS,
-			0,
-			0,
-			0,
-			0,
-			window,
-			NULL,
-			instance,
-			NULL
-		);
-		state->pitches[i] = CreateWindowExW(
-			0,
-			pitchClass,
-			L"Stored formation",
-			WS_CHILD | WS_VISIBLE,
-			0,
-			0,
-			0,
-			0,
-			window,
-			NULL,
-			instance,
-			&state->data->teams[i]
-		);
-		state->lists[i] = CreateWindowExW(
-			WS_EX_CLIENTEDGE,
-			WC_LISTVIEWW,
-			i ? L"Away team" : L"Home team",
-			WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
-			0,
-			0,
-			0,
-			0,
-			window,
-			NULL,
-			instance,
-			NULL
-		);
-		if (!state->headings[i] || !state->pitches[i] || !state->lists[i]) {
-			return false;
-		}
-		ListView_SetExtendedListViewStyle(
-			state->lists[i],
-			LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_GRIDLINES
-		);
-		for (unsigned column = 0; column < sizeof columns / sizeof columns[0]; ++column) {
-			LVCOLUMNW definition = {.mask = LVCF_TEXT | LVCF_WIDTH,
-				.pszText = (wchar_t *)columns[column],
-				.cx = scaled(state, columnWidths[column])};
-			if (SendMessageW(state->lists[i], LVM_INSERTCOLUMNW, column, (LPARAM)&definition) == -1) {
-				return false;
-			}
-		}
-	}
-	bool ok = createTeamControls(window, state, 0) && createTeamControls(window, state, 1) &&
+	bool ok = createSquadControls(window, state, 0) && createSquadControls(window, state, 1) &&
+						createTeamControls(window, state, 0) && createTeamControls(window, state, 1) &&
 						createVenueControls(window, state) && createSimulationControls(window, state) &&
-						createTrainingControls(window, state) && setFonts(state) && setMetadata(state) &&
-						setHeadings(state) && fillList(state, 0) && fillList(state, 1);
+						createTrainingSummary(window, state) && createTrainingControls(window, state) &&
+						createDevelopControls(window, state) && setFonts(state) && setMetadata(state) &&
+						setTrainingSummary(state) && setHeadings(state) && fillList(state, 0) &&
+						fillList(state, 1);
 	if (ok) {
+		// Siblings with WS_CLIPSIBLINGS (the summary, inner tabs) clip out any sibling above them.
+		SetWindowPos(
+			state->mainTabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+		);
 		selectTab(state);
 	}
 	return ok;
@@ -3721,13 +5408,18 @@ static LRESULT CALLBACK pitchProcedure(HWND window, UINT message, WPARAM wParam,
 }
 
 static LRESULT metadataNotification(HWND window, WindowState *state, const NMHDR *notification) {
-	if (notification->hwndFrom != state->metadata) {
+	bool training = notification->hwndFrom == state->trainingSummary;
+	if (!training && notification->hwndFrom != state->metadata) {
 		return 0;
 	}
 	if (notification->code == EN_LINK) {
 		const ENLINK *link = (const ENLINK *)notification;
 		if (link->msg == WM_LBUTTONUP) {
-			exportFixture(window, state);
+			if (training) {
+				exportDevelopment(window, state);
+			} else {
+				exportFixture(window, state);
+			}
 			return 1;
 		}
 		return 0;
@@ -3738,10 +5430,11 @@ static LRESULT metadataNotification(HWND window, WindowState *state, const NMHDR
 	const REQRESIZE *resize = (const REQRESIZE *)notification;
 	int height =
 		resize->rc.bottom - resize->rc.top + 2 * GetSystemMetricsForDpi(SM_CYEDGE, state->dpi);
-	if (height == state->metadataHeight) {
+	int *current = training ? &state->trainingSummaryHeight : &state->metadataHeight;
+	if (height == *current) {
 		return 0;
 	}
-	state->metadataHeight = height;
+	*current = height;
 	// Reflow can finish during painting, after layout has already positioned the summary.
 	if (!state->layoutPending) {
 		state->layoutPending = true;
@@ -4006,6 +5699,11 @@ static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
 		chooseFixtureFile(window, state, control == state->fileButtons[FILE_SAVE_BUTTON]);
 		return true;
 	}
+	if (control == state->trainingFileButtons[FILE_OPEN_BUTTON] ||
+			control == state->trainingFileButtons[FILE_SAVE_BUTTON]) {
+		chooseDevelopmentFile(window, state, control == state->trainingFileButtons[FILE_SAVE_BUTTON]);
+		return true;
+	}
 	for (unsigned side = 0; side < 2; ++side) {
 		for (unsigned button = 0; button < PLAYER_BUTTON_COUNT; ++button) {
 			if (control == state->playerButtons[side][button]) {
@@ -4034,6 +5732,10 @@ static bool clickFixtureButton(HWND window, WindowState *state, HWND control) {
 		startSimulation(window, state);
 		return true;
 	}
+	if (control == state->develop[DEVELOP_SUBMIT]) {
+		startDevelop(window, state);
+		return true;
+	}
 	return false;
 }
 
@@ -4044,7 +5746,13 @@ static bool checkTimer(HWND window, WindowState *state, WPARAM timer) {
 		case REPLACE_TIMER: checkReplacement(window, state); return true;
 		case TEAMS_TIMER: checkTeams(window, state); return true;
 		case PLAYERS_TIMER: checkPlayers(window, state); return true;
+		case DEVELOPMENT_TIMER: checkDevelopment(window, state); return true;
+		case TRAINING_FILTER_TIMER:
+			KillTimer(window, TRAINING_FILTER_TIMER);
+			filterTrainingPlayers(state, true);
+			return true;
 		case SIMULATION_TIMER: checkSimulation(window, state); return true;
+		case DEVELOP_TIMER: checkDevelop(window, state); return true;
 		default: return false;
 	}
 }
@@ -4059,7 +5767,11 @@ static bool closeBlocked(HWND window, const WindowState *state) {
 		showError(window, L"A team replacement is running. Please wait before closing.");
 		return true;
 	}
-	if (state->simulationThread) {
+	if (state->developmentThread) {
+		showError(window, L"A player export is running. Please wait before closing.");
+		return true;
+	}
+	if (state->simulationThread || state->developThread) {
 		showError(window, L"A simulation is running. Please wait for it to finish before closing.");
 		return true;
 	}
@@ -4070,6 +5782,14 @@ static bool closeBlocked(HWND window, const WindowState *state) {
 				L"Close fixture",
 				MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
 			) != IDYES) {
+		return true;
+	}
+	if (state->trainingDirty && MessageBoxW(
+																window,
+																L"Training changes are not saved. Discard them and close?",
+																L"Close development file",
+																MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+															) != IDYES) {
 		return true;
 	}
 	return false;
@@ -4101,6 +5821,9 @@ static bool commandMessage(HWND window, WindowState *state, WPARAM wParam, LPARA
 		return true;
 	}
 	if (code == BN_CLICKED && clickFixtureButton(window, state, control)) {
+		return true;
+	}
+	if (trainingPickerCommand(window, state, control, code)) {
 		return true;
 	}
 	if (code != CBN_EDITCHANGE) {
@@ -4138,7 +5861,8 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 					return playerNotification(state, (const NMLISTVIEW *)notification, side);
 				}
 			}
-			if ((notification->hwndFrom == state->mainTabs || notification->hwndFrom == state->tabs) &&
+			if ((notification->hwndFrom == state->mainTabs || notification->hwndFrom == state->tabs ||
+						notification->hwndFrom == state->trainingTabs) &&
 					notification->code == (UINT)TCN_SELCHANGE) {
 				selectTab(state);
 				return 0;
@@ -4241,7 +5965,7 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			}
 			return 0;
 		case WM_MOUSEWHEEL:
-			if (TabCtrl_GetCurSel(state->mainTabs) == 1) {
+			if (trainingPlayerShown(state)) {
 				return SendMessageW(state->trainingPage, message, wParam, lParam);
 			}
 			break;
@@ -4273,7 +5997,10 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			break;
 		case WM_GETMINMAXINFO: {
 			MINMAXINFO *limits = (MINMAXINFO *)lParam;
+			// The Training form's width, inside the Training tab's own tabs and their margins.
 			RECT bounds = {0, 0, scaled(state, 900), scaled(state, 600)};
+			TabCtrl_AdjustRect(state->trainingTabs, TRUE, &bounds);
+			bounds.right += 2 * scaled(state, 12);
 			TabCtrl_AdjustRect(state->mainTabs, TRUE, &bounds);
 			limits->ptMinTrackSize.x = bounds.right - bounds.left + 2 * scaled(state, 12);
 			limits->ptMinTrackSize.y = bounds.bottom - bounds.top + 2 * scaled(state, 12);
@@ -4300,7 +6027,9 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 // Enter on a button presses it, and in a team picker confirms the replacement.
 static bool handleReturn(HWND window, WindowState *state, HWND control, unsigned picker) {
 	if (control == state->fileButtons[FILE_OPEN_BUTTON] ||
-			control == state->fileButtons[FILE_SAVE_BUTTON]) {
+			control == state->fileButtons[FILE_SAVE_BUTTON] ||
+			control == state->trainingFileButtons[FILE_OPEN_BUTTON] ||
+			control == state->trainingFileButtons[FILE_SAVE_BUTTON]) {
 		SendMessageW(control, BM_CLICK, 0, 0);
 		return true;
 	}
@@ -4315,27 +6044,61 @@ static bool handleReturn(HWND window, WindowState *state, HWND control, unsigned
 			return true;
 		}
 	}
-	if (control == state->simulation[SIM_SUBMIT]) {
-		SendMessageW(state->simulation[SIM_SUBMIT], BM_CLICK, 0, 0);
+	if (control == state->simulation[SIM_SUBMIT] || control == state->develop[DEVELOP_SUBMIT]) {
+		SendMessageW(control, BM_CLICK, 0, 0);
 		return true;
 	}
 	if (control == state->metadata && state->temporary && !state->missing) {
 		exportFixture(window, state);
 		return true;
 	}
+	if (control == state->trainingSummary && trainingUnsaved(state)) {
+		exportDevelopment(window, state);
+		return true;
+	}
 	return false;
 }
 
-static bool handleKey(HWND window, WindowState *state, const MSG *message) {
-	if (message->message != WM_KEYDOWN) {
+// The Training tab's keys and wheel: false when `message` is not one of them.
+static bool trainingKey(HWND window, WindowState *state, const MSG *message) {
+	// A closed session drop-down would take the wheel as a new selection; scroll the form instead.
+	if (message->message == WM_MOUSEWHEEL && GetParent(message->hwnd) == state->trainingContent) {
+		SendMessageW(state->trainingPage, WM_MOUSEWHEEL, message->wParam, message->lParam);
+		return true;
+	}
+	if (message->message != WM_KEYDOWN || !trainingPlayerShown(state)) {
 		return false;
 	}
-	if (TabCtrl_GetCurSel(state->mainTabs) == 1 &&
-			(message->wParam == VK_PRIOR || message->wParam == VK_NEXT)) {
+	if (message->wParam == VK_PRIOR || message->wParam == VK_NEXT) {
 		SendMessageW(
 			state->trainingPage, WM_VSCROLL, message->wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0
 		);
 		return true;
+	}
+	// Enter in the player search exports the player, unless its open list takes it to pick one.
+	if (message->wParam != VK_RETURN || !isTrainingPicker(state, message->hwnd) ||
+			SendMessageW(state->trainingPicker, CB_GETDROPPEDSTATE, 0, 0)) {
+		return false;
+	}
+	chooseTrainingPlayer(window, state, NULL);
+	return true;
+}
+
+// Where Tab moves on from: a picker rather than its own edit field.
+static HWND tabOrigin(const WindowState *state, HWND focus) {
+	unsigned side = pickerSide(state, focus);
+	if (side < 2) {
+		return state->teamControls[side][TEAM_INPUT];
+	}
+	return isTrainingPicker(state, focus) ? state->trainingPicker : focus;
+}
+
+static bool handleKey(HWND window, WindowState *state, const MSG *message) {
+	if (trainingKey(window, state, message)) {
+		return true;
+	}
+	if (message->message != WM_KEYDOWN) {
+		return false;
 	}
 	// Typing goes to a picker's own edit field.
 	unsigned side = pickerSide(state, message->hwnd);
@@ -4356,11 +6119,7 @@ static bool handleKey(HWND window, WindowState *state, const MSG *message) {
 		return true;
 	}
 	if (message->wParam == VK_TAB) {
-		HWND focus = GetFocus();
-		unsigned focusSide = pickerSide(state, focus);
-		if (focusSide < 2) {
-			focus = state->teamControls[focusSide][TEAM_INPUT];
-		}
+		HWND focus = tabOrigin(state, GetFocus());
 		HWND next =
 			GetNextDlgTabItem(window, focus == window ? NULL : focus, GetKeyState(VK_SHIFT) < 0);
 		if (next) {
@@ -4484,6 +6243,8 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	joinThread(state.fileThread);
 	joinThread(state.teamsThread);
 	joinThread(state.playersThread);
+	joinThread(state.developmentThread);
+	joinThread(state.developThread);
 	freeChoices(state.teamsJob.choices, state.teamsJob.count);
 	freeChoices(state.teams, state.teamCount);
 	freeChoices(state.playersJob.choices, state.playersJob.count);
@@ -4499,6 +6260,7 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	if (state.font) {
 		DeleteObject(state.font);
 		DeleteObject(state.headingFont);
+		DeleteObject(state.columnHeadingFont);
 	}
 	UnregisterClassW(pitchClass, instance);
 	UnregisterClassW(windowClass, instance);

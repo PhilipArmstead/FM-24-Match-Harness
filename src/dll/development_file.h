@@ -3,8 +3,9 @@
 
 // A player's development inputs as an editable "fm24-development/1" file (the field syntax of
 // match_config.h): what `fm24ctl get-development` writes and `fm24ctl develop <file>` applies
-// before simulating. One table names every field, where it lives and its limits, so export and
-// apply always agree (knowledge-base/FM24 Training — Attribute Growth.md, section 14).
+// before simulating. One table (src/common/development_format.h, shared with the viewer) names
+// every field and its limits, and development_file.c says where each lives, so export and apply
+// always agree (knowledge-base/FM24 Training — Attribute Growth.md, section 14).
 #pragma once
 
 #include "game.h"

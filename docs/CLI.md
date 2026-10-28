@@ -341,6 +341,23 @@ letters joined by hyphens: accents are dropped (`Álex Moreno` →
 .\fm24ctl.exe develop harvey-rhoades.json 12 1-200 rhoades-edited.csv
 ```
 
+The viewer's **Training** tab can also open and save these files. Its player
+search (by name, or unique ID and Enter) exports the chosen player with
+`get-development` to the temp folder, as `fm24-development-<ID>.json`, and
+opens it. Save
+checks that every filled-in value is in range, then writes the file with the
+same layout and comments. A blank input leaves its field out, so `develop`
+keeps the game's value; a map (such as `ratings`) or the schedule must be
+filled in completely or left blank completely. The additional focus is a
+drop-down of the focus names below (blank when the export has none).
+Training intensity is a drop-down of Normal, Double, Half and Team workload
+with no blank: a file without it, or with another value (such as 0, which the
+game also treats as normal), opens as Normal and saves as 1. Save
+leaves out what only the game knows (the export date, the develop day and the
+player's name) and anything the tab has no input for: later schedule weeks
+and the planning entries (`match_points.monthN`, `matches.monthN`,
+`training_focus.monthN`, `injury.windowN`).
+
 | Field | Values |
 |---|---|
 | `person_uid` | the player (don't change) |
@@ -475,7 +492,8 @@ misses with `match_points.monthN`.
 
 `training_focus` is the player's additional focus. Right after loading a
 save the game hasn't set it up yet (it does at the first training day), so
-`get-development` leaves the field out; add it yourself and `develop` gives
+`get-development` leaves the field out; add it yourself (or pick it in the
+Training tab) and `develop` gives
 the player the focus for the run. Names marked * were confirmed in the
 game; the others are inferred from the attributes.
 

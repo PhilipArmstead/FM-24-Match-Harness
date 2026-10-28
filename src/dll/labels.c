@@ -3,6 +3,8 @@
 
 #include "labels.h"
 
+#include "development_format.h"
+#include "game.h"
 #include "memory.h"
 #include "site_members.h"
 #include "sites.h"
@@ -54,93 +56,6 @@ static const SiteName teamFields[] = {
 	{SITE_TEAM_PLAYER_COUNT, "player_count"},
 	{SITE_TEAM_HAS_EXTRA, "has_team_extra"},
 	{SITE_TEAM_BACKROOM_COUNT, "backroom_count"},
-};
-
-static const char *const ratingNames[69] = {
-	"pos_gk",
-	"pos_sw",
-	"pos_dl",
-	"pos_dc",
-	"pos_dr",
-	"pos_dm",
-	"pos_ml",
-	"pos_mc",
-	"pos_mr",
-	"pos_aml",
-	"pos_amc",
-	"pos_amr",
-	"pos_st",
-	"pos_wbl",
-	"pos_wbr",
-	"crossing",
-	"dribbling",
-	"finishing",
-	"heading",
-	"long_shots",
-	"marking",
-	"off_the_ball",
-	"passing",
-	"penalty_taking",
-	"tackling",
-	"vision",
-	"handling",
-	"aerial_reach",
-	"command_of_area",
-	"communication",
-	"kicking",
-	"throwing",
-	"anticipation",
-	"decisions",
-	"one_on_ones",
-	"positioning",
-	"reflexes",
-	"first_touch",
-	"technique",
-	"left_foot",
-	"right_foot",
-	"flair",
-	"corners",
-	"teamwork",
-	"work_rate",
-	"long_throws",
-	"eccentricity",
-	"rushing_out",
-	"punching",
-	"acceleration",
-	"free_kicks",
-	"strength",
-	"stamina",
-	"pace",
-	"jumping_reach",
-	"leadership",
-	"dirtiness",
-	"balance",
-	"bravery",
-	"consistency",
-	"aggression",
-	"agility",
-	"important_matches",
-	"injury_proneness",
-	"versatility",
-	"natural_fitness",
-	"determination",
-	"composure",
-	"concentration",
-};
-
-// The 11 training categories (knowledge-base/FM24 Training — Attribute Growth.md, section 3).
-static const char *const trainingCategoryNames[TRAINING_CATEGORY_COUNT] = {
-	"strength",
-	"quickness",
-	"gk_shot_stopping",
-	"gk_handling",
-	"defending",
-	"tackling",
-	"tactics",
-	"ball_control",
-	"attacking",
-	"shooting",
-	"set_pieces",
 };
 
 // MATCH_STAFF+0x60, byte by byte, matched against four staff members' FMRTE profiles
@@ -473,11 +388,11 @@ static void labelVenueField(Walk *walk, size_t i, const TraceRecord *record);
 static void labelRecord(Walk *walk, size_t i);
 
 const char *labels_ratingName(size_t index) {
-	return index < sizeof ratingNames / sizeof ratingNames[0] ? ratingNames[index] : "?";
+	return developmentFormat_ratingName(index);
 }
 
 const char *labels_categoryName(size_t index) {
-	return index < TRAINING_CATEGORY_COUNT ? trainingCategoryNames[index] : "?";
+	return developmentFormat_categoryName(index);
 }
 
 const char *labels_staffAttributeName(size_t index) {
@@ -794,12 +709,27 @@ static unsigned lowestBit(uint64_t mask) {
 	return bit;
 }
 
+// A plan field's site as the Steam build writes it: the Epic build's .arch code writes from others.
+static uint32_t steamPlanSite(uint32_t site) {
+	if (game_timestamp() != GAME_PE_TIMESTAMP_EPIC) {
+		return site;
+	}
+	switch (site) {
+		case SITE_EPIC_TACTIC_MENTALITY: return SITE_TACTIC_MENTALITY;
+		case SITE_EPIC_TACTIC_TEAM_INSTRUCTIONS: return SITE_TACTIC_TEAM_INSTRUCTIONS;
+		case SITE_EPIC_TACTIC_SLOT_POSITION: return SITE_TACTIC_SLOT_POSITION;
+		case SITE_EPIC_TACTIC_SLOT_ROLE: return SITE_TACTIC_SLOT_ROLE;
+		case SITE_EPIC_TACTIC_INSTRUCTIONS_ROLE: return SITE_TACTIC_INSTRUCTIONS_ROLE;
+		default: return site;
+	}
+}
+
 // Names the fields of a tactic plan whose meaning is known.
 static void labelPlanField(Walk *walk, size_t i, const TraceRecord *record) {
 	FieldLabel *label = &walk->labels[i];
 	const char *block = walk->block;
 	char role[32];
-	switch (record->site) {
+	switch (steamPlanSite(record->site)) {
 		case SITE_TACTIC_MENTALITY:
 			walk->tacticSlot = -1;
 			(void)snprintf(label->name, sizeof label->name, "%s.mentality", block);

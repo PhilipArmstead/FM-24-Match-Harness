@@ -31,6 +31,7 @@ set(warnings -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wmissing-pro
 
 add_library(common STATIC
 	src/common/buffer.c
+	src/common/development_format.c
 	src/common/files.c
 	src/common/slug.c
 	src/common/session_names.c

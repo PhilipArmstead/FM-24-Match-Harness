@@ -305,16 +305,23 @@ int commands_getPlayer(int argc, wchar_t **argv) {
 }
 
 int commands_getDevelopment(int argc, wchar_t **argv) {
+	char result[CLIENT_RESULT_LENGTH];
+	return commands_getDevelopmentWithResult(argc, argv, result, sizeof result);
+}
+
+int commands_getDevelopmentWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
 	char person[16];
 	Path output;
 	bool named = argc == 4;
 	if ((argc != 3 && !named) || !parsePersonId(argv[2], person, sizeof person) ||
 			(named && !files_hasExtension(argv[3], L".json"))) {
+		(void)snprintf(result, resultSize, "Get development requires a person unique ID.");
 		fprintf(stderr, "usage: fm24ctl get-development <person unique ID> [output.json]\n");
 		return EXIT_USAGE;
 	}
 	// Without a name, the DLL names the file after the player, in the current directory.
 	if (!absolutePath(named ? argv[3] : L".", &output)) {
+		(void)snprintf(result, resultSize, "Cannot resolve the development file path.");
 		return EXIT_FAILED;
 	}
 	char job[JOB_LENGTH];
@@ -326,10 +333,22 @@ int commands_getDevelopment(int argc, wchar_t **argv) {
 		named ? "output" : "output_directory",
 		output.utf8
 	);
-	return submitAndReport(job);
+	(void)snprintf(
+		result, resultSize, "Cannot export the player; FM24 must be running and idle. See harness.log."
+	);
+	if (!client_submit(job, CLIENT_SHORT_TIMEOUT_MS, result, resultSize)) {
+		return EXIT_FAILED;
+	}
+	printf("%s\n", result);
+	return client_succeeded(result) ? EXIT_OK : EXIT_FAILED;
 }
 
 int commands_develop(int argc, wchar_t **argv) {
+	char result[CLIENT_RESULT_LENGTH];
+	return commands_developWithResult(argc, argv, result, sizeof result);
+}
+
+int commands_developWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
 	char person[16];
 	Path output;
 	char months[16];
@@ -357,6 +376,9 @@ int commands_develop(int argc, wchar_t **argv) {
 							 wcscmp(argv[4], L"keep") != 0 && paths_toUtf8(argv[4], seeds, sizeof seeds) &&
 							 files_hasExtension(argv[5], L".csv");
 	if (!valid) {
+		(void)snprintf(
+			result, resultSize, "Develop requires a player, months, seeds and a .csv output."
+		);
 		fprintf(
 			stderr,
 			"usage: fm24ctl develop <person unique ID|development.json> <months> <seeds> <output.csv>"
@@ -366,10 +388,12 @@ int commands_develop(int argc, wchar_t **argv) {
 	}
 	ByteBuffer values = {0};
 	if (fromFile && !readDevelopmentFile(argv[2], person, sizeof person, &values)) {
+		(void)snprintf(result, resultSize, "Cannot read the development file.");
 		buffer_free(&values);
 		return EXIT_FAILED;
 	}
 	if (!absolutePath(argv[5], &output)) {
+		(void)snprintf(result, resultSize, "Cannot resolve the output path.");
 		buffer_free(&values);
 		return EXIT_FAILED;
 	}
@@ -390,11 +414,10 @@ int commands_develop(int argc, wchar_t **argv) {
 		);
 	}
 	buffer_free(&values);
-	char result[CLIENT_RESULT_LENGTH];
 	(void)snprintf(
-		result, sizeof result, "Cannot simulate; FM24 must be running and idle. See harness.log."
+		result, resultSize, "Cannot simulate; FM24 must be running and idle. See harness.log."
 	);
-	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, sizeof result)) {
+	if (!client_submit(job, CLIENT_LONG_TIMEOUT_MS, result, resultSize)) {
 		return EXIT_FAILED;
 	}
 	printf("%s\n", result);

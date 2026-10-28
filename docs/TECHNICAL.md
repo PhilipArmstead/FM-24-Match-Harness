@@ -410,10 +410,9 @@ values the game derives from them (ability, role ratings) don't affect results.
 - Only the Steam (PE timestamp 1744804480), an older Steam (1710868029) and Epic Games (1744804949)
   builds are supported; the DLL refuses any other. `fm24ctl probe` maps
   another build's addresses as a first step towards supporting it.
-- On the Epic build, configs lack five tactic plan labels (`.mentality`,
-  `.team_instructions`, `.slot[i].position`, `.slot[i].role`,
-  `.slot[i].player_instructions[role]`) and, with `--full`, the `member`
-  notes of functions in `.arch`: that code differs between the builds.
+- On the Epic build, `--full` configs lack the `member` notes of functions
+  in `.arch`: that code differs between the builds. The tactic plan labels
+  written from `.arch` use the Epic build's own sites (`src/dll/sites.h`).
   Values are unaffected.
 
 - With `--keep-build`, patching the seed in an input is not the game

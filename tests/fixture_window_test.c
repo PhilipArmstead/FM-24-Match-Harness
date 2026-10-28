@@ -462,6 +462,46 @@ int commands_listPlayersWithResult(int argc, wchar_t **argv, char *result, size_
 	return 0;
 }
 
+static unsigned developmentExports;
+static wchar_t developmentPerson[16];       // the last export's unique ID
+static const wchar_t *developmentExport; // the file an export copies, or NULL to fail
+
+int commands_getDevelopmentWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	ASSERT_BOOL_EQ(argc == 4 && argv[argc] == NULL, true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"get-development"), 0);
+	ASSERT_BOOL_EQ(files_hasExtension(argv[3], L".json"), true);
+	(void)swprintf(developmentPerson, 16, L"%ls", argv[2]);
+	++developmentExports;
+	if (!developmentExport) {
+		(void)snprintf(result, resultSize, "error: no person with unique ID %ls", argv[2]);
+		return 1;
+	}
+	ASSERT_BOOL_EQ(CopyFileW(developmentExport, argv[3], FALSE), true);
+	(void)snprintf(result, resultSize, "ok");
+	return 0;
+}
+
+static unsigned developCalls;
+static int developResult;
+static wchar_t developArguments[7][HARNESS_PATH_LENGTH]; // the last call's, from "develop"
+static bool developInputHasPlayer; // the temporary file holds the form's person_uid
+
+int commands_developWithResult(int argc, wchar_t **argv, char *result, size_t resultSize) {
+	ASSERT_BOOL_EQ((argc == 6 || argc == 7) && argv[argc] == NULL, true);
+	ASSERT_INT_EQ(wcscmp(argv[1], L"develop"), 0);
+	for (int i = 1; i < 7; ++i) {
+		(void)swprintf(developArguments[i - 1], HARNESS_PATH_LENGTH, L"%ls", i < argc ? argv[i] : L"");
+	}
+	ByteBuffer json = {0};
+	developInputHasPlayer =
+		files_read(argv[2], &json) &&
+		strstr(buffer_string(&json), "{\"name\": \"person_uid\", \"u32\": 2000147523}") != NULL;
+	buffer_free(&json);
+	++developCalls;
+	(void)snprintf(result, resultSize, developResult ? "error: FM24 is not running" : "ok");
+	return developResult;
+}
+
 static unsigned swapPrompts;
 static const wchar_t *swapEntry = L"";
 static WPARAM swapButton = IDCANCEL;
@@ -716,6 +756,23 @@ static bool controlVisible(HWND control) {
 	return (GetWindowLongW(control, GWL_STYLE) & WS_VISIBLE) != 0;
 }
 
+static void minimumSize(HWND window) {
+	MINMAXINFO limits = {0};
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_GETMINMAXINFO, 0, (LPARAM)&limits) == 0, true);
+	ASSERT_BOOL_EQ(
+		SetWindowPos(
+			window,
+			NULL,
+			0,
+			0,
+			limits.ptMinTrackSize.x,
+			limits.ptMinTrackSize.y,
+			SWP_NOMOVE | SWP_NOZORDER
+		),
+		true
+	);
+}
+
 static void changeTab(HWND window, WindowState *state, int tab) {
 	TabCtrl_SetCurSel(state->tabs, tab);
 	NMHDR notification = {.hwndFrom = state->tabs, .code = (UINT)TCN_SELCHANGE};
@@ -752,7 +809,13 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 
 static void checkTrainingVisible(HWND window, const WindowState *state) {
 	for (HWND child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
-		ASSERT_BOOL_EQ(controlVisible(child), child == state->mainTabs || child == state->trainingPage);
+		ASSERT_BOOL_EQ(
+			controlVisible(child),
+			child == state->mainTabs || child == state->trainingPage || child == state->trainingSummary ||
+				child == state->trainingPicker || child == state->trainingTabs ||
+				child == state->trainingFileButtons[FILE_OPEN_BUTTON] ||
+				child == state->trainingFileButtons[FILE_SAVE_BUTTON]
+		);
 	}
 }
 
@@ -768,6 +831,7 @@ static void changeMainTab(HWND window, WindowState *state, int tab) {
 }
 
 static void checkMainTabs(HWND window, WindowState *state) {
+	ASSERT_BOOL_EQ(GetWindow(state->mainTabs, GW_HWNDNEXT) == NULL, true);
 	ASSERT_INT_EQ(TabCtrl_GetItemCount(state->mainTabs), 2);
 	ASSERT_INT_EQ(TabCtrl_GetCurSel(state->mainTabs), 0);
 	wchar_t text[32] = {0};
@@ -927,68 +991,754 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 	);
 }
 
-static void checkTrainingForm(HWND window, WindowState *state) {
-	ASSERT_INT_EQ(TRAINING_FIELD_COUNT, 162);
-	ASSERT_BOOL_EQ(controlVisible(state->trainingPage), false);
+static unsigned trainingIndex(const char *id) {
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		if (strcmp(trainingFields[i].id, id) == 0) {
+			return i;
+		}
+	}
+	ASSERT_BOOL_EQ(false, true);
+	return 0;
+}
+
+static bool contains(RECT outer, RECT inner) {
+	return inner.left > outer.left && inner.right < outer.right && inner.top > outer.top &&
+				 inner.bottom < outer.bottom;
+}
+
+static int controlWidth(HWND parent, HWND control) {
+	RECT bounds = controlBounds(parent, control);
+	return bounds.right - bounds.left;
+}
+
+static void checkTrainingFields(void) {
+	ASSERT_INT_EQ(TRAINING_FIELD_COUNT, 163);
+	unsigned ratings[TRAINING_COLUMN_LIMIT] = {0};
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		ASSERT_INT_EQ(trainingIndex(trainingFields[i].id), i);
+		ASSERT_BOOL_EQ(wcschr(trainingFields[i].label, L'_') == NULL, true);
+		ASSERT_BOOL_EQ(trainingFields[i].section < TRAINING_SECTION_COUNT, true);
+		ASSERT_BOOL_EQ(trainingFields[i].column < TRAINING_COLUMN_LIMIT, true);
+		if (trainingFields[i].section == SECTION_RATINGS) {
+			++ratings[trainingFields[i].column];
+		}
+	}
+	// Positions, then goalkeeping, technical (with the feet), mental (with most hidden attributes) and
+	// physical (with injury proneness): all 69 ratings.
+	static const unsigned expected[] = {15, 11, 16, 18, 9};
+	for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+		ASSERT_INT_EQ(ratings[column], expected[column]);
+	}
+	ASSERT_INT_EQ(trainingFields[trainingIndex("ratings.left_foot")].column, 2);
+	ASSERT_INT_EQ(trainingFields[trainingIndex("ratings.injury_proneness")].column, 4);
+	ASSERT_INT_EQ(trainingFields[trainingIndex("ratings.versatility")].column, 3);
+}
+
+// Every input reaches the file: person_uid, a schedule slot, or a table field's value, and every
+// table field has all its values on the form.
+static void checkTrainingTargets(const WindowState *state) {
+	unsigned covered[DEVELOPMENT_FIELD_COUNT] = {0};
+	unsigned sessions = 0;
+	unsigned uniqueIds = 0;
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		const TrainingTarget *target = &state->trainingTargets[i];
+		if (target->field) {
+			ASSERT_BOOL_EQ(target->key < developmentFormat_size(target->field), true);
+			++covered[target->field - developmentFields];
+		} else {
+			sessions += target->session;
+			uniqueIds += !target->session;
+		}
+	}
+	ASSERT_INT_EQ(sessions, DEVELOPMENT_SCHEDULE_SESSIONS);
+	ASSERT_INT_EQ(uniqueIds, 1);
+	for (unsigned i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
+		const DevelopmentField *field = &developmentFields[i];
+		bool map = field->kind == DEVELOPMENT_RATINGS || field->kind == DEVELOPMENT_CATEGORIES;
+		size_t expected = map ? developmentFormat_size(field) : 1;
+		ASSERT_BOOL_EQ(covered[i] == expected, true);
+	}
+	ASSERT_BOOL_EQ(state->trainingTargets[trainingIndex("schedule.week1.day3.slot2")].key == 7, true);
+	ASSERT_BOOL_EQ(state->trainingTargets[trainingIndex("training_focus")].choices == &focusChoices, true);
+	ASSERT_BOOL_EQ(
+		state->trainingTargets[trainingIndex("training_intensity")].choices == &intensityChoices, true
+	);
+}
+
+static void inputText(const WindowState *state, const char *id, wchar_t *out) {
+	out[0] = 0;
+	GetWindowTextW(state->trainingInputs[trainingIndex(id)], out, 64);
+}
+
+static void checkInput(const WindowState *state, const char *id, const wchar_t *expected) {
+	wchar_t text[64];
+	inputText(state, id, text);
+	ASSERT_INT_EQ(wcscmp(text, expected), 0);
+}
+
+// Clicks "Use in-game schedule?".
+static void clickInGame(const WindowState *state) {
+	bool ticked = inGameSchedule(state);
+	SendMessageW(state->trainingInGame, BM_SETCHECK, ticked ? BST_UNCHECKED : BST_CHECKED, 0);
+	SendMessageW(state->trainingContent, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->trainingInGame);
+}
+
+static bool slotsVisible(const WindowState *state) {
+	return controlVisible(state->trainingInputs[trainingIndex("schedule.week1.day1.slot1")]) &&
+				 controlVisible(state->trainingHeadings[SECTION_SCHEDULE][0]);
+}
+
+// Removes the first `part` from `text`; false if it is not there.
+static bool cutText(char *text, const char *part) {
+	char *at = strstr(text, part);
+	if (at) {
+		memmove(at, at + strlen(part), strlen(at + strlen(part)) + 1);
+	}
+	return at != NULL;
+}
+
+// Save refuses `value` in input `id`, naming it, and writes nothing.
+static void checkRefused(
+	HWND window,
+	WindowState *state,
+	const char *id,
+	const wchar_t *value,
+	const wchar_t *expected,
+	const wchar_t *path
+) {
+	HWND input = state->trainingInputs[trainingIndex(id)];
+	wchar_t original[64];
+	inputText(state, id, original);
+	if (state->trainingTargets[trainingIndex(id)].session) {
+		SendMessageW(input, CB_SETCURSEL, (WPARAM)-1, 0);
+	} else {
+		ASSERT_BOOL_EQ(SetWindowTextW(input, value), true);
+	}
+	int errors = errorMessages;
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), false);
+	ASSERT_INT_EQ(errorMessages, errors + 1);
+	ASSERT_INT_EQ(wcscmp(lastError, expected), 0);
+	ASSERT_BOOL_EQ(GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES, true);
+	if (state->trainingTargets[trainingIndex(id)].session) {
+		SendMessageW(input, CB_SETCURSEL, (WPARAM)SendMessageW(input, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)original), 0);
+	} else {
+		ASSERT_BOOL_EQ(SetWindowTextW(input, original), true);
+	}
+}
+
+// Presses Enter in the player search, or picks list item `item` (unless negative), and waits for
+// the export it starts.
+static void searchPlayer(HWND window, WindowState *state, const wchar_t *typed, int item) {
+	unsigned exports = developmentExports;
+	if (item < 0) {
+		ASSERT_BOOL_EQ(SetWindowTextW(state->trainingPicker, typed), true);
+		MSG key = {.hwnd = state->trainingPicker, .message = WM_KEYDOWN, .wParam = VK_RETURN};
+		ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
+	} else {
+		ASSERT_BOOL_EQ(SendMessageW(state->trainingPicker, CB_SETCURSEL, (WPARAM)item, 0) == item, true);
+		WPARAM command = MAKEWPARAM(0, CBN_SELENDOK);
+		ASSERT_BOOL_EQ(windowProcedure(window, WM_COMMAND, command, (LPARAM)state->trainingPicker) == 0, true);
+	}
+	if (!state->developmentThread) {
+		return; // refused before exporting
+	}
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->trainingPicker), false);
+	ASSERT_BOOL_EQ(WaitForSingleObject(state->developmentThread, 5000) == WAIT_OBJECT_0, true);
+	checkDevelopment(window, state);
+	ASSERT_BOOL_EQ(state->developmentThread == NULL && IsWindowEnabled(state->trainingPicker), true);
+	ASSERT_INT_EQ(developmentExports, exports + 1);
+}
+
+// The player search lists players by name, exports the one picked (or whose ID is typed) to the
+// temp directory, and opens that file as Open would.
+static void checkTrainingSearch(HWND window, WindowState *state, const wchar_t *sample) {
+	RECT picker = controlBounds(window, state->trainingPicker);
+	RECT open = controlBounds(window, state->trainingFileButtons[FILE_OPEN_BUTTON]);
+	RECT form = controlBounds(window, state->trainingPage);
+	RECT tabs = controlBounds(window, state->trainingTabs);
+	ASSERT_BOOL_EQ(picker.left == form.left + scaled(state, 12) && open.bottom < tabs.top, true);
+	ASSERT_BOOL_EQ(picker.top > tabs.top && picker.bottom < form.top, true);
+	ASSERT_BOOL_EQ(
+		GetNextDlgTabItem(window, state->trainingTabs, FALSE) == state->trainingPicker, true
+	);
+	WPARAM focus = MAKEWPARAM(0, CBN_SETFOCUS);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_COMMAND, focus, (LPARAM)state->trainingPicker) == 0, true);
+	if (state->playersThread) {
+		ASSERT_BOOL_EQ(WaitForSingleObject(state->playersThread, 5000) == WAIT_OBJECT_0, true);
+		checkPlayers(window, state);
+	}
+	ASSERT_BOOL_EQ(state->players != NULL, true);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingPicker, L"degaard"), true);
+	filterTrainingPlayers(state, false);
+	ASSERT_INT_EQ((int)SendMessageW(state->trainingPicker, CB_GETCOUNT, 0, 0), 2);
+
+	int errors = errorMessages;
+	developmentExport = NULL;
+	searchPlayer(window, state, L"404", -1);
+	ASSERT_INT_EQ(errorMessages, errors + 1);
+	ASSERT_INT_EQ(
+		wcscmp(lastError, L"Cannot export the player's development values: error: no person with unique ID 404"),
+		0
+	);
+	unsigned exports = developmentExports;
+	searchPlayer(window, state, L"Arsenal", -1);
+	ASSERT_INT_EQ(developmentExports, exports);
+	ASSERT_INT_EQ(errorMessages, errors + 2);
+	ASSERT_BOOL_EQ(wcsstr(lastError, L"Choose a player from the list") == lastError, true);
+
+	developmentExport = sample;
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingPicker, L"degaard"), true);
+	filterTrainingPlayers(state, false);
+	wchar_t label[PLAYER_LABEL_LENGTH] = L"";
+	ASSERT_BOOL_EQ(SendMessageW(state->trainingPicker, CB_GETLBTEXT, 0, (LPARAM)label) > 0, true);
+	wchar_t id[SWAP_ID_LENGTH] = L"";
+	ASSERT_BOOL_EQ(listedId(state->players, state->playerCount, label, id, SWAP_ID_LENGTH), true);
+	searchPlayer(window, state, NULL, 0);
+	ASSERT_INT_EQ(wcscmp(developmentPerson, id), 0);
+	ASSERT_BOOL_EQ(state->trainingTemporary, true);
+	firstLine(state->trainingSummary, L"This development object is not saved. Click here to export it.");
+	wchar_t expected[HARNESS_PATH_LENGTH];
+	wchar_t temporary[HARNESS_PATH_LENGTH];
+	ASSERT_BOOL_EQ(GetTempPathW(HARNESS_PATH_LENGTH, temporary) > 0, true);
+	(void)swprintf(expected, HARNESS_PATH_LENGTH, L"%lsfm24-development-%ls.json", temporary, id);
+	ASSERT_INT_EQ(wcscmp(state->trainingPath, expected), 0);
+	checkInput(state, "current_ability", L"99");
+	ASSERT_BOOL_EQ(state->trainingDirty, false);
+	ASSERT_BOOL_EQ(DeleteFileW(expected), true);
+
+	// Unsaved edits are kept unless discarded.
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[trainingIndex("current_ability")], L"120"), true);
+	unsigned prompts = discardPrompts;
+	discardAnswer = IDNO;
+	searchPlayer(window, state, L"2002", -1);
+	ASSERT_INT_EQ(discardPrompts, prompts + 1);
+	checkInput(state, "current_ability", L"120");
+	ASSERT_INT_EQ(wcscmp(developmentPerson, L"2002"), 0);
+	(void)swprintf(expected, HARNESS_PATH_LENGTH, L"%lsfm24-development-2002.json", temporary);
+	ASSERT_BOOL_EQ(DeleteFileW(expected), true);
+	discardAnswer = IDYES;
+	searchPlayer(window, state, L"2002", -1);
+	checkInput(state, "current_ability", L"99");
+	ASSERT_BOOL_EQ(DeleteFileW(expected), true);
+	discardAnswer = IDNO;
+	developmentExport = NULL;
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingPicker, L""), true);
+	// The swap prompt's checks expect the list unloaded.
+	freeChoices(state->players, state->playerCount);
+	state->players = NULL;
+	state->playerCount = 0;
+	setTrainingCue(state);
+}
+
+// The summary's link exports the unsaved tab as {person_uid}-{timestamp}.json in the working
+// directory, never overwriting a file.
+static void checkDevelopmentExport(HWND window, WindowState *state, const wchar_t *directory) {
+	wchar_t original[HARNESS_PATH_LENGTH];
+	ASSERT_BOOL_EQ(GetCurrentDirectoryW(HARNESS_PATH_LENGTH, original) > 0, true);
+	ASSERT_BOOL_EQ(SetCurrentDirectoryW(directory), true);
+	HWND summary = state->trainingSummary;
+	firstLine(summary, L"This development object is not saved. Click here to export it.");
+	LONG linkStart = (LONG)wcslen(developmentUnsaved);
+	LONG linkEnd = linkStart + (LONG)wcslen(exportLink);
+	checkFormat(summary, 0, linkStart, CFE_BOLD, RGB(255, 0, 0));
+	checkFormat(summary, linkStart, linkEnd, CFE_LINK | CFE_UNDERLINE, RGB_BLUE);
+	checkFormat(summary, linkEnd, linkEnd + 13, 0, GetSysColor(COLOR_WINDOWTEXT));
+	ENLINK link = {.nmhdr = {.hwndFrom = summary, .code = EN_LINK}, .msg = WM_LBUTTONUP};
+	int errors = errorMessages;
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1, true);
+	ASSERT_BOOL_EQ(!state->trainingDirty && errorMessages == errors, true);
+	ASSERT_INT_EQ(wcscmp(state->trainingPath, L"2000147523-12345.json"), 0);
+	firstLine(summary, L"Viewing development: 2000147523-12345.json");
+	checkFormat(summary, 21, 42, CFE_BOLD, GetSysColor(COLOR_WINDOWTEXT));
+	ASSERT_BOOL_EQ(fileMissing(L"2000147523-12345.json"), false);
+	// Edited again within the same second, an export would overwrite it.
+	wchar_t height[64];
+	inputText(state, "height", height);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[trainingIndex("height")], height), true);
+	ASSERT_BOOL_EQ(state->trainingDirty, true);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&link) == 1, true);
+	ASSERT_INT_EQ(errorMessages, errors + 1);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Cannot export: 2000147523-12345.json already exists. No file was overwritten."), 0);
+	ASSERT_BOOL_EQ(state->trainingDirty, true);
+	ASSERT_BOOL_EQ(DeleteFileW(L"2000147523-12345.json"), true);
+	ASSERT_BOOL_EQ(SetCurrentDirectoryW(original), true);
+}
+
+// Blank inputs leave their fields out of the file: a value and a whole map. Blank slots rest,
+// unless "Use in-game schedule?" is ticked, which leaves the schedule out. The additional focus and training intensity are written by ID. A focus the viewer has no name
+// for is refused; an intensity it has none for, or none at all, opens as Normal.
+static void checkBlankDevelopment(HWND window, WindowState *state, const wchar_t *path) {
+	HWND focus = state->trainingInputs[trainingIndex("training_focus")];
+	HWND intensity = state->trainingInputs[trainingIndex("training_intensity")];
+	ASSERT_BOOL_EQ(SendMessageW(focus, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)L"Shooting") >= 0, true);
+	ASSERT_BOOL_EQ(SendMessageW(intensity, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)L"Double") >= 0, true);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[trainingIndex("height")], L""), true);
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		const TrainingTarget *target = &state->trainingTargets[i];
+		if (target->session) {
+			ASSERT_BOOL_EQ(SendMessageW(state->trainingInputs[i], CB_SETCURSEL, 0, 0) == 0, true);
+		} else if (target->field == &developmentFields[DEVELOPMENT_COACH_WORKLOAD]) {
+			ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[i], L""), true);
+		}
+	}
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), true);
+	ByteBuffer written = {0};
+	ASSERT_BOOL_EQ(files_read(path, &written), true);
+	const char *text = buffer_string(&written);
+	ASSERT_BOOL_EQ(strstr(text, "\"name\": \"height\"") == NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "\"name\": \"coach_workload\"") == NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "\"day1.slot1\": \"Team Rest\"") != NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "\"day7.slot3\": \"Team Rest\"") != NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "\"name\": \"weight\"") != NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "{\"name\": \"training_focus\", \"u8\": 15}") != NULL, true);
+	ASSERT_BOOL_EQ(strstr(text, "{\"name\": \"training_intensity\", \"u8\": 2}") != NULL, true);
+	buffer_free(&written);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), true);
+	checkInput(state, "schedule.week1.day1.slot1", L"Team Rest");
+	ASSERT_BOOL_EQ(!inGameSchedule(state) && slotsVisible(state), true);
+	clickInGame(state);
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), true);
+	ASSERT_BOOL_EQ(files_read(path, &written), true);
+	ASSERT_BOOL_EQ(strstr(buffer_string(&written), "\"name\": \"schedule.week1\"") == NULL, true);
+	buffer_free(&written);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), true);
+	ASSERT_BOOL_EQ(inGameSchedule(state) && !slotsVisible(state), true);
+	checkInput(state, "height", L"");
+	checkInput(state, "coach_workload.attacking", L"");
+	checkInput(state, "schedule.week1.day1.slot1", L"");
+	checkInput(state, "weight", L"68");
+	checkInput(state, "training_focus", L"Shooting");
+	checkInput(state, "training_intensity", L"Double");
+	ASSERT_BOOL_EQ(SendMessageW(focus, CB_SETCURSEL, 1, 0) == 1, true);
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), true);
+	ASSERT_BOOL_EQ(files_read(path, &written), true);
+	text = buffer_string(&written);
+	ASSERT_BOOL_EQ(strstr(text, "{\"name\": \"training_focus\", \"u8\": 255}") != NULL, true);
+	buffer_free(&written);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), true);
+	checkInput(state, "training_focus", L"None");
+	static const char unnamed[] =
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"training_focus\", \"u8\": 27}]}";
+	ASSERT_BOOL_EQ(files_write(path, unnamed, sizeof unnamed - 1), true);
+	int errors = errorMessages;
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), false);
+	ASSERT_INT_EQ(errorMessages, errors + 1);
+	ASSERT_INT_EQ(
+		wcscmp(lastError, L"Cannot open the development file: training_focus is 27, which the viewer cannot show"),
+		0
+	);
+	checkInput(state, "training_focus", L"None");
+	static const char *const unlisted[] = {
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"training_intensity\", \"u8\": 7}]}",
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"training_intensity\", \"u8\": 0}]}",
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"height\", \"u16\": 180}]}"};
+	for (unsigned i = 0; i < sizeof unlisted / sizeof unlisted[0]; ++i) {
+		ASSERT_BOOL_EQ(SendMessageW(intensity, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)L"Half") >= 0, true);
+		ASSERT_BOOL_EQ(files_write(path, unlisted[i], strlen(unlisted[i])), true);
+		ASSERT_BOOL_EQ(openDevelopment(window, state, path), true);
+		checkInput(state, "training_intensity", L"Normal");
+	}
+	ASSERT_BOOL_EQ(DeleteFileW(path), true);
+}
+
+static void clickDevelop(HWND window, WindowState *state) {
+	ASSERT_BOOL_EQ(
+		windowProcedure(
+			window, WM_COMMAND, MAKEWPARAM(0, BN_CLICKED), (LPARAM)state->develop[DEVELOP_SUBMIT]
+		) == 0,
+		true
+	);
+	if (state->developThread) {
+		ASSERT_BOOL_EQ(WaitForSingleObject(state->developThread, 5000) == WAIT_OBJECT_0, true);
+		ASSERT_BOOL_EQ(checkTimer(window, state, DEVELOP_TIMER), true);
+	}
+}
+
+// The Simulation tab checks its months and seeds, then runs develop on a temporary copy of the
+// form's values, writing the CSV beside the open development file `path`.
+static void checkTrainingSimulation(HWND window, WindowState *state, const wchar_t *path) {
+	NMHDR notification = {.hwndFrom = state->trainingTabs, .code = (UINT)TCN_SELCHANGE};
+	TabCtrl_SetCurSel(state->mainTabs, 1);
+	TabCtrl_SetCurSel(state->trainingTabs, 1);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0, true);
+	for (unsigned i = 0; i < DEVELOP_CONTROL_COUNT; ++i) {
+		ASSERT_BOOL_EQ(controlVisible(state->develop[i]), true);
+	}
+	wchar_t text[HARNESS_PATH_LENGTH + 64] = {0};
+	ASSERT_BOOL_EQ(GetWindowTextW(state->develop[DEVELOP_MONTHS], text, 16) > 0, true);
+	ASSERT_INT_EQ(wcscmp(text, L"12"), 0);
+	ASSERT_BOOL_EQ(SendMessageW(state->develop[DEVELOP_PER_SEED], BM_GETCHECK, 0, 0) == BST_CHECKED, false);
+	unsigned calls = developCalls;
+	clickDevelop(window, state);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Enter a seed pattern such as 1, 42, 1-100, 1,3,5 or 1,4,7-70."), 0);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->develop[DEVELOP_SEEDS], L"1-100"), true);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->develop[DEVELOP_MONTHS], L"601"), true);
+	clickDevelop(window, state);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Number of months must be between 1 and 600."), 0);
+	ASSERT_INT_EQ(developCalls, calls);
+
+	ASSERT_BOOL_EQ(SetWindowTextW(state->develop[DEVELOP_MONTHS], L"24"), true);
+	SendMessageW(state->develop[DEVELOP_PER_SEED], BM_SETCHECK, BST_CHECKED, 0);
+	developResult = 0;
+	clickDevelop(window, state);
+	ASSERT_INT_EQ(developCalls, calls + 1);
+	wchar_t output[HARNESS_PATH_LENGTH];
+	(void)swprintf(output, HARNESS_PATH_LENGTH, L"%ls", path);
+	wcscpy(wcsrchr(output, L'.'), L".csv");
+	ASSERT_BOOL_EQ(files_hasExtension(developArguments[1], L".json") && developInputHasPlayer, true);
+	ASSERT_BOOL_EQ(GetFileAttributesW(developArguments[1]) == INVALID_FILE_ATTRIBUTES, true);
+	ASSERT_INT_EQ(wcscmp(developArguments[2], L"24"), 0);
+	ASSERT_INT_EQ(wcscmp(developArguments[3], L"1-100"), 0);
+	ASSERT_INT_EQ(wcscmp(developArguments[4], output), 0);
+	ASSERT_INT_EQ(wcscmp(developArguments[5], L"--per-seed-breakdown"), 0);
+	GetWindowTextW(state->develop[DEVELOP_STATUS], text, HARNESS_PATH_LENGTH + 64);
+	wchar_t expected[HARNESS_PATH_LENGTH + 64];
+	(void)swprintf(expected, HARNESS_PATH_LENGTH + 64, L"Simulation complete. Results were saved to %ls.", output);
+	ASSERT_INT_EQ(wcscmp(text, expected), 0);
+	ASSERT_BOOL_EQ(IsWindowEnabled(state->develop[DEVELOP_SUBMIT]) && IsWindowEnabled(state->trainingPicker), true);
+
+	SendMessageW(state->develop[DEVELOP_PER_SEED], BM_SETCHECK, BST_UNCHECKED, 0);
+	developResult = 1;
+	clickDevelop(window, state);
+	ASSERT_INT_EQ(developCalls, calls + 2);
+	ASSERT_INT_EQ(wcscmp(developArguments[5], L""), 0);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Cannot simulate the player's development: error: FM24 is not running"), 0);
+	developResult = 0;
+
+	// A refused value shows the Player tab with the caret in it.
+	HWND fatigue = state->trainingInputs[trainingIndex("fatigue")];
+	GetWindowTextW(fatigue, text, 32);
+	ASSERT_BOOL_EQ(SetWindowTextW(fatigue, L"-4x"), true);
+	clickDevelop(window, state);
+	ASSERT_INT_EQ(developCalls, calls + 2);
+	ASSERT_INT_EQ(TabCtrl_GetCurSel(state->trainingTabs), 0);
+	ASSERT_BOOL_EQ(controlVisible(state->trainingPage) && !controlVisible(state->develop[DEVELOP_SUBMIT]), true);
+	ASSERT_BOOL_EQ(SetWindowTextW(fatigue, text), true);
+	state->trainingDirty = false;
+	(void)setTrainingSummary(state);
+}
+
+// Opens the repository's kellyman.json, saves it as get-development writes it less what only the
+// game knows, and refuses to save empty or out-of-range values.
+static void checkDevelopmentFiles(HWND window, WindowState *state) {
+	char source[HARNESS_PATH_LENGTH];
+	(void)snprintf(source, sizeof source, "%s", __FILE__);
+	for (unsigned up = 0; up < 2; ++up) {
+		char *slash = strrchr(source, '/');
+		char *back = strrchr(source, '\\');
+		slash = back > slash ? back : slash;
+		ASSERT_BOOL_EQ(slash != NULL, true);
+		if (!slash) {
+			return;
+		}
+		*slash = 0;
+	}
+	(void)snprintf(source + strlen(source), sizeof source - strlen(source), "/kellyman.json");
+	wchar_t sample[HARNESS_PATH_LENGTH];
+	ASSERT_BOOL_EQ(widen(source, sample, HARNESS_PATH_LENGTH), true);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, sample), true);
+	checkInput(state, "person_uid", L"2000147523");
+	checkInput(state, "current_ability", L"99");
+	checkInput(state, "ratings.pos_amc", L"20");
+	checkInput(state, "ratings.left_foot", L"100");
+	checkInput(state, "coach_workload.tackling", L"11");
+	checkInput(state, "fatigue", L"-58");
+	checkInput(state, "training_progress.gk_handling", L"-100");
+	checkInput(state, "ability_carry", L"00000000");
+	checkInput(state, "schedule.week1.day6.slot2", L"Team Match/Match Practice");
+	checkInput(state, "schedule.week1.day3.slot3", L"Extra Curricular Team Bonding");
+	checkInput(state, "training_focus", L""); // the export has no focus record
+	checkInput(state, "training_intensity", L"Team workload");
+	ASSERT_BOOL_EQ(!state->trainingDirty && wcscmp(state->trainingPath, sample) == 0, true);
+	firstLine(state->trainingSummary, L"Viewing development: kellyman.json");
+	checkFormat(state->trainingSummary, 21, 34, CFE_BOLD, GetSysColor(COLOR_WINDOWTEXT));
+
+	wchar_t temporary[HARNESS_PATH_LENGTH];
+	wchar_t saved[HARNESS_PATH_LENGTH];
+	wchar_t refused[HARNESS_PATH_LENGTH];
+	DWORD length = GetTempPathW(HARNESS_PATH_LENGTH, temporary);
+	ASSERT_BOOL_EQ(length > 0 && length < HARNESS_PATH_LENGTH - 40, true);
+	(void)swprintf(saved, HARNESS_PATH_LENGTH, L"%lsfm24-development-saved.json", temporary);
+	(void)swprintf(refused, HARNESS_PATH_LENGTH, L"%lsfm24-development-refused.json", temporary);
+	(void)DeleteFileW(refused);
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, saved), true);
+	ASSERT_BOOL_EQ(!state->trainingDirty && wcscmp(state->trainingPath, saved) == 0, true);
+	firstLine(state->trainingSummary, L"Viewing development: fm24-development-saved.json");
+	ByteBuffer expected = {0};
+	ByteBuffer written = {0};
+	ASSERT_BOOL_EQ(files_read(sample, &expected) && files_read(saved, &written), true);
+	char *text = malloc(expected.length + 1);
+	ASSERT_BOOL_EQ(text != NULL, true);
+	if (text) {
+		memcpy(text, buffer_string(&expected), expected.length + 1);
+		ASSERT_BOOL_EQ(cutText(text, "  // Exported on day 186 of 2023 (game date).\n"), true);
+		ASSERT_BOOL_EQ(cutText(text, "  \"source\": \"Omari Kellyman\",\n"), true);
+		ASSERT_BOOL_EQ(cutText(text, "; develops on day 11 of each month"), true);
+		ASSERT_BOOL_EQ(cutText(text, "\"player\": \"Omari Kellyman\", "), true);
+		ASSERT_INT_EQ(strcmp(buffer_string(&written), text), 0);
+		free(text);
+	}
+	buffer_free(&expected);
+	buffer_free(&written);
+
+	checkRefused(window, state, "ratings.pos_gk", L"21", L"Cannot save: Positions: GK must be a number from 1 to 20.", refused);
+	checkRefused(window, state, "person_uid", L"", L"Cannot save: Person UID is empty.", refused);
+	checkRefused(window, state, "coach_workload.attacking", L"", L"Cannot save: Workload (Attacking) is empty; fill all of coach_workload or none of it.", refused);
+	checkRefused(window, state, "coach_workload.attacking", L"101", L"Cannot save: Workload (Attacking) must be a number from 0 to 100.", refused);
+	checkRefused(window, state, "fatigue", L"-4x", L"Cannot save: Fatigue must be a number from -32768 to 32767.", refused);
+	checkRefused(window, state, "ability_carry", L"0000", L"Cannot save: Ability carry (hex) must be 8 hex digits.", refused);
+	checkInput(state, "ratings.pos_gk", L"1");
+
+	// Edits are kept until discarded, and a file that does not fit leaves the form as it was.
+	ASSERT_BOOL_EQ(state->trainingDirty, true);
+	unsigned prompts = discardPrompts;
+	discardAnswer = IDNO;
+	ASSERT_BOOL_EQ(closeBlocked(window, state), true);
+	ASSERT_INT_EQ(discardPrompts, prompts + 1);
+	static const char bad[] =
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"current_ability\", \"u16\": 5}, "
+		"{\"name\": \"ratings\", \"u8\": 3}]}";
+	ASSERT_BOOL_EQ(files_write(refused, bad, sizeof bad - 1), true);
+	int errors = errorMessages;
+	ASSERT_BOOL_EQ(openDevelopment(window, state, refused), false);
+	ASSERT_INT_EQ(errorMessages, errors + 1);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Cannot open the development file: ratings has the wrong kind of value"), 0);
+	checkInput(state, "current_ability", L"99");
+	ASSERT_BOOL_EQ(DeleteFileW(refused), true);
+	checkDevelopmentExport(window, state, temporary);
+	checkBlankDevelopment(window, state, refused);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, saved), true);
+	ASSERT_BOOL_EQ(!state->trainingDirty && closeBlocked(window, state) == false, true);
+	checkTrainingSimulation(window, state, saved);
+	checkTrainingSearch(window, state, saved);
+	ASSERT_BOOL_EQ(DeleteFileW(saved), true);
+}
+
+static void checkTrainingControls(const WindowState *state) {
+	ASSERT_BOOL_EQ(GetWindowLongW(state->trainingContent, GWL_STYLE) & WS_CLIPCHILDREN, false);
 	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
 		wchar_t text[128] = {0};
-		ASSERT_BOOL_EQ(GetWindowTextW(state->trainingLabels[i], text, 128) > 0, true);
-		ASSERT_INT_EQ(wcscmp(text, trainingFields[i]), 0);
-		ASSERT_INT_EQ(GetWindowTextLengthW(state->trainingInputs[i]), 0);
+		GetWindowTextW(state->trainingLabels[i], text, 128);
+		ASSERT_INT_EQ(wcscmp(text, trainingFields[i].label), 0);
+		const TrainingChoices *choices = state->trainingTargets[i].choices;
+		if (choices && !choices->blank) { // starts on its first item
+			GetWindowTextW(state->trainingInputs[i], text, 128);
+			ASSERT_INT_EQ(wcscmp(text, choices->items[0].name), 0);
+		} else {
+			ASSERT_INT_EQ(GetWindowTextLengthW(state->trainingInputs[i]), 0);
+		}
 		ASSERT_BOOL_EQ(GetWindowLongW(state->trainingInputs[i], GWL_STYLE) & WS_TABSTOP, true);
 		ASSERT_BOOL_EQ(IsWindowEnabled(state->trainingInputs[i]), true);
 		ASSERT_BOOL_EQ(GetParent(state->trainingInputs[i]) == state->trainingContent, true);
-	}
-	changeMainTab(window, state, 1);
-	ASSERT_BOOL_EQ(
-		GetNextDlgTabItem(window, state->mainTabs, FALSE) == state->trainingInputs[0], true
-	);
-	for (unsigned i = 1; i < TRAINING_FIELD_COUNT; ++i) {
-		ASSERT_BOOL_EQ(
-			GetNextDlgTabItem(window, state->trainingInputs[i - 1], FALSE) == state->trainingInputs[i],
-			true
-		);
-	}
-	static const wchar_t *const names[] = {
-		L"fatigue", L"ability_carry", L"schedule.week1.day7.slot3"};
-	static const wchar_t *const values[] = {L"-58", L"ABCDEF01", L"Team Rest"};
-	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
-		for (unsigned j = 0; j < sizeof names / sizeof names[0]; ++j) {
-			if (wcscmp(trainingFields[i], names[j]) == 0) {
-				ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[i], values[j]), true);
-			}
+		if (!trainingCombo(&state->trainingTargets[i])) {
+			wchar_t widest[24];
+			trainingWidest(&state->trainingTargets[i], widest, 24);
+			ASSERT_BOOL_EQ(
+				SendMessageW(state->trainingInputs[i], EM_GETLIMITTEXT, 0, 0) == (LRESULT)wcslen(widest),
+				true
+			);
+		} else if (choices) {
+			ASSERT_INT_EQ(
+				(int)SendMessageW(state->trainingInputs[i], CB_GETCOUNT, 0, 0),
+				(int)choices->count + choices->blank
+			);
+		} else {
+			ASSERT_BOOL_EQ(SendMessageW(state->trainingInputs[i], CB_GETCOUNT, 0, 0) > 40, true);
 		}
 	}
+	ASSERT_BOOL_EQ(
+		SendMessageW(state->trainingInputs[trainingIndex("ratings.pace")], EM_GETLIMITTEXT, 0, 0) == 3,
+		true
+	);
+	ASSERT_BOOL_EQ(
+		SendMessageW(state->trainingInputs[trainingIndex("fatigue")], EM_GETLIMITTEXT, 0, 0) == 6, true
+	);
+	ASSERT_BOOL_EQ(
+		SendMessageW(state->trainingInputs[trainingIndex("person_uid")], EM_GETLIMITTEXT, 0, 0) == 10,
+		true
+	);
+	ASSERT_BOOL_EQ(
+		SendMessageW(state->trainingInputs[trainingIndex("ratings.pos_gk")], EM_GETLIMITTEXT, 0, 0) == 2,
+		true
+	);
+	checkTrainingTargets(state);
+}
+
+// Column headings are bold and underlined; condition ... training happiness share one row at the
+// bottom of the Player group.
+static void checkTrainingHeadings(const WindowState *state) {
+	LOGFONTW font = {0};
+	ASSERT_INT_EQ(GetObjectW(state->columnHeadingFont, sizeof font, &font), sizeof font);
+	ASSERT_BOOL_EQ(font.lfWeight == FW_BOLD && font.lfUnderline, true);
+	for (unsigned i = 0; i < TRAINING_SECTION_COUNT; ++i) {
+		for (unsigned column = 0; column < TRAINING_COLUMN_LIMIT; ++column) {
+			HWND heading = state->trainingHeadings[i][column];
+			ASSERT_BOOL_EQ(heading != NULL, trainingSections[i].headings[column] != NULL);
+			ASSERT_BOOL_EQ(
+				!heading ||
+					(HFONT)SendMessageW(heading, WM_GETFONT, 0, 0) == state->columnHeadingFont,
+				true
+			);
+		}
+	}
+	HWND content = state->trainingContent;
+	RECT player = controlBounds(content, state->trainingGroups[TRAINING_PLAYER]);
+	RECT ratings = controlBounds(content, state->trainingInputs[trainingIndex("ratings.work_rate")]);
+	static const char *const row[] = {
+		"condition", "fatigue", "sharpness", "morale", "training_happiness"};
+	RECT previous = {0};
+	for (unsigned i = 0; i < sizeof row / sizeof row[0]; ++i) {
+		unsigned index = trainingIndex(row[i]);
+		ASSERT_INT_EQ(trainingFields[index].section, SECTION_CONDITION);
+		RECT label = controlBounds(content, state->trainingLabels[index]);
+		RECT input = controlBounds(content, state->trainingInputs[index]);
+		ASSERT_BOOL_EQ(label.top > ratings.bottom && input.bottom < player.bottom, true);
+		ASSERT_BOOL_EQ(i == 0 || (label.top == previous.top && label.left > previous.right), true);
+		previous = input;
+	}
+	// Match experience sits under Condition, in its column.
+	unsigned experience = trainingIndex("development_period.total");
+	ASSERT_INT_EQ(trainingFields[experience].section, SECTION_CONDITION);
+	RECT condition = controlBounds(content, state->trainingLabels[trainingIndex("condition")]);
+	RECT label = controlBounds(content, state->trainingLabels[experience]);
+	RECT input = controlBounds(content, state->trainingInputs[experience]);
+	ASSERT_BOOL_EQ(label.left == condition.left && label.top > condition.bottom, true);
+	ASSERT_BOOL_EQ(input.bottom < player.bottom, true);
+}
+
+// Each input shares its label's row, inside its group, and is as wide as its legal values need.
+static void checkTrainingLayout(const WindowState *state) {
+	HWND content = state->trainingContent;
+	RECT page;
+	GetClientRect(state->trainingPage, &page);
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		RECT label = controlBounds(content, state->trainingLabels[i]);
+		RECT input = controlBounds(content, state->trainingInputs[i]);
+		RECT group = controlBounds(content, state->trainingGroups[trainingSections[trainingFields[i].section].group]);
+		ASSERT_BOOL_EQ(label.top == input.top && label.right <= input.left, true);
+		ASSERT_BOOL_EQ(contains(group, input) && label.left > group.left, true);
+		ASSERT_BOOL_EQ(input.right < page.right, true);
+		ASSERT_INT_EQ(input.bottom - input.top, scaled(state, 28));
+		ASSERT_BOOL_EQ(
+			(HFONT)SendMessageW(state->trainingLabels[i], WM_GETFONT, 0, 0) == state->font, true
+		);
+		ASSERT_BOOL_EQ(
+			(HFONT)SendMessageW(state->trainingInputs[i], WM_GETFONT, 0, 0) == state->font, true
+		);
+	}
+	for (unsigned group = 1; group < TRAINING_GROUP_COUNT; ++group) {
+		RECT above = controlBounds(content, state->trainingGroups[group - 1]);
+		RECT below = controlBounds(content, state->trainingGroups[group]);
+		ASSERT_BOOL_EQ(above.bottom < below.top, true);
+	}
+	// The ratings table: five columns left to right, sharing rows.
+	static const char *const firsts[] = {
+		"ratings.pos_gk", "ratings.aerial_reach", "ratings.corners", "ratings.aggression", "ratings.acceleration"};
+	for (unsigned column = 1; column < TRAINING_COLUMN_LIMIT; ++column) {
+		RECT left = controlBounds(content, state->trainingInputs[trainingIndex(firsts[column - 1])]);
+		RECT right = controlBounds(content, state->trainingLabels[trainingIndex(firsts[column])]);
+		RECT heading = controlBounds(content, state->trainingHeadings[SECTION_RATINGS][column]);
+		ASSERT_BOOL_EQ(left.right < right.left && left.top == right.top, true);
+		ASSERT_BOOL_EQ(heading.left == right.left && heading.bottom <= right.top, true);
+	}
+	int small = controlWidth(content, state->trainingInputs[trainingIndex("training_facilities")]);
+	int medium = controlWidth(content, state->trainingInputs[trainingIndex("condition")]);
+	int large = controlWidth(content, state->trainingInputs[trainingIndex("fatigue")]);
+	int session = controlWidth(content, state->trainingInputs[trainingIndex("schedule.week1.day1.slot1")]);
+	ASSERT_BOOL_EQ(small < medium && medium < large && large < session, true);
+	ASSERT_INT_EQ(controlWidth(content, state->trainingInputs[trainingIndex("ratings.pos_st")]), small);
+	// "Use in-game schedule?" sits inside the Schedule group, above the slots' headings.
+	RECT inGame = controlBounds(content, state->trainingInGame);
+	RECT heading = controlBounds(content, state->trainingHeadings[SECTION_SCHEDULE][0]);
+	ASSERT_BOOL_EQ(contains(controlBounds(content, state->trainingGroups[TRAINING_SCHEDULE]), inGame), true);
+	ASSERT_BOOL_EQ(inGame.bottom <= heading.top, true);
+	checkTrainingHeadings(state);
+}
+
+// The Training tab's Player tab holds the player search and form; its Simulation tab is empty.
+static void checkTrainingTabs(HWND window, WindowState *state) {
+	ASSERT_INT_EQ(TabCtrl_GetItemCount(state->trainingTabs), 2);
+	ASSERT_INT_EQ(TabCtrl_GetCurSel(state->trainingTabs), 0);
+	wchar_t text[32] = {0};
+	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = text, .cchTextMax = 32};
+	ASSERT_BOOL_EQ(SendMessageW(state->trainingTabs, TCM_GETITEMW, 0, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Player"), 0);
+	ASSERT_BOOL_EQ(SendMessageW(state->trainingTabs, TCM_GETITEMW, 1, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Simulation"), 0);
+	ASSERT_BOOL_EQ(
+		(HFONT)SendMessageW(state->trainingTabs, WM_GETFONT, 0, 0) == state->font, true
+	);
+	NMHDR notification = {.hwndFrom = state->trainingTabs, .code = (UINT)TCN_SELCHANGE};
+	TabCtrl_SetCurSel(state->trainingTabs, 1);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0, true);
+	ASSERT_BOOL_EQ(controlVisible(state->trainingTabs) && controlVisible(state->trainingSummary), true);
+	ASSERT_BOOL_EQ(controlVisible(state->trainingPicker) || controlVisible(state->trainingPage), false);
+	MSG key = {.hwnd = state->trainingTabs, .message = WM_KEYDOWN, .wParam = VK_NEXT};
+	ASSERT_BOOL_EQ(handleKey(window, state, &key), false);
+	changeMainTab(window, state, 0);
+	ASSERT_BOOL_EQ(controlVisible(state->trainingTabs), false);
+	TabCtrl_SetCurSel(state->mainTabs, 1);
+	TabCtrl_SetCurSel(state->trainingTabs, 0);
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0, true);
+	checkTrainingVisible(window, state);
+}
+
+static void checkTrainingForm(HWND window, WindowState *state) {
+	checkTrainingFields();
+	ASSERT_BOOL_EQ(controlVisible(state->trainingPage), false);
+	checkTrainingControls(state);
+	firstLine(state->trainingSummary, L"This development object is not saved. Click here to export it.");
+	changeMainTab(window, state, 1);
+	HWND open = state->trainingFileButtons[FILE_OPEN_BUTTON];
+	HWND save = state->trainingFileButtons[FILE_SAVE_BUTTON];
+	ASSERT_BOOL_EQ(GetNextDlgTabItem(window, state->mainTabs, FALSE) == state->trainingSummary, true);
+	ASSERT_BOOL_EQ(GetNextDlgTabItem(window, state->trainingSummary, FALSE) == open, true);
+	ASSERT_BOOL_EQ(GetNextDlgTabItem(window, open, FALSE) == save, true);
+	ASSERT_BOOL_EQ(GetNextDlgTabItem(window, save, FALSE) == state->trainingTabs, true);
+	ASSERT_BOOL_EQ(
+		GetNextDlgTabItem(window, state->trainingTabs, FALSE) == state->trainingPicker, true
+	);
+	ASSERT_BOOL_EQ(
+		GetNextDlgTabItem(window, state->trainingPicker, FALSE) == state->trainingInputs[0], true
+	);
+	checkTrainingTabs(window, state);
+	// An empty form keeps the club's schedule: ticked, the slots hidden; cleared, they show.
+	ASSERT_BOOL_EQ(inGameSchedule(state) && !slotsVisible(state), true);
+	clickInGame(state);
+	ASSERT_BOOL_EQ(!inGameSchedule(state) && slotsVisible(state) && state->trainingDirty, true);
+	unsigned firstSlot = trainingIndex("schedule.week1.day1.slot1");
+	for (unsigned i = 1; i < TRAINING_FIELD_COUNT; ++i) {
+		HWND previous = i == firstSlot ? state->trainingInGame : state->trainingInputs[i - 1];
+		ASSERT_BOOL_EQ(GetNextDlgTabItem(window, previous, FALSE) == state->trainingInputs[i], true);
+	}
+	ASSERT_BOOL_EQ(
+		GetNextDlgTabItem(window, state->trainingInputs[firstSlot - 1], FALSE) == state->trainingInGame,
+		true
+	);
+	static const char *const names[] = {"fatigue", "ability_carry", "schedule.week1.day7.slot3"};
+	static const wchar_t *const values[] = {L"-58", L"ABCDEF01", L"Team Rest"};
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[trainingIndex(names[0])], values[0]), true);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[trainingIndex(names[1])], values[1]), true);
+	HWND rest = state->trainingInputs[trainingIndex(names[2])];
+	ASSERT_BOOL_EQ(SendMessageW(rest, CB_SELECTSTRING, (WPARAM)-1, (LPARAM)values[2]) >= 0, true);
 	static const UINT resolutions[] = {96, 144};
 	for (unsigned resolution = 0; resolution < 2; ++resolution) {
 		state->dpi = resolutions[resolution];
-		ASSERT_BOOL_EQ(setFonts(state), true);
-		ASSERT_BOOL_EQ(
-			SetWindowPos(
-				window, NULL, 0, 0, scaled(state, 900), scaled(state, 600), SWP_NOMOVE | SWP_NOZORDER
-			),
-			true
-		);
+		ASSERT_BOOL_EQ(setFonts(state) && setMetadata(state), true);
+		minimumSize(window);
 		layout(window, state);
+		checkTrainingLayout(state);
+		RECT form = controlBounds(window, state->trainingPage);
+		RECT openBounds = controlBounds(window, open);
+		RECT saveBounds = controlBounds(window, save);
+		RECT tabs = controlBounds(window, state->trainingTabs);
+		RECT summary = controlBounds(window, state->trainingSummary);
+		ASSERT_BOOL_EQ(openBounds.right < saveBounds.left && saveBounds.bottom < tabs.top, true);
+		ASSERT_BOOL_EQ(summary.right < openBounds.left && summary.bottom < tabs.top, true);
+		ASSERT_BOOL_EQ(openBounds.top == summary.top && tabs.top < form.top, true);
+		ASSERT_INT_EQ(saveBounds.right, tabs.right - scaled(state, 12));
 		RECT page;
 		GetClientRect(state->trainingPage, &page);
-		RECT content;
-		GetClientRect(state->trainingContent, &content);
-		for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
-			RECT label = controlBounds(state->trainingContent, state->trainingLabels[i]);
-			RECT input = controlBounds(state->trainingContent, state->trainingInputs[i]);
-			ASSERT_BOOL_EQ(label.left > 0 && label.right < content.right, true);
-			ASSERT_BOOL_EQ(label.bottom < input.top, true);
-			ASSERT_BOOL_EQ(input.left == label.left && input.right == label.right, true);
-			ASSERT_BOOL_EQ(input.bottom < content.bottom, true);
-			ASSERT_INT_EQ(input.bottom - input.top, scaled(state, 28));
-			ASSERT_BOOL_EQ(
-				(HFONT)SendMessageW(state->trainingLabels[i], WM_GETFONT, 0, 0) == state->font, true
-			);
-			ASSERT_BOOL_EQ(
-				(HFONT)SendMessageW(state->trainingInputs[i], WM_GETFONT, 0, 0) == state->font, true
-			);
-		}
 		SendMessageW(state->trainingPage, WM_VSCROLL, SB_BOTTOM, 0);
 		ASSERT_BOOL_EQ(GetScrollPos(state->trainingPage, SB_VERT) > 0, true);
 		RECT last = controlBounds(state->trainingPage, state->trainingInputs[TRAINING_FIELD_COUNT - 1]);
@@ -1008,6 +1758,15 @@ static void checkTrainingForm(HWND window, WindowState *state) {
 			);
 			ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), i == 0 ? 0 : scaled(state, 96));
 		}
+		// The wheel over a closed session drop-down scrolls the form and keeps the session.
+		LRESULT selected = SendMessageW(rest, CB_GETCURSEL, 0, 0);
+		MSG wheel = {.hwnd = rest, .message = WM_MOUSEWHEEL, .wParam = MAKEWPARAM(0, (WORD)-WHEEL_DELTA)};
+		ASSERT_BOOL_EQ(handleKey(window, state, &wheel), true);
+		ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), scaled(state, 192));
+		ASSERT_BOOL_EQ(SendMessageW(rest, CB_GETCURSEL, 0, 0) == selected, true);
+		wheel.wParam = MAKEWPARAM(0, WHEEL_DELTA);
+		ASSERT_BOOL_EQ(handleKey(window, state, &wheel), true);
+		ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), scaled(state, 96));
 		MSG key = {.hwnd = state->trainingInputs[0], .message = WM_KEYDOWN, .wParam = VK_NEXT};
 		ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
 		ASSERT_BOOL_EQ(GetScrollPos(state->trainingPage, SB_VERT) > scaled(state, 96), true);
@@ -1018,19 +1777,17 @@ static void checkTrainingForm(HWND window, WindowState *state) {
 		changeMainTab(window, state, 1);
 		ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), scaled(state, 96));
 	}
-	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
-		for (unsigned j = 0; j < sizeof names / sizeof names[0]; ++j) {
-			if (wcscmp(trainingFields[i], names[j]) == 0) {
-				wchar_t text[32] = {0};
-				ASSERT_BOOL_EQ(GetWindowTextW(state->trainingInputs[i], text, 32) > 0, true);
-				ASSERT_INT_EQ(wcscmp(text, values[j]), 0);
-			}
-		}
+	for (unsigned j = 0; j < sizeof names / sizeof names[0]; ++j) {
+		wchar_t text[32] = {0};
+		ASSERT_BOOL_EQ(GetWindowTextW(state->trainingInputs[trainingIndex(names[j])], text, 32) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, values[j]), 0);
 	}
 	ASSERT_BOOL_EQ(state->venueDirty || fixtureData_hasPlayerEdits(&state->playerEdits), false);
 	ASSERT_BOOL_EQ(state->simulationThread || state->fileThread || state->replacementThread, false);
+	ASSERT_BOOL_EQ(state->trainingDirty, true);
+	checkDevelopmentFiles(window, state);
 	state->dpi = 96;
-	ASSERT_BOOL_EQ(setFonts(state), true);
+	ASSERT_BOOL_EQ(setFonts(state) && setMetadata(state), true);
 	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
 	layout(window, state);
 	changeMainTab(window, state, 0);
@@ -2208,6 +2965,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	changeTab(window, &state, 0);
 	changeTab(window, &state, 1);
 	changeTab(window, &state, 2);
+	minimumSize(window);
 	layout(window, &state);
 	checkPageLayout(window, &state);
 	state.dpi = 144;
@@ -2216,7 +2974,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	layout(window, &state);
 	checkPageLayout(window, &state);
 	state.dpi = 96;
-	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
+	minimumSize(window);
 	ASSERT_BOOL_EQ(setFonts(&state), true);
 	layout(window, &state);
 
@@ -2482,6 +3240,7 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	ASSERT_BOOL_EQ(DestroyWindow(window), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.font), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.headingFont), true);
+	ASSERT_BOOL_EQ(DeleteObject(state.columnHeadingFont), true);
 	ASSERT_BOOL_EQ(UnregisterClassW(pitchClass, instance), true);
 
 	static const unsigned long limits[] = {1, HARNESS_MAX_THREADS};
@@ -2715,6 +3474,7 @@ static void checkFileOperations(FixtureData *data) {
 	ASSERT_BOOL_EQ(DestroyWindow(window), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.font), true);
 	ASSERT_BOOL_EQ(DeleteObject(state.headingFont), true);
+	ASSERT_BOOL_EQ(DeleteObject(state.columnHeadingFont), true);
 	ASSERT_BOOL_EQ(UnregisterClassW(pitchClass, instance), true);
 	ASSERT_BOOL_EQ(DeleteFileW(json), true);
 	ASSERT_BOOL_EQ(DeleteFileW(binary), true);
