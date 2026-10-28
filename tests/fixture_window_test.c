@@ -750,6 +750,66 @@ static void changeTab(HWND window, WindowState *state, int tab) {
 	}
 }
 
+static void checkTrainingVisible(HWND window, const WindowState *state) {
+	for (HWND child = GetWindow(window, GW_CHILD); child; child = GetWindow(child, GW_HWNDNEXT)) {
+		ASSERT_BOOL_EQ(controlVisible(child), child == state->mainTabs || child == state->trainingPage);
+	}
+}
+
+static void changeMainTab(HWND window, WindowState *state, int tab) {
+	TabCtrl_SetCurSel(state->mainTabs, tab);
+	NMHDR notification = {.hwndFrom = state->mainTabs, .code = (UINT)TCN_SELCHANGE};
+	ASSERT_BOOL_EQ(windowProcedure(window, WM_NOTIFY, 0, (LPARAM)&notification) == 0, true);
+	ASSERT_BOOL_EQ(controlVisible(state->mainTabs), true);
+	ASSERT_BOOL_EQ(controlVisible(state->trainingPage), tab == 1);
+	if (tab == 1) {
+		checkTrainingVisible(window, state);
+	}
+}
+
+static void checkMainTabs(HWND window, WindowState *state) {
+	ASSERT_INT_EQ(TabCtrl_GetItemCount(state->mainTabs), 2);
+	ASSERT_INT_EQ(TabCtrl_GetCurSel(state->mainTabs), 0);
+	wchar_t text[32] = {0};
+	TCITEMW tab = {.mask = TCIF_TEXT, .pszText = text, .cchTextMax = 32};
+	ASSERT_BOOL_EQ(SendMessageW(state->mainTabs, TCM_GETITEMW, 0, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Match"), 0);
+	ASSERT_BOOL_EQ(SendMessageW(state->mainTabs, TCM_GETITEMW, 1, (LPARAM)&tab), true);
+	ASSERT_INT_EQ(wcscmp(text, L"Training"), 0);
+	ASSERT_BOOL_EQ(GetWindowLongW(state->mainTabs, GWL_STYLE) & WS_TABSTOP, true);
+	ASSERT_BOOL_EQ((HFONT)SendMessageW(state->mainTabs, WM_GETFONT, 0, 0) == state->font, true);
+	ASSERT_BOOL_EQ(SetWindowTextW(state->simulation[SIM_SEEDS], L"1,4-7"), true);
+	for (int inner = 0; inner < 3; ++inner) {
+		changeTab(window, state, inner);
+		changeMainTab(window, state, 1);
+		layout(window, state);
+		ASSERT_INT_EQ(TabCtrl_GetCurSel(state->tabs), inner);
+		changeMainTab(window, state, 0);
+		ASSERT_BOOL_EQ(controlVisible(state->metadata) && controlVisible(state->tabs), true);
+		ASSERT_INT_EQ(TabCtrl_GetCurSel(state->tabs), inner);
+		changeTab(window, state, inner);
+		ASSERT_BOOL_EQ(GetWindowTextW(state->simulation[SIM_SEEDS], text, 32) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, L"1,4-7"), 0);
+	}
+	ASSERT_BOOL_EQ(SetWindowTextW(state->simulation[SIM_SEEDS], L""), true);
+	changeTab(window, state, 0);
+	state->editingTeam[0] = true;
+	ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[0][TEAM_ERROR], L"Replacement failed"), true);
+	selectTab(state);
+	changeMainTab(window, state, 1);
+	teamError(window, state, 0, "Replacement failed");
+	ASSERT_BOOL_EQ(controlVisible(state->teamControls[0][TEAM_ERROR]), false);
+	MSG key = {.hwnd = state->mainTabs, .message = WM_KEYDOWN, .wParam = VK_ESCAPE};
+	ASSERT_BOOL_EQ(handleKey(window, state, &key), false);
+	ASSERT_BOOL_EQ(state->editingTeam[0], true);
+	changeMainTab(window, state, 0);
+	ASSERT_BOOL_EQ(controlVisible(state->teamControls[0][TEAM_INPUT]), true);
+	ASSERT_BOOL_EQ(controlVisible(state->teamControls[0][TEAM_ERROR]), true);
+	state->editingTeam[0] = false;
+	ASSERT_BOOL_EQ(SetWindowTextW(state->teamControls[0][TEAM_ERROR], L""), true);
+	selectTab(state);
+}
+
 static void clickSimulate(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(
 		windowProcedure(
@@ -807,9 +867,23 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 	checkFileButtonLayout(window, state);
 	RECT client = {0};
 	ASSERT_BOOL_EQ(GetClientRect(window, &client), true);
+	RECT mainTabs = controlBounds(window, state->mainTabs);
+	ASSERT_INT_EQ(mainTabs.left, scaled(state, 12));
+	ASSERT_INT_EQ(mainTabs.top, scaled(state, 12));
+	ASSERT_INT_EQ(mainTabs.right, client.right - scaled(state, 12));
+	ASSERT_INT_EQ(mainTabs.bottom, client.bottom - scaled(state, 12));
+	RECT match = {0};
+	ASSERT_BOOL_EQ(GetClientRect(state->mainTabs, &match), true);
+	TabCtrl_AdjustRect(state->mainTabs, FALSE, &match);
+	MapWindowPoints(state->mainTabs, window, (POINT *)&match, 2);
+	RECT metadata = controlBounds(window, state->metadata);
+	ASSERT_BOOL_EQ(metadata.left > match.left && metadata.right < match.right, true);
+	ASSERT_BOOL_EQ(metadata.top > match.top && metadata.bottom < match.bottom, true);
 	RECT tabs = controlBounds(window, state->tabs);
+	ASSERT_BOOL_EQ(tabs.left > match.left && tabs.right < match.right, true);
+	ASSERT_BOOL_EQ(tabs.top > metadata.bottom, true);
 	ASSERT_BOOL_EQ(
-		tabs.bottom == client.bottom - scaled(state, state->simulationThread ? 24 : 12), true
+		tabs.bottom == match.bottom - scaled(state, state->simulationThread ? 24 : 12), true
 	);
 	RECT page = {0};
 	ASSERT_BOOL_EQ(GetClientRect(state->tabs, &page), true);
@@ -847,10 +921,119 @@ static void checkPageLayout(HWND window, const WindowState *state) {
 	RECT status = controlBounds(window, state->simulation[SIM_STATUS]);
 	ASSERT_BOOL_EQ(summary.top > submit.bottom && status.top > summary.bottom, true);
 	RECT progress = controlBounds(window, state->progress);
-	ASSERT_BOOL_EQ(progress.left == 0 && progress.right == client.right, true);
+	ASSERT_BOOL_EQ(progress.left == match.left && progress.right == match.right, true);
 	ASSERT_BOOL_EQ(
-		progress.bottom == client.bottom && progress.bottom - progress.top == scaled(state, 12), true
+		progress.bottom == match.bottom && progress.bottom - progress.top == scaled(state, 12), true
 	);
+}
+
+static void checkTrainingForm(HWND window, WindowState *state) {
+	ASSERT_INT_EQ(TRAINING_FIELD_COUNT, 162);
+	ASSERT_BOOL_EQ(controlVisible(state->trainingPage), false);
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		wchar_t text[128] = {0};
+		ASSERT_BOOL_EQ(GetWindowTextW(state->trainingLabels[i], text, 128) > 0, true);
+		ASSERT_INT_EQ(wcscmp(text, trainingFields[i]), 0);
+		ASSERT_INT_EQ(GetWindowTextLengthW(state->trainingInputs[i]), 0);
+		ASSERT_BOOL_EQ(GetWindowLongW(state->trainingInputs[i], GWL_STYLE) & WS_TABSTOP, true);
+		ASSERT_BOOL_EQ(IsWindowEnabled(state->trainingInputs[i]), true);
+		ASSERT_BOOL_EQ(GetParent(state->trainingInputs[i]) == state->trainingContent, true);
+	}
+	changeMainTab(window, state, 1);
+	ASSERT_BOOL_EQ(
+		GetNextDlgTabItem(window, state->mainTabs, FALSE) == state->trainingInputs[0], true
+	);
+	for (unsigned i = 1; i < TRAINING_FIELD_COUNT; ++i) {
+		ASSERT_BOOL_EQ(
+			GetNextDlgTabItem(window, state->trainingInputs[i - 1], FALSE) == state->trainingInputs[i],
+			true
+		);
+	}
+	static const wchar_t *const names[] = {
+		L"fatigue", L"ability_carry", L"schedule.week1.day7.slot3"};
+	static const wchar_t *const values[] = {L"-58", L"ABCDEF01", L"Team Rest"};
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		for (unsigned j = 0; j < sizeof names / sizeof names[0]; ++j) {
+			if (wcscmp(trainingFields[i], names[j]) == 0) {
+				ASSERT_BOOL_EQ(SetWindowTextW(state->trainingInputs[i], values[j]), true);
+			}
+		}
+	}
+	static const UINT resolutions[] = {96, 144};
+	for (unsigned resolution = 0; resolution < 2; ++resolution) {
+		state->dpi = resolutions[resolution];
+		ASSERT_BOOL_EQ(setFonts(state), true);
+		ASSERT_BOOL_EQ(
+			SetWindowPos(
+				window, NULL, 0, 0, scaled(state, 900), scaled(state, 600), SWP_NOMOVE | SWP_NOZORDER
+			),
+			true
+		);
+		layout(window, state);
+		RECT page;
+		GetClientRect(state->trainingPage, &page);
+		RECT content;
+		GetClientRect(state->trainingContent, &content);
+		for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+			RECT label = controlBounds(state->trainingContent, state->trainingLabels[i]);
+			RECT input = controlBounds(state->trainingContent, state->trainingInputs[i]);
+			ASSERT_BOOL_EQ(label.left > 0 && label.right < content.right, true);
+			ASSERT_BOOL_EQ(label.bottom < input.top, true);
+			ASSERT_BOOL_EQ(input.left == label.left && input.right == label.right, true);
+			ASSERT_BOOL_EQ(input.bottom < content.bottom, true);
+			ASSERT_INT_EQ(input.bottom - input.top, scaled(state, 28));
+			ASSERT_BOOL_EQ(
+				(HFONT)SendMessageW(state->trainingLabels[i], WM_GETFONT, 0, 0) == state->font, true
+			);
+			ASSERT_BOOL_EQ(
+				(HFONT)SendMessageW(state->trainingInputs[i], WM_GETFONT, 0, 0) == state->font, true
+			);
+		}
+		SendMessageW(state->trainingPage, WM_VSCROLL, SB_BOTTOM, 0);
+		ASSERT_BOOL_EQ(GetScrollPos(state->trainingPage, SB_VERT) > 0, true);
+		RECT last = controlBounds(state->trainingPage, state->trainingInputs[TRAINING_FIELD_COUNT - 1]);
+		ASSERT_BOOL_EQ(last.top >= 0 && last.bottom <= page.bottom, true);
+		SendMessageW(
+			state->trainingContent,
+			WM_COMMAND,
+			MAKEWPARAM(0, EN_SETFOCUS),
+			(LPARAM)state->trainingInputs[0]
+		);
+		ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), 0);
+		state->trainingWheel = 0;
+		for (unsigned i = 0; i < 2; ++i) {
+			ASSERT_BOOL_EQ(
+				windowProcedure(window, WM_MOUSEWHEEL, MAKEWPARAM(0, (WORD)(-WHEEL_DELTA / 2)), 0) == 0,
+				true
+			);
+			ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), i == 0 ? 0 : scaled(state, 96));
+		}
+		MSG key = {.hwnd = state->trainingInputs[0], .message = WM_KEYDOWN, .wParam = VK_NEXT};
+		ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
+		ASSERT_BOOL_EQ(GetScrollPos(state->trainingPage, SB_VERT) > scaled(state, 96), true);
+		key.wParam = VK_PRIOR;
+		ASSERT_BOOL_EQ(handleKey(window, state, &key), true);
+		ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), scaled(state, 96));
+		changeMainTab(window, state, 0);
+		changeMainTab(window, state, 1);
+		ASSERT_INT_EQ(GetScrollPos(state->trainingPage, SB_VERT), scaled(state, 96));
+	}
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		for (unsigned j = 0; j < sizeof names / sizeof names[0]; ++j) {
+			if (wcscmp(trainingFields[i], names[j]) == 0) {
+				wchar_t text[32] = {0};
+				ASSERT_BOOL_EQ(GetWindowTextW(state->trainingInputs[i], text, 32) > 0, true);
+				ASSERT_INT_EQ(wcscmp(text, values[j]), 0);
+			}
+		}
+	}
+	ASSERT_BOOL_EQ(state->venueDirty || fixtureData_hasPlayerEdits(&state->playerEdits), false);
+	ASSERT_BOOL_EQ(state->simulationThread || state->fileThread || state->replacementThread, false);
+	state->dpi = 96;
+	ASSERT_BOOL_EQ(setFonts(state), true);
+	ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 900, 600, SWP_NOMOVE | SWP_NOZORDER), true);
+	layout(window, state);
+	changeMainTab(window, state, 0);
 }
 
 static void checkControlColors(HWND window, HWND control, UINT message) {
@@ -1963,6 +2146,8 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 	WindowState state = {.data = data, .path = path, .filename = L"temp-fixture.json", .dpi = 96};
 	SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)&state);
 	ASSERT_BOOL_EQ(createControls(window, &state), true);
+	checkMainTabs(window, &state);
+	checkTrainingForm(window, &state);
 	checkNotes(state.metadata);
 	layout(window, &state);
 	for (unsigned side = 0; side < 2; ++side) {
@@ -2159,6 +2344,11 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
 		changeTab(window, &state, 2);
 		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
+		changeMainTab(window, &state, 1);
+		simulationProgress(window, 500, 1000, 200, 100);
+		ASSERT_BOOL_EQ(controlVisible(state.progress), false);
+		changeMainTab(window, &state, 0);
+		ASSERT_BOOL_EQ(controlVisible(state.progress), true);
 		ASSERT_BOOL_EQ(SetWindowPos(window, NULL, 0, 0, 1000, 700, SWP_NOMOVE | SWP_NOZORDER), true);
 		layout(window, &state);
 		checkPageLayout(window, &state);
@@ -2179,7 +2369,10 @@ static void checkSimulationForm(FixtureData *data, const wchar_t *path) {
 		}
 		ASSERT_BOOL_EQ(SetEvent(simulationRelease), true);
 		ASSERT_BOOL_EQ(WaitForSingleObject(worker, 5000) == WAIT_OBJECT_0, true);
+		changeMainTab(window, &state, 1);
 		ASSERT_BOOL_EQ(windowProcedure(window, WM_TIMER, SIMULATION_TIMER, 0) == 0, true);
+		checkTrainingVisible(window, &state);
+		changeMainTab(window, &state, 0);
 		ASSERT_BOOL_EQ(state.simulationThread == NULL, true);
 		ASSERT_BOOL_EQ(taskbarState == TBPF_NOPROGRESS, true);
 		ASSERT_BOOL_EQ(!controlVisible(state.progress), true);

@@ -39,7 +39,7 @@ replacement and fetching players from the game require FM24.
    fixture. Avoid interacting with FM24 while the harness is working.
 3. Open `fm24ctl.exe`. It exports the next fixture to a temporary JSON file
    and opens the UI.
-4. Save the fixture, make any edits, then use the **Simulation** tab to
+4. Save the fixture, make any edits, then use **Match > Simulation** to
    choose seeds and run matches. Results are saved beside the fixture.
 
 For comparisons with the real match, export after submitting your team and

@@ -82,6 +82,174 @@ enum {
 	SIM_CONTROL_COUNT,
 };
 
+// kellyman.json's editable values, with maps and schedule sessions expanded.
+static const wchar_t *const trainingFields[] = {
+	L"person_uid",
+	L"current_ability",
+	L"potential_ability",
+	L"ratings.pos_gk",
+	L"ratings.pos_sw",
+	L"ratings.pos_dl",
+	L"ratings.pos_dc",
+	L"ratings.pos_dr",
+	L"ratings.pos_dm",
+	L"ratings.pos_ml",
+	L"ratings.pos_mc",
+	L"ratings.pos_mr",
+	L"ratings.pos_aml",
+	L"ratings.pos_amc",
+	L"ratings.pos_amr",
+	L"ratings.pos_st",
+	L"ratings.pos_wbl",
+	L"ratings.pos_wbr",
+	L"ratings.crossing",
+	L"ratings.dribbling",
+	L"ratings.finishing",
+	L"ratings.heading",
+	L"ratings.long_shots",
+	L"ratings.marking",
+	L"ratings.off_the_ball",
+	L"ratings.passing",
+	L"ratings.penalty_taking",
+	L"ratings.tackling",
+	L"ratings.vision",
+	L"ratings.handling",
+	L"ratings.aerial_reach",
+	L"ratings.command_of_area",
+	L"ratings.communication",
+	L"ratings.kicking",
+	L"ratings.throwing",
+	L"ratings.anticipation",
+	L"ratings.decisions",
+	L"ratings.one_on_ones",
+	L"ratings.positioning",
+	L"ratings.reflexes",
+	L"ratings.first_touch",
+	L"ratings.technique",
+	L"ratings.left_foot",
+	L"ratings.right_foot",
+	L"ratings.flair",
+	L"ratings.corners",
+	L"ratings.teamwork",
+	L"ratings.work_rate",
+	L"ratings.long_throws",
+	L"ratings.eccentricity",
+	L"ratings.rushing_out",
+	L"ratings.punching",
+	L"ratings.acceleration",
+	L"ratings.free_kicks",
+	L"ratings.strength",
+	L"ratings.stamina",
+	L"ratings.pace",
+	L"ratings.jumping_reach",
+	L"ratings.leadership",
+	L"ratings.dirtiness",
+	L"ratings.balance",
+	L"ratings.bravery",
+	L"ratings.consistency",
+	L"ratings.aggression",
+	L"ratings.agility",
+	L"ratings.important_matches",
+	L"ratings.injury_proneness",
+	L"ratings.versatility",
+	L"ratings.natural_fitness",
+	L"ratings.determination",
+	L"ratings.composure",
+	L"ratings.concentration",
+	L"training_intensity",
+	L"height",
+	L"weight",
+	L"personality.adaptability",
+	L"personality.ambition",
+	L"personality.loyalty",
+	L"personality.pressure",
+	L"personality.professionalism",
+	L"personality.sportsmanship",
+	L"personality.temperament",
+	L"personality.controversy",
+	L"date_of_birth.day",
+	L"date_of_birth.year",
+	L"coaching.strength",
+	L"coaching.quickness",
+	L"coaching.gk_shot_stopping",
+	L"coaching.gk_handling",
+	L"coaching.defending",
+	L"coaching.tackling",
+	L"coaching.tactics",
+	L"coaching.ball_control",
+	L"coaching.attacking",
+	L"coaching.shooting",
+	L"coaching.set_pieces",
+	L"coach_workload.strength",
+	L"coach_workload.quickness",
+	L"coach_workload.gk_shot_stopping",
+	L"coach_workload.gk_handling",
+	L"coach_workload.defending",
+	L"coach_workload.tackling",
+	L"coach_workload.tactics",
+	L"coach_workload.ball_control",
+	L"coach_workload.attacking",
+	L"coach_workload.shooting",
+	L"coach_workload.set_pieces",
+	L"training_facilities",
+	L"schedule.week1.day1.slot1",
+	L"schedule.week1.day1.slot2",
+	L"schedule.week1.day1.slot3",
+	L"schedule.week1.day2.slot1",
+	L"schedule.week1.day2.slot2",
+	L"schedule.week1.day2.slot3",
+	L"schedule.week1.day3.slot1",
+	L"schedule.week1.day3.slot2",
+	L"schedule.week1.day3.slot3",
+	L"schedule.week1.day4.slot1",
+	L"schedule.week1.day4.slot2",
+	L"schedule.week1.day4.slot3",
+	L"schedule.week1.day5.slot1",
+	L"schedule.week1.day5.slot2",
+	L"schedule.week1.day5.slot3",
+	L"schedule.week1.day6.slot1",
+	L"schedule.week1.day6.slot2",
+	L"schedule.week1.day6.slot3",
+	L"schedule.week1.day7.slot1",
+	L"schedule.week1.day7.slot2",
+	L"schedule.week1.day7.slot3",
+	L"training_progress.strength",
+	L"training_progress.quickness",
+	L"training_progress.gk_shot_stopping",
+	L"training_progress.gk_handling",
+	L"training_progress.defending",
+	L"training_progress.tackling",
+	L"training_progress.tactics",
+	L"training_progress.ball_control",
+	L"training_progress.attacking",
+	L"training_progress.shooting",
+	L"training_progress.set_pieces",
+	L"condition",
+	L"fatigue",
+	L"sharpness",
+	L"morale",
+	L"training_happiness",
+	L"training_happiness.unknown_08",
+	L"last_development.gains",
+	L"last_development.other_gains",
+	L"weak_foot_progress",
+	L"development_period.total",
+	L"development_period.last_total",
+	L"development_period.last_count",
+	L"development_period.count",
+	L"rating_progress.important_matches",
+	L"rating_progress.determination",
+	L"personality_progress.pressure",
+	L"personality_progress.professionalism",
+	L"played_level",
+	L"played_level.appearances",
+	L"development_flags",
+	L"training_rating",
+	L"ability_carry",
+};
+
+enum { TRAINING_FIELD_COUNT = sizeof trainingFields / sizeof trainingFields[0] };
+
 typedef struct SimulationJob {
 	wchar_t input[HARNESS_PATH_LENGTH];
 	FixtureNumber venueValues[VENUE_FIELD_COUNT];
@@ -159,6 +327,12 @@ typedef struct WindowState {
 	const wchar_t *path;
 	const wchar_t *filename;
 	wchar_t savedFilename[HARNESS_PATH_LENGTH];
+	HWND mainTabs;
+	HWND trainingPage;
+	HWND trainingContent;
+	HWND trainingLabels[TRAINING_FIELD_COUNT];
+	HWND trainingInputs[TRAINING_FIELD_COUNT];
+	int trainingWheel;
 	HWND metadata;
 	HWND fileButtons[FILE_CONTROL_COUNT];
 	HWND tabs;
@@ -664,7 +838,7 @@ static void startSimulation(HWND window, WindowState *state) {
 	enablePlayers(state);
 	SendMessageW(state->progress, PBM_SETRANGE32, 0, 1);
 	SendMessageW(state->progress, PBM_SETPOS, 0, 0);
-	ShowWindow(state->progress, SW_SHOW);
+	ShowWindow(state->progress, TabCtrl_GetCurSel(state->mainTabs) == 0 ? SW_SHOW : SW_HIDE);
 	layout(window, state);
 	SetFocus(state->tabs);
 	SetWindowTextW(
@@ -742,7 +916,15 @@ static void showSquad(const WindowState *state, unsigned side, bool show) {
 }
 
 static void selectTab(WindowState *state) {
-	int tab = TabCtrl_GetCurSel(state->tabs);
+	bool match = TabCtrl_GetCurSel(state->mainTabs) == 0;
+	ShowWindow(state->trainingPage, match ? SW_HIDE : SW_SHOW);
+	ShowWindow(state->metadata, match ? SW_SHOW : SW_HIDE);
+	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
+		ShowWindow(state->fileButtons[i], match ? SW_SHOW : SW_HIDE);
+	}
+	ShowWindow(state->tabs, match ? SW_SHOW : SW_HIDE);
+	ShowWindow(state->progress, match && state->simulationThread ? SW_SHOW : SW_HIDE);
+	int tab = match ? TabCtrl_GetCurSel(state->tabs) : -1;
 	bool simulation = tab == 2;
 	for (unsigned i = 0; i < 2; ++i) {
 		showSquad(state, i, tab == 0);
@@ -1315,9 +1497,8 @@ static void teamError(HWND window, WindowState *state, unsigned side, const char
 			state->teamControls[side][TEAM_ERROR], L"Cannot display replacement error (invalid UTF-8)."
 		);
 	}
-	ShowWindow(
-		state->teamControls[side][TEAM_ERROR], TabCtrl_GetCurSel(state->tabs) == 0 ? SW_SHOW : SW_HIDE
-	);
+	bool visible = TabCtrl_GetCurSel(state->mainTabs) == 0 && TabCtrl_GetCurSel(state->tabs) == 0;
+	ShowWindow(state->teamControls[side][TEAM_ERROR], visible ? SW_SHOW : SW_HIDE);
 	layout(window, state);
 }
 
@@ -2265,7 +2446,9 @@ static void checkReplacement(HWND window, WindowState *state) {
 			selectTab(state);
 			layout(window, state);
 			HWND focus = job->swap ? state->lists[side] : state->teamControls[side][TEAM_ICON];
-			SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? focus : state->tabs);
+			if (TabCtrl_GetCurSel(state->mainTabs) == 0) {
+				SetFocus(TabCtrl_GetCurSel(state->tabs) == 0 ? focus : state->tabs);
+			}
 		}
 	} else if (job->swap) {
 		// The prompt's checkbox stands for inject-player's --allow-duplicate.
@@ -2280,7 +2463,7 @@ static void checkReplacement(HWND window, WindowState *state) {
 		showFileError(window, job->error);
 	} else {
 		teamError(window, state, side, job->error);
-		if (TabCtrl_GetCurSel(state->tabs) == 0) {
+		if (TabCtrl_GetCurSel(state->mainTabs) == 0 && TabCtrl_GetCurSel(state->tabs) == 0) {
 			SetFocus(state->teamControls[side][TEAM_INPUT]);
 		}
 	}
@@ -2395,7 +2578,7 @@ startFileJob(HWND window, WindowState *state, const wchar_t *path, bool save, bo
 		return false;
 	}
 	enableFileControls(state, FALSE);
-	SetFocus(state->tabs);
+	SetFocus(TabCtrl_GetCurSel(state->mainTabs) == 0 ? state->tabs : state->mainTabs);
 	return true;
 }
 
@@ -2654,6 +2837,11 @@ static bool setFonts(WindowState *state) {
 		SendMessageW(state->fileButtons[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
 	SendMessageW(state->tabs, WM_SETFONT, (WPARAM)font, TRUE);
+	SendMessageW(state->mainTabs, WM_SETFONT, (WPARAM)font, TRUE);
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		SendMessageW(state->trainingLabels[i], WM_SETFONT, (WPARAM)font, TRUE);
+		SendMessageW(state->trainingInputs[i], WM_SETFONT, (WPARAM)font, TRUE);
+	}
 	for (unsigned i = 0; i < SIM_CONTROL_COUNT; ++i) {
 		SendMessageW(state->simulation[i], WM_SETFONT, (WPARAM)font, TRUE);
 	}
@@ -2736,39 +2924,238 @@ static int placePlayerActions(WindowState *state, unsigned side, int right, int 
 	return actionsWidth;
 }
 
+static void scrollTraining(const WindowState *state, int position) {
+	SCROLLINFO scroll = {.cbSize = sizeof scroll, .fMask = SIF_POS, .nPos = position};
+	int offset = SetScrollInfo(state->trainingPage, SB_VERT, &scroll, TRUE);
+	SetWindowPos(
+		state->trainingContent, NULL, 0, -offset, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+	);
+}
+
+static void layoutTraining(const WindowState *state) {
+	RECT bounds;
+	GetClientRect(state->trainingPage, &bounds);
+	int margin = scaled(state, 12);
+	int columnCount = bounds.right / scaled(state, 400);
+	columnCount = columnCount < 1 ? 1 : columnCount > 3 ? 3 : columnCount;
+	int width = (bounds.right - margin) / columnCount;
+	int rowHeight = scaled(state, 64);
+	int height = 2 * margin + (TRAINING_FIELD_COUNT + columnCount - 1) / columnCount * rowHeight;
+	SCROLLINFO scroll = {.cbSize = sizeof scroll,
+		.fMask = SIF_RANGE | SIF_PAGE | SIF_DISABLENOSCROLL,
+		.nMax = height - 1,
+		.nPage = (UINT)bounds.bottom};
+	SetScrollInfo(state->trainingPage, SB_VERT, &scroll, TRUE);
+	MoveWindow(
+		state->trainingContent,
+		0,
+		-GetScrollPos(state->trainingPage, SB_VERT),
+		bounds.right,
+		height,
+		TRUE
+	);
+	for (int i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		int x = margin + i % columnCount * width;
+		int y = margin + i / columnCount * rowHeight;
+		MoveWindow(state->trainingLabels[i], x, y, width - margin, scaled(state, 22), TRUE);
+		MoveWindow(
+			state->trainingInputs[i], x, y + scaled(state, 24), width - margin, scaled(state, 28), TRUE
+		);
+	}
+}
+
+static LRESULT CALLBACK trainingProcedure(
+	HWND window,
+	UINT message,
+	WPARAM wParam,
+	LPARAM lParam,
+	UINT_PTR subclass,
+	DWORD_PTR reference
+) {
+	// NOLINTNEXTLINE(performance-no-int-to-ptr): the subclass retains the viewer's state.
+	WindowState *state = (WindowState *)reference;
+	switch (message) {
+		case WM_VSCROLL: {
+			SCROLLINFO scroll = {.cbSize = sizeof scroll, .fMask = SIF_ALL};
+			GetScrollInfo(state->trainingPage, SB_VERT, &scroll);
+			int position = scroll.nPos;
+			switch (LOWORD(wParam)) {
+				case SB_LINEUP: position -= scaled(state, 32); break;
+				case SB_LINEDOWN: position += scaled(state, 32); break;
+				case SB_PAGEUP: position -= (int)scroll.nPage; break;
+				case SB_PAGEDOWN: position += (int)scroll.nPage; break;
+				case SB_THUMBTRACK:
+				case SB_THUMBPOSITION: position = scroll.nTrackPos; break;
+				case SB_TOP: position = scroll.nMin; break;
+				case SB_BOTTOM: position = scroll.nMax; break;
+				default: return 0;
+			}
+			scrollTraining(state, position);
+			return 0;
+		}
+		case WM_MOUSEWHEEL:
+			state->trainingWheel += (short)HIWORD(wParam);
+			scrollTraining(
+				state,
+				GetScrollPos(state->trainingPage, SB_VERT) -
+					state->trainingWheel / WHEEL_DELTA * scaled(state, 96)
+			);
+			state->trainingWheel %= WHEEL_DELTA;
+			return 0;
+		case WM_COMMAND:
+			if (HIWORD(wParam) == EN_SETFOCUS) {
+				RECT input;
+				RECT page;
+				// NOLINTNEXTLINE(performance-no-int-to-ptr): lParam is the edit control's HWND.
+				GetWindowRect((HWND)lParam, &input);
+				MapWindowPoints(NULL, state->trainingPage, (POINT *)&input, 2);
+				GetClientRect(state->trainingPage, &page);
+				int offset = input.top < 0                ? input.top - scaled(state, 36)
+										 : input.bottom > page.bottom ? input.bottom - page.bottom
+																									: 0;
+				if (offset) {
+					scrollTraining(state, GetScrollPos(state->trainingPage, SB_VERT) + offset);
+				}
+			}
+			return 0;
+		case WM_CTLCOLORSTATIC:
+		case WM_CTLCOLORBTN:
+			return SendMessageW(GetParent(state->trainingPage), message, wParam, lParam);
+		case WM_NCDESTROY: RemoveWindowSubclass(window, trainingProcedure, subclass); break;
+		default: break;
+	}
+	return DefSubclassProc(window, message, wParam, lParam);
+}
+
+static bool createTrainingControls(HWND window, WindowState *state) {
+	HINSTANCE instance = GetModuleHandleW(NULL);
+	state->trainingPage = CreateWindowExW(
+		WS_EX_CONTROLPARENT,
+		L"STATIC",
+		L"",
+		WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		NULL
+	);
+	if (!state->trainingPage) {
+		return false;
+	}
+	state->trainingContent = CreateWindowExW(
+		WS_EX_CONTROLPARENT,
+		L"STATIC",
+		L"",
+		WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+		0,
+		0,
+		0,
+		0,
+		state->trainingPage,
+		NULL,
+		instance,
+		NULL
+	);
+	if (!state->trainingContent ||
+			!SetWindowSubclass(state->trainingPage, trainingProcedure, 0, (DWORD_PTR)state) ||
+			!SetWindowSubclass(state->trainingContent, trainingProcedure, 0, (DWORD_PTR)state)) {
+		return false;
+	}
+	for (unsigned i = 0; i < TRAINING_FIELD_COUNT; ++i) {
+		state->trainingLabels[i] = CreateWindowExW(
+			0,
+			L"STATIC",
+			trainingFields[i],
+			WS_CHILD | WS_VISIBLE | SS_NOPREFIX,
+			0,
+			0,
+			0,
+			0,
+			state->trainingContent,
+			NULL,
+			instance,
+			NULL
+		);
+		state->trainingInputs[i] = CreateWindowExW(
+			WS_EX_CLIENTEDGE,
+			L"EDIT",
+			L"",
+			WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+			0,
+			0,
+			0,
+			0,
+			state->trainingContent,
+			NULL,
+			instance,
+			NULL
+		);
+		if (!state->trainingLabels[i] || !state->trainingInputs[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
 static void layout(HWND window, WindowState *state) {
 	RECT bounds;
 	GetClientRect(window, &bounds);
 	int margin = scaled(state, 12);
-	int width = bounds.right - 2 * margin;
+	MoveWindow(
+		state->mainTabs, margin, margin, bounds.right - 2 * margin, bounds.bottom - 2 * margin, TRUE
+	);
+	GetClientRect(state->mainTabs, &bounds);
+	TabCtrl_AdjustRect(state->mainTabs, FALSE, &bounds);
+	MapWindowPoints(state->mainTabs, window, (POINT *)&bounds, 2);
+	MoveWindow(
+		state->trainingPage,
+		bounds.left,
+		bounds.top,
+		bounds.right - bounds.left,
+		bounds.bottom - bounds.top,
+		TRUE
+	);
+	layoutTraining(state);
+	int left = bounds.left + margin;
+	int width = bounds.right - left - margin;
+	int top = bounds.top + margin;
 	int progressHeight = state->simulationThread ? scaled(state, 12) : 0;
 	MoveWindow(
-		state->progress, 0, bounds.bottom - scaled(state, 12), bounds.right, scaled(state, 12), TRUE
+		state->progress,
+		bounds.left,
+		bounds.bottom - scaled(state, 12),
+		bounds.right - bounds.left,
+		scaled(state, 12),
+		TRUE
 	);
-	MoveWindow(state->metadata, margin, margin, width, state->metadataHeight, FALSE);
+	MoveWindow(state->metadata, left, top, width, state->metadataHeight, FALSE);
 	RECT textBounds;
 	GetClientRect(state->metadata, &textBounds);
 	textBounds.right -= scaled(state, 192);
 	SendMessageW(state->metadata, EM_SETRECTNP, 0, (LPARAM)&textBounds);
 	SendMessageW(state->metadata, EM_REQUESTRESIZE, 0, 0);
-	MoveWindow(state->metadata, margin, margin, width, state->metadataHeight, TRUE);
+	MoveWindow(state->metadata, left, top, width, state->metadataHeight, TRUE);
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
 		MoveWindow(
 			state->fileButtons[i],
-			margin + width - scaled(state, 180) + (int)i * scaled(state, 90),
-			margin + scaled(state, 10),
+			left + width - scaled(state, 180) + (int)i * scaled(state, 90),
+			top + scaled(state, 10),
 			scaled(state, 78),
 			scaled(state, 26),
 			TRUE
 		);
 	}
-	int top = margin + state->metadataHeight + margin;
-	MoveWindow(state->tabs, margin, top, width, bounds.bottom - top - margin - progressHeight, TRUE);
+	top += state->metadataHeight + margin;
+	MoveWindow(state->tabs, left, top, width, bounds.bottom - top - margin - progressHeight, TRUE);
 	RECT page;
 	GetClientRect(state->tabs, &page);
 	TabCtrl_AdjustRect(state->tabs, FALSE, &page);
 	MapWindowPoints(state->tabs, window, (POINT *)&page, 2);
-	int left = page.left + margin;
+	left = page.left + margin;
 	top = page.top + margin;
 	width = page.right - left - margin;
 	for (unsigned i = 0; i < VENUE_FIELD_COUNT; ++i) {
@@ -3035,6 +3422,31 @@ static bool createVenueControls(HWND window, WindowState *state) {
 
 static bool createControls(HWND window, WindowState *state) {
 	HINSTANCE instance = GetModuleHandleW(NULL);
+	state->mainTabs = CreateWindowExW(
+		0,
+		WC_TABCONTROLW,
+		L"",
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_CLIPSIBLINGS,
+		0,
+		0,
+		0,
+		0,
+		window,
+		NULL,
+		instance,
+		NULL
+	);
+	if (!state->mainTabs) {
+		return false;
+	}
+	TCITEMW mainTab = {.mask = TCIF_TEXT, .pszText = L"Match"};
+	if (SendMessageW(state->mainTabs, TCM_INSERTITEMW, 0, (LPARAM)&mainTab) == -1) {
+		return false;
+	}
+	mainTab.pszText = L"Training";
+	if (SendMessageW(state->mainTabs, TCM_INSERTITEMW, 1, (LPARAM)&mainTab) == -1) {
+		return false;
+	}
 	static const wchar_t *const fileLabels[] = {L"Open...", L"Save"};
 	// Create these first so the summary clips around them in the sibling Z order.
 	for (unsigned i = 0; i < FILE_CONTROL_COUNT; ++i) {
@@ -3197,8 +3609,8 @@ static bool createControls(HWND window, WindowState *state) {
 	}
 	bool ok = createTeamControls(window, state, 0) && createTeamControls(window, state, 1) &&
 						createVenueControls(window, state) && createSimulationControls(window, state) &&
-						setFonts(state) && setMetadata(state) && setHeadings(state) && fillList(state, 0) &&
-						fillList(state, 1);
+						createTrainingControls(window, state) && setFonts(state) && setMetadata(state) &&
+						setHeadings(state) && fillList(state, 0) && fillList(state, 1);
 	if (ok) {
 		selectTab(state);
 	}
@@ -3726,7 +4138,8 @@ actionMessage(HWND window, WindowState *state, UINT message, WPARAM wParam, LPAR
 					return playerNotification(state, (const NMLISTVIEW *)notification, side);
 				}
 			}
-			if (notification->hwndFrom == state->tabs && notification->code == (UINT)TCN_SELCHANGE) {
+			if ((notification->hwndFrom == state->mainTabs || notification->hwndFrom == state->tabs) &&
+					notification->code == (UINT)TCN_SELCHANGE) {
 				selectTab(state);
 				return 0;
 			}
@@ -3827,6 +4240,11 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 				layout(window, state);
 			}
 			return 0;
+		case WM_MOUSEWHEEL:
+			if (TabCtrl_GetCurSel(state->mainTabs) == 1) {
+				return SendMessageW(state->trainingPage, message, wParam, lParam);
+			}
+			break;
 		case WM_FIXTURE_LAYOUT:
 			state->layoutPending = false;
 			layout(window, state);
@@ -3855,8 +4273,10 @@ static LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam
 			break;
 		case WM_GETMINMAXINFO: {
 			MINMAXINFO *limits = (MINMAXINFO *)lParam;
-			limits->ptMinTrackSize.x = scaled(state, 900);
-			limits->ptMinTrackSize.y = scaled(state, 600);
+			RECT bounds = {0, 0, scaled(state, 900), scaled(state, 600)};
+			TabCtrl_AdjustRect(state->mainTabs, TRUE, &bounds);
+			limits->ptMinTrackSize.x = bounds.right - bounds.left + 2 * scaled(state, 12);
+			limits->ptMinTrackSize.y = bounds.bottom - bounds.top + 2 * scaled(state, 12);
 			return 0;
 		}
 		case WM_DPICHANGED: dpiChanged(window, state, HIWORD(wParam), (const RECT *)lParam); return 0;
@@ -3910,13 +4330,21 @@ static bool handleKey(HWND window, WindowState *state, const MSG *message) {
 	if (message->message != WM_KEYDOWN) {
 		return false;
 	}
+	if (TabCtrl_GetCurSel(state->mainTabs) == 1 &&
+			(message->wParam == VK_PRIOR || message->wParam == VK_NEXT)) {
+		SendMessageW(
+			state->trainingPage, WM_VSCROLL, message->wParam == VK_PRIOR ? SB_PAGEUP : SB_PAGEDOWN, 0
+		);
+		return true;
+	}
 	// Typing goes to a picker's own edit field.
 	unsigned side = pickerSide(state, message->hwnd);
 	if (side < 2 && (message->wParam == VK_RETURN || message->wParam == VK_ESCAPE) &&
 			SendMessageW(state->teamControls[side][TEAM_INPUT], CB_GETDROPPEDSTATE, 0, 0)) {
 		return false; // the open list takes Enter (pick) and Escape (close)
 	}
-	if (message->wParam == VK_ESCAPE && TabCtrl_GetCurSel(state->tabs) == 0) {
+	if (message->wParam == VK_ESCAPE && TabCtrl_GetCurSel(state->mainTabs) == 0 &&
+			TabCtrl_GetCurSel(state->tabs) == 0) {
 		for (unsigned editing = 0; editing < 2; ++editing) {
 			if (state->editingTeam[editing]) {
 				editTeam(window, state, editing, false);
