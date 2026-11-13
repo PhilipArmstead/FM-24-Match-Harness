@@ -354,9 +354,14 @@ Training intensity is a drop-down of Normal, Double, Half and Team workload
 with no blank: a file without it, or with another value (such as 0, which the
 game also treats as normal), opens as Normal and saves as 1. Save
 leaves out what only the game knows (the export date, the develop day and the
-player's name) and anything the tab has no input for: later schedule weeks
-and the planning entries (`match_points.monthN`, `matches.monthN`,
-`training_focus.monthN`, `injury.windowN`).
+player's name) and later schedule weeks. It writes back the opened file's
+planning entries (`matches.monthN`, `training_focus.monthN`,
+`injury.windowN`) unchanged. `match_points.month1` alone shows in the
+Simulation tab's **Match points per month**; several months show there as
+"varies by month (from file)" and are kept until you type in it, which
+replaces them all with the one value (saved as `match_points.month1`, so it
+applies to every month, the first included). Blank plans no matches after
+the first month.
 
 | Field | Values |
 |---|---|

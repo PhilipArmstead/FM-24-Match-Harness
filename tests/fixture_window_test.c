@@ -1418,6 +1418,78 @@ static void checkTrainingSimulation(HWND window, WindowState *state, const wchar
 	(void)setTrainingSummary(state);
 }
 
+static bool fileHas(const wchar_t *path, const char *part) {
+	ByteBuffer text = {0};
+	bool found = files_read(path, &text) && strstr(buffer_string(&text), part) != NULL;
+	buffer_free(&text);
+	return found;
+}
+
+// Types `text` into the match points box, notifying the window as the edit would.
+static void typePoints(HWND window, WindowState *state, const wchar_t *text) {
+	ASSERT_BOOL_EQ(SetWindowTextW(state->develop[DEVELOP_POINTS], text), true);
+	windowProcedure(window, WM_COMMAND, MAKEWPARAM(0, EN_CHANGE), (LPARAM)state->develop[DEVELOP_POINTS]);
+}
+
+// Save writes back the planning entries the form has no input for; the match points box shows one
+// month's points and replaces a month-by-month plan once edited.
+static void checkDevelopmentPlans(HWND window, WindowState *state, const wchar_t *directory) {
+	wchar_t path[HARNESS_PATH_LENGTH];
+	(void)swprintf(path, HARNESS_PATH_LENGTH, L"%lsfm24-development-plans.json", directory);
+	static const char planned[] =
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"person_uid\", \"u32\": 2000147523},\n"
+		"{\"name\": \"match_points.month1\", \"u16\": 90}, {\"name\": \"match_points.month2\", \"u16\": 30},\n"
+		"{\"name\": \"training_focus.month1\", \"u8\": 255}, {\"name\": \"injury.window1.start\", \"u16\": 30},\n"
+		"{\"name\": \"injury.window1.days\", \"u16\": 42}]}";
+	static const char others[] = ",\n    {\"name\": \"training_focus.month1\", \"u8\": 255},\n"
+															 "    {\"name\": \"injury.window1.start\", \"u16\": 30},\n"
+															 "    {\"name\": \"injury.window1.days\", \"u16\": 42}";
+	ASSERT_BOOL_EQ(files_write(path, planned, sizeof planned - 1), true);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), true);
+	wchar_t text[16] = L"x";
+	GetWindowTextW(state->develop[DEVELOP_POINTS], text, 16);
+	ASSERT_INT_EQ(wcscmp(text, L""), 0);
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), true);
+	ASSERT_BOOL_EQ(
+		fileHas(path, ",\n    {\"name\": \"match_points.month1\", \"u16\": 90},\n"
+									"    {\"name\": \"match_points.month2\", \"u16\": 30}") &&
+			fileHas(path, others),
+		true
+	);
+
+	// Typing replaces the plan with one value, which reopens in the box.
+	typePoints(window, state, L"45");
+	ASSERT_BOOL_EQ(state->trainingDirty, true);
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), true);
+	ASSERT_BOOL_EQ(fileHas(path, "{\"name\": \"match_points.month1\", \"u16\": 45}"), true);
+	ASSERT_BOOL_EQ(fileHas(path, "match_points.month2") || !fileHas(path, others), false);
+	typePoints(window, state, L"");
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), true);
+	GetWindowTextW(state->develop[DEVELOP_POINTS], text, 16);
+	ASSERT_INT_EQ(wcscmp(text, L"45"), 0);
+
+	// Out of range is refused on the Simulation tab; a cleared box plans nothing.
+	typePoints(window, state, L"70000");
+	int errors = errorMessages;
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), false);
+	ASSERT_INT_EQ(errorMessages, errors + 1);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Cannot save: Match points per month must be a number from 0 to 65535."), 0);
+	ASSERT_INT_EQ(TabCtrl_GetCurSel(state->trainingTabs), 1);
+	typePoints(window, state, L"");
+	ASSERT_BOOL_EQ(saveDevelopment(window, state, path), true);
+	ASSERT_BOOL_EQ(fileHas(path, "\"match_points.month1\"") || !fileHas(path, others), false);
+
+	static const char bad[] =
+		"{\"format\": \"fm24-development/1\", \"fields\": [{\"name\": \"person_uid\", \"u32\": 2000147523}, "
+		"{\"name\": \"matches.month1.count\", \"hex\": \"0400\"}]}";
+	ASSERT_BOOL_EQ(files_write(path, bad, sizeof bad - 1), true);
+	ASSERT_BOOL_EQ(openDevelopment(window, state, path), false);
+	ASSERT_INT_EQ(wcscmp(lastError, L"Cannot open the development file: matches.month1.count has the wrong kind of value"), 0);
+	TabCtrl_SetCurSel(state->trainingTabs, 0);
+	selectTab(state);
+	ASSERT_BOOL_EQ(DeleteFileW(path), true);
+}
+
 // Opens the repository's kellyman.json, saves it as get-development writes it less what only the
 // game knows, and refuses to save empty or out-of-range values.
 static void checkDevelopmentFiles(HWND window, WindowState *state) {
@@ -1507,6 +1579,7 @@ static void checkDevelopmentFiles(HWND window, WindowState *state) {
 	ASSERT_BOOL_EQ(DeleteFileW(refused), true);
 	checkDevelopmentExport(window, state, temporary);
 	checkBlankDevelopment(window, state, refused);
+	checkDevelopmentPlans(window, state, temporary);
 	ASSERT_BOOL_EQ(openDevelopment(window, state, saved), true);
 	ASSERT_BOOL_EQ(!state->trainingDirty && closeBlocked(window, state) == false, true);
 	checkTrainingSimulation(window, state, saved);

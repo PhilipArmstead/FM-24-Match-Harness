@@ -88,13 +88,16 @@ enum {
 	SIM_CONTROL_COUNT,
 };
 
-// The Training tab's Simulation tab: develop's months, seeds and --per-seed-breakdown.
+// The Training tab's Simulation tab: develop's months, seeds, the file's match_points.month1 and
+// --per-seed-breakdown.
 enum {
 	DEVELOP_MONTHS_LABEL,
 	DEVELOP_MONTHS,
 	DEVELOP_SPINNER,
 	DEVELOP_SEEDS_LABEL,
 	DEVELOP_SEEDS,
+	DEVELOP_POINTS_LABEL,
+	DEVELOP_POINTS,
 	DEVELOP_PER_SEED,
 	DEVELOP_SUBMIT,
 	DEVELOP_STATUS,
@@ -583,6 +586,10 @@ typedef struct WindowState {
 	DevelopJob developJob;
 	bool trainingDirty;     // inputs edited since then
 	bool trainingTemporary; // trainingPath is the player search's temp export
+	// The opened file's planning entries the form has no input for, as Save writes them back:
+	// match_points.monthN over several months (until DEVELOP_POINTS is edited), and the rest.
+	ByteBuffer trainingMatchPlan;
+	ByteBuffer trainingPlans;
 	// Text widths for the current font, measured by setFonts.
 	int trainingHeadingWidths[TRAINING_SECTION_COUNT][TRAINING_COLUMN_LIMIT];
 	int trainingLabelWidths[TRAINING_FIELD_COUNT];
@@ -3157,8 +3164,58 @@ typedef struct TrainingValues {
 	const TrainingTarget *targets;
 	wchar_t text[TRAINING_FIELD_COUNT][TRAINING_TEXT_LENGTH]; // "" where the file leaves a value out
 	char error[160];
-	bool schedule; // the file has schedule.week1
+	bool schedule;        // the file has schedule.week1
+	ByteBuffer matchPlan; // match_points.monthN entries, as writeDevelopment writes them
+	ByteBuffer plans;     // the other planning entries
+	unsigned matchMonths;
+	wchar_t points[8]; // match_points.month1's value, "" if the file has none
 } TrainingValues;
+
+// The planning entries develop reads that the form has no input for (docs/CLI.md).
+static bool planningEntry(const char *name) {
+	static const char *const prefixes[] = {
+		"match_points.month", "matches.month", "training_focus.month", "injury.window"};
+	for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; ++i) {
+		if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Keeps a planning entry for Save to write back unchanged (all are u8 or u16).
+static void keepPlan(TrainingValues *values, const ConfigField *entry) {
+	bool match = strncmp(entry->name, "match_points.month", 18) == 0;
+	// Names are written back without JSON escaping.
+	if ((entry->kind != CONFIG_U8 && entry->kind != CONFIG_U16) ||
+			strspn(entry->name, "abcdefghijklmnopqrstuvwxyz0123456789._") != strlen(entry->name)) {
+		(void)snprintf(
+			values->error, sizeof values->error, "%s has the wrong kind of value", entry->name
+		);
+		return;
+	}
+	unsigned value = entry->bytes[0] | (entry->kind == CONFIG_U16 ? entry->bytes[1] << 8 : 0);
+	char line[160];
+	int length = snprintf(
+		line,
+		sizeof line,
+		",\n    {\"name\": \"%s\", \"%s\": %u}",
+		entry->name,
+		entry->kind == CONFIG_U8 ? "u8" : "u16",
+		value
+	);
+	if (length <= 0 || (size_t)length >= sizeof line ||
+			!buffer_append(match ? &values->matchPlan : &values->plans, line, (size_t)length)) {
+		(void)snprintf(values->error, sizeof values->error, "%s cannot be kept", entry->name);
+		return;
+	}
+	if (match) {
+		++values->matchMonths;
+		if (strcmp(entry->name, "match_points.month1") == 0) {
+			(void)swprintf(values->points, 8, L"%u", value);
+		}
+	}
+}
 
 static bool inGameSchedule(const WindowState *state) {
 	return SendMessageW(state->trainingInGame, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -3251,7 +3308,11 @@ static void readTrainingEntry(void *context, const ConfigField *entry) {
 	bool uniqueId = strcmp(entry->name, "person_uid") == 0;
 	bool schedule = strcmp(entry->name, "schedule.week1") == 0;
 	const DevelopmentField *field = findDevelopmentField(entry->name);
-	// Planning entries and later schedule weeks have no inputs.
+	if (!values->error[0] && planningEntry(entry->name)) {
+		keepPlan(values, entry);
+		return;
+	}
+	// Later schedule weeks have no inputs.
 	bool shown = uniqueId || schedule || field;
 	if (values->error[0] || !shown) {
 		return;
@@ -3285,6 +3346,8 @@ static bool openDevelopment(HWND window, WindowState *state, const wchar_t *path
 						!values.error[0];
 	buffer_free(&text);
 	if (!ok) {
+		buffer_free(&values.matchPlan);
+		buffer_free(&values.plans);
 		wchar_t reason[256] = L"";
 		(void)widen(values.error[0] ? values.error : error, reason, 256);
 		wchar_t message[384];
@@ -3309,6 +3372,24 @@ static bool openDevelopment(HWND window, WindowState *state, const wchar_t *path
 	}
 	showSchedule(state, !values.schedule);
 	layoutTraining(state);
+	// One month's points show in the box; several stay as the file has them until it is edited.
+	// Setting the box drops the last file's plan (commandMessage), so it goes first.
+	bool varies = values.matchMonths > 1 || (values.matchMonths && !values.points[0]);
+	SetWindowTextW(state->develop[DEVELOP_POINTS], varies ? L"" : values.points);
+	buffer_free(&state->trainingMatchPlan);
+	buffer_free(&state->trainingPlans);
+	state->trainingPlans = values.plans;
+	if (varies) {
+		state->trainingMatchPlan = values.matchPlan;
+	} else {
+		buffer_free(&values.matchPlan);
+	}
+	SendMessageW(
+		state->develop[DEVELOP_POINTS],
+		EM_SETCUEBANNER,
+		TRUE,
+		(LPARAM)(varies ? L"varies by month (from file)" : L"none")
+	);
 	(void)swprintf(state->trainingPath, HARNESS_PATH_LENGTH, L"%ls", path);
 	state->trainingDirty = false;
 	state->trainingTemporary = false;
@@ -3357,6 +3438,8 @@ typedef struct TrainingBytes {
 	uint16_t sessions[DEVELOPMENT_SCHEDULE_SESSIONS];
 	bool given[DEVELOPMENT_FIELD_COUNT];
 	bool schedule;
+	bool matchPoints; // DEVELOP_POINTS is filled in: match_points.month1 for every month
+	uint16_t points;
 } TrainingBytes;
 
 enum {
@@ -3476,13 +3559,28 @@ static bool readTraining(HWND window, const WindowState *state, TrainingBytes *v
 		values->given[i] = filled[i] > 0;
 	}
 	values->schedule = !inGame;
+	wchar_t points[8] = L"";
+	int length = GetWindowTextW(state->develop[DEVELOP_POINTS], points, 8);
+	if (length) {
+		unsigned long value = wcstoul(points, NULL, 10);
+		if (length > 5 || wcsspn(points, L"0123456789") != (size_t)length || value > 65535) {
+			TabCtrl_SetCurSel(state->trainingTabs, 1);
+			selectTab(state);
+			showError(window, L"Cannot save: Match points per month must be a number from 0 to 65535.");
+			SetFocus(state->develop[DEVELOP_POINTS]);
+			return false;
+		}
+		values->matchPoints = true;
+		values->points = (uint16_t)value;
+	}
 	return true;
 }
 
 // The Training tab as a development file, laid out and commented as `get-development` writes one,
 // without what only the game knows (the export date, the develop day, the player's name) or what
-// the tab leaves blank.
-static bool writeDevelopment(const wchar_t *path, const TrainingBytes *values) {
+// the tab leaves blank, then the opened file's planning entries.
+static bool
+writeDevelopment(const wchar_t *path, const TrainingBytes *values, const WindowState *state) {
 	FILE *file = _wfopen(path, L"wb");
 	if (!file) {
 		return false;
@@ -3502,6 +3600,12 @@ static bool writeDevelopment(const wchar_t *path, const TrainingBytes *values) {
 	if (values->schedule) {
 		developmentFormat_writeSchedule(file, values->sessions);
 	}
+	if (values->matchPoints) {
+		fprintf(file, ",\n    {\"name\": \"match_points.month1\", \"u16\": %u}", values->points);
+	} else {
+		fputs(buffer_string(&state->trainingMatchPlan), file);
+	}
+	fputs(buffer_string(&state->trainingPlans), file);
 	const char *heading = developmentFormat_dragons;
 	for (size_t i = 0; i < DEVELOPMENT_FIELD_COUNT; ++i) {
 		if (values->given[i] && developmentFields[i].internal) {
@@ -3520,7 +3624,7 @@ static bool storeDevelopment(
 	const wchar_t *path,
 	const TrainingBytes *values
 ) {
-	if (!writeDevelopment(path, values)) {
+	if (!writeDevelopment(path, values, state)) {
 		showError(window, L"Cannot write the development file.");
 		return false;
 	}
@@ -3797,7 +3901,7 @@ static void startDevelop(HWND window, WindowState *state) {
 		showFileError(window, job->error);
 		return;
 	}
-	if (!writeDevelopment(job->input, &values)) {
+	if (!writeDevelopment(job->input, &values, state)) {
 		removeReplacement(job->input);
 		showError(window, L"Cannot write the temporary development file.");
 		return;
@@ -4661,10 +4765,12 @@ static void layoutDevelop(const WindowState *state, const RECT *page) {
 		{250, 0, 20, 28},
 		{0, 46, 180, 24},
 		{192, 42, 220, 30},
-		{0, 92, 220, 28},
-		{0, 136, 180, 34},
-		{0, 238, 620, 80},
-		{0, 186, 620, 44},
+		{0, 88, 180, 24},
+		{192, 84, 78, 28},
+		{0, 134, 220, 28},
+		{0, 178, 180, 34},
+		{0, 302, 620, 80},
+		{0, 228, 620, 66},
 	};
 	for (unsigned i = 0; i < DEVELOP_CONTROL_COUNT; ++i) {
 		MoveWindow(
@@ -5020,10 +5126,14 @@ static bool createDevelopControls(HWND window, WindowState *state) {
 		{UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 0},
 		{L"STATIC", L"Seed pattern:", 0, 0},
 		{L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
+		{L"STATIC", L"Match points per month:", 0, 0},
+		{L"EDIT", L"", WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
 		{L"BUTTON", L"Per-seed breakdown?", WS_TABSTOP | BS_AUTOCHECKBOX, 0},
 		{L"BUTTON", L"Simulate training", WS_TABSTOP | BS_PUSHBUTTON, 0},
 		{L"STATIC", L"", 0, 0},
 		{L"STATIC",
+			L"Match points per month replace the points earned in every simulated month, the first "
+			L"included, and are saved with the file; blank plays no matches after the first month. "
 			L"Results are saved beside the development file, using its filename with .csv; for an "
 			L"unsaved player, in the working directory.",
 			0,
@@ -5051,6 +5161,8 @@ static bool createDevelopControls(HWND window, WindowState *state) {
 	SendMessageW(state->develop[DEVELOP_MONTHS], EM_SETLIMITTEXT, 3, 0);
 	SendMessageW(state->develop[DEVELOP_SEEDS], EM_SETLIMITTEXT, 255, 0);
 	SendMessageW(state->develop[DEVELOP_SEEDS], EM_SETCUEBANNER, TRUE, (LPARAM)L"e.g. 1-100");
+	SendMessageW(state->develop[DEVELOP_POINTS], EM_SETLIMITTEXT, 5, 0);
+	SendMessageW(state->develop[DEVELOP_POINTS], EM_SETCUEBANNER, TRUE, (LPARAM)L"none");
 	SendMessageW(
 		state->develop[DEVELOP_SPINNER], UDM_SETBUDDY, (WPARAM)state->develop[DEVELOP_MONTHS], 0
 	);
@@ -5826,6 +5938,16 @@ static bool commandMessage(HWND window, WindowState *state, WPARAM wParam, LPARA
 	if (trainingPickerCommand(window, state, control, code)) {
 		return true;
 	}
+	if (code == EN_CHANGE && control == state->develop[DEVELOP_POINTS]) {
+		// Editing replaces a file's month-by-month plan with the box's one value.
+		buffer_free(&state->trainingMatchPlan);
+		SendMessageW(control, EM_SETCUEBANNER, TRUE, (LPARAM)L"none");
+		if (!state->trainingDirty) {
+			state->trainingDirty = true;
+			updateTrainingSummary(window, state);
+		}
+		return true;
+	}
 	if (code != CBN_EDITCHANGE) {
 		return false;
 	}
@@ -6255,6 +6377,8 @@ int fixtureWindow_open(const wchar_t *path, bool temporary) {
 	}
 	free(state.replacementJob.data);
 	free(state.fileJob.data);
+	buffer_free(&state.trainingMatchPlan);
+	buffer_free(&state.trainingPlans);
 	removeReplacement(state.replacementJob.output);
 	removeReplacement(state.replacementPath);
 	if (state.font) {
